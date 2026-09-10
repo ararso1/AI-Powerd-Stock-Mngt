@@ -1159,4 +1159,40 @@ export interface AiSummary {
   note: string;
 }
 
+export interface AiStockTrends {
+  generatedAt: string;
+  demoFilled: boolean;
+  highlights: string[];
+  stockByForm: Array<{ form: string; kg: number }>;
+  stockByLocation: Array<{ locationName: string; kg: number }>;
+  dailyOps: Array<{
+    date: string;
+    intakeKg: number;
+    transferCount: number;
+    transferKg: number;
+    processEvents: number;
+    soldKg: number;
+    demoFilled?: boolean;
+  }>;
+  forecast: Array<{
+    week: string;
+    projectedGreenNeedKg: number;
+    projectedIntakeKg: number;
+  }>;
+  signals: Array<{
+    code: string;
+    title: string;
+    severity: string;
+    detail: string;
+    href: string;
+  }>;
+  totals: {
+    greenKg: number;
+    cherryKg: number;
+    locationsTracked: number;
+    avgDailyIntakeKg: number;
+    avgDailySoldKg: number;
+  };
+}
+
 

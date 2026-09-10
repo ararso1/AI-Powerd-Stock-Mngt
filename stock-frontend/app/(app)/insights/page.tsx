@@ -8,7 +8,7 @@ export default function InsightsPage() {
   return (
     <AppShell
       title="AI Insights"
-      subtitle="Forecast, readiness, quality, blend & pricing — confirm before acting"
+      subtitle="Stock-ops trends, forecasts, readiness & quality — confirm before acting"
       layout="default"
       breadcrumbs={[{ label: "Insights" }, { label: "AI Insights" }]}
     >

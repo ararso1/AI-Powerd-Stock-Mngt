@@ -44,7 +44,7 @@ export function AppShell({
     >
       <TooltipProvider>
         <AppSidebar variant="inset" />
-        <SidebarInset className="flex flex-col bg-[var(--csolve-cream)] dark:bg-background">
+        <SidebarInset className="csolve-desk-bg flex flex-col dark:bg-background">
           {isFrappe ? (
             <div className="frappe-page flex min-h-0 flex-1 flex-col">
               {variant !== "plain" ? (

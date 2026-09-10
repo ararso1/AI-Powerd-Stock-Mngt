@@ -22,7 +22,7 @@ export function CsolveMark({
     <div className={cn("flex items-center gap-2.5", className)}>
       <span
         className={cn(
-          "relative flex shrink-0 items-center justify-center rounded-xl bg-[var(--csolve-roast)] text-[var(--csolve-parchment)] shadow-sm",
+          "relative flex shrink-0 items-center justify-center rounded-xl bg-[var(--csolve-roast)] text-[var(--csolve-parchment)] shadow-md ring-2 ring-[var(--csolve-honey)]/35",
           iconSize
         )}
         aria-hidden
@@ -59,7 +59,7 @@ export function CsolveMark({
           >
             Csolve
           </p>
-          <p className="truncate text-[11px] font-medium tracking-wide text-[var(--csolve-text-muted)]">
+          <p className="truncate text-[11px] font-medium tracking-wide text-[var(--csolve-moss)]">
             Coffee stock · AI
           </p>
         </div>

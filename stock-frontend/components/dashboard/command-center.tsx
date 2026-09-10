@@ -77,7 +77,7 @@ function severityIcon(severity: string) {
   if (severity === "warn") {
     return <AlertTriangleIcon className="size-4 text-amber-600" />;
   }
-  return <InfoIcon className="size-4 text-[var(--frappe-primary)]" />;
+  return <InfoIcon className="size-4 text-[var(--csolve-moss)]" />;
 }
 
 export function CommandCenter() {
@@ -154,7 +154,7 @@ export function CommandCenter() {
       {pulse ? (
         <section>
           <div className="mb-3 flex items-center gap-2">
-            <ScaleIcon className="size-4 text-[var(--frappe-primary)]" />
+            <ScaleIcon className="size-4 text-[var(--csolve-moss)]" />
             <h2 className="text-sm font-semibold uppercase tracking-wide text-[var(--frappe-text-muted)]">
               Pulse
             </h2>

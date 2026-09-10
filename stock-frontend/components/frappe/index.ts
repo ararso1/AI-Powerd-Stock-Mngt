@@ -14,6 +14,7 @@ export {
   FrappeButtonPrimary,
   FrappeButtonSecondary,
   FrappeButtonLink,
+  FrappeButtonGhost,
 } from "./frappe-buttons";
 export {
   FrappeGridTable,

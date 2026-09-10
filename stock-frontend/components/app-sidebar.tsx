@@ -101,7 +101,7 @@ export function AppSidebar({
   const { user } = useAuth();
 
   return (
-    <Sidebar collapsible="offcanvas" {...props}>
+    <Sidebar collapsible="offcanvas" className="csolve-sidebar border-r-0" {...props}>
       <SidebarHeader className="border-b border-sidebar-border/80 pb-3">
         <SidebarMenu>
           <SidebarMenuItem>
@@ -116,7 +116,7 @@ export function AppSidebar({
                   <span className="block text-base font-bold tracking-tight text-sidebar-foreground">
                     Csolve
                   </span>
-                  <span className="block truncate text-[10px] font-medium tracking-wide text-sidebar-foreground/60">
+                  <span className="block truncate text-[10px] font-medium tracking-wide text-sidebar-primary">
                     Coffee stock · AI
                   </span>
                 </div>

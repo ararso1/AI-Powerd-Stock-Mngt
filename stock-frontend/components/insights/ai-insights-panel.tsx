@@ -77,7 +77,7 @@ function severityIcon(severity: string) {
   if (severity === "warn") {
     return <AlertTriangleIcon className="size-4 text-amber-600" />;
   }
-  return <InfoIcon className="size-4 text-[var(--frappe-primary)]" />;
+  return <InfoIcon className="size-4 text-[var(--csolve-moss)]" />;
 }
 
 function ForecastChart({ payload }: { payload: Record<string, unknown> }) {
@@ -102,13 +102,13 @@ function ForecastChart({ payload }: { payload: Record<string, unknown> }) {
           <XAxis dataKey="week" tick={{ fontSize: 11 }} />
           <YAxis tick={{ fontSize: 11 }} />
           <Tooltip />
-          <Bar dataKey="roastKg" name="Out kg" fill="var(--frappe-primary)" radius={2} />
+          <Bar dataKey="roastKg" name="Out kg" fill="var(--csolve-roast)" radius={2} />
           <Bar
             dataKey="cherryIntakeKg"
             name="Intake kg"
-            fill="var(--frappe-text-muted)"
+            fill="var(--csolve-moss)"
             radius={2}
-            opacity={0.45}
+            opacity={0.75}
           />
         </BarChart>
       </ResponsiveContainer>
@@ -271,7 +271,7 @@ function StockTrendsSection({ trends }: { trends: AiStockTrends }) {
                     type="monotone"
                     dataKey="intakeKg"
                     name="Intake kg"
-                    stroke="var(--frappe-primary)"
+                    stroke="var(--csolve-moss)"
                     strokeWidth={2}
                     dot={false}
                   />
@@ -279,7 +279,7 @@ function StockTrendsSection({ trends }: { trends: AiStockTrends }) {
                     type="monotone"
                     dataKey="soldKg"
                     name="Outbound kg"
-                    stroke="var(--frappe-text-muted)"
+                    stroke="var(--csolve-roast)"
                     strokeWidth={2}
                     dot={false}
                   />
@@ -287,7 +287,7 @@ function StockTrendsSection({ trends }: { trends: AiStockTrends }) {
                     type="monotone"
                     dataKey="transferKg"
                     name="Transfer kg"
-                    stroke="#a67c52"
+                    stroke="var(--csolve-honey)"
                     strokeWidth={1.5}
                     strokeDasharray="4 4"
                     dot={false}
@@ -314,7 +314,7 @@ function StockTrendsSection({ trends }: { trends: AiStockTrends }) {
                     <XAxis dataKey="form" tick={{ fontSize: 10 }} />
                     <YAxis tick={{ fontSize: 10 }} />
                     <Tooltip />
-                    <Bar dataKey="kg" name="kg" fill="var(--frappe-primary)" radius={3} />
+                    <Bar dataKey="kg" name="kg" fill="var(--csolve-moss)" radius={3} />
                   </BarChart>
                 </ResponsiveContainer>
               )}
@@ -347,7 +347,7 @@ function StockTrendsSection({ trends }: { trends: AiStockTrends }) {
                       tick={{ fontSize: 10 }}
                     />
                     <Tooltip />
-                    <Bar dataKey="kg" name="kg" fill="#8b6914" radius={3} />
+                    <Bar dataKey="kg" name="kg" fill="var(--csolve-bean)" radius={3} />
                   </BarChart>
                 </ResponsiveContainer>
               )}
@@ -376,8 +376,8 @@ function StockTrendsSection({ trends }: { trends: AiStockTrends }) {
                   <YAxis tick={{ fontSize: 10 }} />
                   <Tooltip />
                   <Legend />
-                  <Bar dataKey="green" name="Green need" fill="var(--frappe-primary)" radius={2} />
-                  <Bar dataKey="intake" name="Intake plan" fill="#a67c52" radius={2} opacity={0.7} />
+                  <Bar dataKey="green" name="Green need" fill="var(--csolve-roast)" radius={2} />
+                  <Bar dataKey="intake" name="Intake plan" fill="var(--csolve-moss)" radius={2} opacity={0.85} />
                 </BarChart>
               </ResponsiveContainer>
             </div>

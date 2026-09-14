@@ -117,7 +117,7 @@ export function AppSidebar({
                     Csolve
                   </span>
                   <span className="block truncate text-[10px] font-medium tracking-wide text-sidebar-primary">
-                    Coffee stock · AI
+                    Coffee stock & sales
                   </span>
                 </div>
               </Link>
@@ -126,11 +126,11 @@ export function AppSidebar({
         </SidebarMenu>
       </SidebarHeader>
       <SidebarContent className="gap-1 pt-1">
-        <NavSection label="Insights" items={insightsNav} user={user} />
-        <NavSection label="Operations" items={operationsNav} user={user} />
-        <NavSection label="Finance" items={financeNav} user={user} />
-        <NavSection label="Master data" items={masterNav} user={user} />
-        <NavSection label="Administration" items={adminNav} user={user} />
+        <NavSection label="Overview" items={insightsNav} user={user} />
+        <NavSection label="Coffee & stock" items={operationsNav} user={user} />
+        <NavSection label="Money" items={financeNav} user={user} />
+        <NavSection label="Partners" items={masterNav} user={user} />
+        <NavSection label="Admin" items={adminNav} user={user} />
       </SidebarContent>
       <SidebarFooter className="border-t border-sidebar-border/80">
         {user ? (

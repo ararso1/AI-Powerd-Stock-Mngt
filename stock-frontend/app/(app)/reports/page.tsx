@@ -1186,6 +1186,50 @@ export default function ReportsPage() {
                     },
                   ]}
                 />
+                {credits.aging ? (
+                  <div className="mb-6 grid gap-4 lg:grid-cols-2">
+                    <div className="rounded border border-[var(--frappe-border)] p-3">
+                      <p className="mb-2 text-sm font-medium">
+                        Customer aging
+                      </p>
+                      <ul className="space-y-1 text-sm">
+                        {credits.aging.customers.buckets.map((b) => (
+                          <li
+                            key={b.key}
+                            className="flex justify-between gap-2"
+                          >
+                            <span className="text-[var(--frappe-text-muted)]">
+                              {b.label} ({b.count})
+                            </span>
+                            <span className="tabular-nums">
+                              {formatMoney(b.balance)}
+                            </span>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                    <div className="rounded border border-[var(--frappe-border)] p-3">
+                      <p className="mb-2 text-sm font-medium">
+                        Supplier aging
+                      </p>
+                      <ul className="space-y-1 text-sm">
+                        {credits.aging.suppliers.buckets.map((b) => (
+                          <li
+                            key={b.key}
+                            className="flex justify-between gap-2"
+                          >
+                            <span className="text-[var(--frappe-text-muted)]">
+                              {b.label} ({b.count})
+                            </span>
+                            <span className="tabular-nums">
+                              {formatMoney(b.balance)}
+                            </span>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  </div>
+                ) : null}
                 <div className="grid gap-6 lg:grid-cols-2">
                   <ReportPaginatedTable
                     rows={customerCreditRows}

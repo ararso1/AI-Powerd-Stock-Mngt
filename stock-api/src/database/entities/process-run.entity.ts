@@ -59,6 +59,26 @@ export class ProcessRun extends UuidBaseEntity {
   })
   quantityReject: string;
 
+  /** Auto: input − output (kg basis) − reject. For pack ops uses packs × packSizeKg. */
+  @Column({
+    name: 'quantity_loss',
+    type: 'decimal',
+    precision: 14,
+    scale: 3,
+    default: 0,
+  })
+  quantityLoss: string;
+
+  /** Pack count when template has packSizeKg (else null). */
+  @Column({
+    name: 'pack_count',
+    type: 'decimal',
+    precision: 14,
+    scale: 3,
+    nullable: true,
+  })
+  packCount: string | null;
+
   @Column({
     name: 'expected_yield_percent',
     type: 'decimal',

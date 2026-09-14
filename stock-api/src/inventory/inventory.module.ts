@@ -5,6 +5,7 @@ import { Location } from '../database/entities/location.entity';
 import { Lot } from '../database/entities/lot.entity';
 import { StockAdjustment } from '../database/entities/stock-adjustment.entity';
 import { StockLevel } from '../database/entities/stock-level.entity';
+import { StockMovement } from '../database/entities/stock-movement.entity';
 import { NotificationsModule } from '../notifications/notifications.module';
 import { InventoryController } from './inventory.controller';
 import { InventoryService } from './inventory.service';
@@ -12,7 +13,14 @@ import { StockService } from './stock.service';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([StockLevel, Item, Location, StockAdjustment, Lot]),
+    TypeOrmModule.forFeature([
+      StockLevel,
+      Item,
+      Location,
+      StockAdjustment,
+      StockMovement,
+      Lot,
+    ]),
     NotificationsModule,
   ],
   controllers: [InventoryController],

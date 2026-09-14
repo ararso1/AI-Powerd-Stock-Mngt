@@ -12,6 +12,8 @@ import {
   LotStatus,
   StockAdjustmentDirection,
   StockAdjustmentReason,
+  StockMovementDirection,
+  StockMovementSourceType,
 } from '../common/enums';
 import {
   applyDateRangeToQb,
@@ -25,6 +27,7 @@ import { Lot } from '../database/entities/lot.entity';
 import { LotEvent } from '../database/entities/lot-event.entity';
 import { StockAdjustment } from '../database/entities/stock-adjustment.entity';
 import { StockLevel } from '../database/entities/stock-level.entity';
+import { StockMovement } from '../database/entities/stock-movement.entity';
 import { StockService } from './stock.service';
 import { LowStockService } from '../notifications/low-stock.service';
 import { CreateInventoryDto, UpdateInventoryDto } from './dto/inventory.dto';
@@ -33,6 +36,7 @@ import {
   CreateStockAdjustmentDto,
   StockAdjustmentListQueryDto,
 } from './dto/stock-adjustment.dto';
+import { StockMovementListQueryDto } from './dto/stock-movement-list-query.dto';
 import type { UploadedExcelFile } from './dto/uploaded-file.interface';
 
 @Injectable()
@@ -46,6 +50,8 @@ export class InventoryService {
     private readonly locationRepo: Repository<Location>,
     @InjectRepository(StockAdjustment)
     private readonly adjustmentRepo: Repository<StockAdjustment>,
+    @InjectRepository(StockMovement)
+    private readonly movementRepo: Repository<StockMovement>,
     @InjectRepository(Lot)
     private readonly lotRepo: Repository<Lot>,
     @InjectDataSource()
@@ -294,6 +300,48 @@ export class InventoryService {
     return paginatedQueryBuilder(qb, query.page, query.limit);
   }
 
+  async findMovements(query: StockMovementListQueryDto) {
+    const qb = this.movementRepo
+      .createQueryBuilder('m')
+      .leftJoinAndSelect('m.item', 'item')
+      .leftJoinAndSelect('m.location', 'location')
+      .leftJoinAndSelect('m.lot', 'lot')
+      .leftJoinAndSelect('m.createdBy', 'createdBy')
+      .orderBy('m.moved_at', 'DESC');
+
+    if (query.locationId) {
+      qb.andWhere('m.location_id = :locationId', {
+        locationId: query.locationId,
+      });
+    }
+    if (query.itemId) {
+      qb.andWhere('m.item_id = :itemId', { itemId: query.itemId });
+    }
+    if (query.lotId) {
+      qb.andWhere('m.lot_id = :lotId', { lotId: query.lotId });
+    }
+    if (query.direction) {
+      qb.andWhere('m.direction = :direction', { direction: query.direction });
+    }
+    if (query.sourceType) {
+      qb.andWhere('m.source_type = :sourceType', {
+        sourceType: query.sourceType,
+      });
+    }
+    applyIlikeSearch(qb, query.search, [
+      'm.reference',
+      'm.batch_code',
+      'm.grade',
+      'm.notes',
+      'item.description',
+      'item.sku',
+      'lot.code',
+    ]);
+    applyDateRangeToQb(qb, 'm.moved_at', query.from, query.to);
+
+    return paginatedQueryBuilder(qb, query.page, query.limit);
+  }
+
   async createAdjustment(dto: CreateStockAdjustmentDto, userId?: string) {
     await this.ensureLocation(dto.locationId);
     const item = await this.itemRepo.findOne({ where: { id: dto.itemId } });
@@ -397,6 +445,13 @@ export class InventoryService {
               ? dto.purchasePrice
               : undefined,
           lotId,
+          meta: {
+            sourceType: this.mapAdjustReasonToSource(dto.reason),
+            referenceType: 'stock_adjustment',
+            reference: dto.reference?.trim() || dto.reason,
+            createdById: userId ?? null,
+            notes: dto.notes?.trim() || null,
+          },
         },
         manager,
       );
@@ -533,6 +588,29 @@ export class InventoryService {
       imported: results.filter((r) => r.status === 'imported').length,
       results,
     };
+  }
+
+  private mapAdjustReasonToSource(
+    reason: StockAdjustmentReason,
+  ): StockMovementSourceType {
+    switch (reason) {
+      case StockAdjustmentReason.DAMAGE:
+        return StockMovementSourceType.DAMAGE;
+      case StockAdjustmentReason.LOSS:
+      case StockAdjustmentReason.MOISTURE_LOSS:
+      case StockAdjustmentReason.SHRINKAGE:
+        return StockMovementSourceType.WASTAGE;
+      case StockAdjustmentReason.RETURN:
+        return StockMovementSourceType.SALE_RETURN;
+      case StockAdjustmentReason.QC_REJECT:
+        return StockMovementSourceType.REJECTION;
+      case StockAdjustmentReason.FOUND:
+      case StockAdjustmentReason.OPENING:
+      case StockAdjustmentReason.COUNT:
+      case StockAdjustmentReason.OTHER:
+      default:
+        return StockMovementSourceType.ADJUSTMENT;
+    }
   }
 
   private async ensureLocation(locationId: string) {

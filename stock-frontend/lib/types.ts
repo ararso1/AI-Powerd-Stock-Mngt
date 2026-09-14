@@ -89,8 +89,11 @@ export interface CreditListTotals {
 }
 
 export interface LinkedCredit {
+  amount?: string;
   paidAmount?: string;
+  balance?: string;
   status?: CreditStatus;
+  dueDate?: string | null;
 }
 
 export interface Role {
@@ -136,6 +139,8 @@ export interface StockRecord {
   itemId: string;
   lotId?: string | null;
   quantity: string;
+  /** Kg locked for open export contracts. Available = quantity − reservedQuantity. */
+  reservedQuantity?: string;
   purchasePrice: string;
   reorderPoint?: string | null;
   item: Item;
@@ -177,15 +182,18 @@ export interface Supplier {
   phone?: string;
   email?: string;
   address?: string;
+  creditLimit?: string | null;
   isActive?: boolean;
 }
 
 export interface Customer {
   id: string;
   name: string;
+  customerType?: CustomerType;
   phone?: string;
   email?: string;
   address?: string;
+  creditLimit?: string | null;
   isActive?: boolean;
 }
 
@@ -252,11 +260,13 @@ export interface CreditRecord {
   balance?: string;
   status: CreditStatus;
   dueDate?: string;
+  isOverdue?: boolean;
+  daysOverdue?: number | null;
   customer?: Customer;
   supplier?: Supplier;
   sale?: Pick<
     Sale,
-    "id" | "total" | "subtotal" | "totalAmount" | "createdAt" | "paymentMethod" | "status"
+    "id" | "total" | "subtotal" | "totalAmount" | "createdAt" | "paymentMethod" | "status" | "invoiceNumber"
   >;
   purchase?: Pick<
     Purchase,
@@ -264,6 +274,35 @@ export interface CreditRecord {
   >;
   createdAt?: string;
   updatedAt?: string;
+}
+
+export interface CreditPaymentHistoryItem {
+  id: string;
+  date: string;
+  amount: string;
+  direction: string;
+  type: string;
+  description?: string | null;
+  bankAccount?: { id: string; name: string } | null;
+  createdBy?: { id: string; fullName?: string } | null;
+}
+
+export interface CreditAgingBucket {
+  key: string;
+  label: string;
+  count: number;
+  balance: string;
+}
+
+export interface CreditAgingSide {
+  totalOutstanding: string;
+  buckets: CreditAgingBucket[];
+}
+
+export interface CreditAgingReport {
+  currency?: string;
+  customers: CreditAgingSide;
+  suppliers: CreditAgingSide;
 }
 
 export interface DashboardData {
@@ -370,7 +409,84 @@ export interface DashboardData {
     notifications?: string;
     reports?: string;
     profitLoss?: string;
+    insights?: string;
+    credits?: string;
+    marketPrices?: string;
   };
+  market?: {
+    instruments: Array<Record<string, unknown>>;
+    fx: { rate: number; rateDate: string; source: string };
+    chart30d: Array<{ date: string; usdPerKg: number; etbPerKg: number }>;
+    valuation: {
+      marketValueEtb: number;
+      bookValueEtb: number;
+      gapPercent: number | null;
+    };
+  } | null;
+  analytics?: {
+    inventory: {
+      totalStockKg: string;
+      stockValue: string;
+      availableKg: string;
+      reservedKg: string;
+      exportStockKg: string;
+      lowStockItems: number;
+    };
+    trading: {
+      totalPurchases: string;
+      localSalesValue: string;
+      exportSalesValue: string;
+      salesVolumeKg: string;
+      salesValue: string;
+      chart: Array<{ label: string; value: number }>;
+    };
+    quality: {
+      acceptedQtyKg: string;
+      rejectedQtyKg: string;
+      rejectionPercent: number;
+      gradeDistribution: Array<{ grade: string; kg: number }>;
+      supplierRanking: Array<{
+        supplierName: string;
+        totalKg: string;
+        rejectedKg: string;
+        rejectionPercent: number;
+      }>;
+    };
+    finance: {
+      totalReceivables: string;
+      totalPayables: string;
+      customerOutstanding: string;
+      supplierOutstanding: string;
+      overdueBalances: string;
+      paidAmount: string;
+      unpaidAmount: string;
+      chart: Array<{ label: string; value: number }>;
+    };
+    production: {
+      processingVolumeKg: string;
+      roastingVolumeKg: string;
+      productionYieldPercent: number;
+      processingLossKg: string;
+      wastageKg: string;
+      chart: Array<{ label: string; value: number }>;
+    };
+    export: {
+      exportVolumeKg: string;
+      exportValue: string;
+      activeContracts: number;
+      pendingShipments: number;
+      shippedQuantityKg: string;
+      outstandingExportPayments: string;
+    };
+  };
+  executiveInsights?: Array<{
+    id: string;
+    tone: "positive" | "critical" | "warn" | "info" | "profit";
+    category: string;
+    title: string;
+    detail: string;
+    href: string;
+  }>;
 }
 
 export interface ProfitLossItem {
@@ -410,6 +526,8 @@ export interface Purchase {
   status?: DocumentStatus;
   subtotal?: string;
   total?: string;
+  paidAmount?: string;
+  outstandingAmount?: string;
   /** @deprecated Prefer `total` */
   totalAmount?: string;
   createdAt?: string;
@@ -417,6 +535,7 @@ export interface Purchase {
   supplier?: Supplier;
   location?: Location;
   bankAccount?: BankAccount;
+  credit?: LinkedCredit;
   supplierCredit?: LinkedCredit;
   lines?: PurchaseLine[];
 }
@@ -443,6 +562,7 @@ export type SaleChannel = "LOCAL" | "EXPORT";
 
 export interface Sale {
   id: string;
+  invoiceNumber?: string | null;
   customerId?: string;
   locationId?: string;
   channel?: SaleChannel;
@@ -456,6 +576,8 @@ export interface Sale {
   status?: DocumentStatus;
   subtotal?: string;
   total?: string;
+  paidAmount?: string;
+  outstandingAmount?: string;
   /** @deprecated Prefer `total` */
   totalAmount?: string;
   soldByUserId?: string;
@@ -471,6 +593,7 @@ export interface Sale {
   customer?: Customer;
   location?: Location;
   bankAccount?: BankAccount;
+  credit?: LinkedCredit;
   customerCredit?: LinkedCredit;
   lines?: SaleLine[];
 }
@@ -610,6 +733,10 @@ export interface ReportCredits {
   currency?: Currency;
   customers?: ReportCreditPartySummary;
   suppliers?: ReportCreditPartySummary;
+  aging?: {
+    customers: CreditAgingSide;
+    suppliers: CreditAgingSide;
+  };
   /** @deprecated Prefer `customers` */
   customerReceivables?: {
     count: number;
@@ -839,10 +966,52 @@ export type CoffeeForm =
   | "PARCHMENT"
   | "GREEN"
   | "ROASTED"
+  | "FLOUR"
   | "PACKAGED"
   | "REJECT";
 
+export type ProcessOperationType =
+  | "MILL"
+  | "FLOUR"
+  | "ROAST"
+  | "PACK"
+  | "OTHER";
+
+export type CustomerType = "RETAIL" | "WHOLESALE" | "CAFE" | "OTHER";
+
+export type StockMovementDirection = "IN" | "OUT";
+
+export type StockMovementSourceType =
+  | "PURCHASE"
+  | "COLLECTION"
+  | "PRODUCTION_OUTPUT"
+  | "PRODUCTION_CONSUMPTION"
+  | "PRODUCTION_LOSS"
+  | "TRANSFER_IN"
+  | "TRANSFER_OUT"
+  | "SALE_LOCAL"
+  | "SALE_EXPORT"
+  | "SALE_RETURN"
+  | "EXPORT_SHIPMENT"
+  | "REJECTION"
+  | "DAMAGE"
+  | "WASTAGE"
+  | "RETURN_SUPPLIER"
+  | "ADJUSTMENT"
+  | "OTHER";
+
 export type LotStatus = "ACTIVE" | "HOLD" | "VOIDED";
+
+export type LotQcPhase =
+  | "RECEIVED"
+  | "SAMPLE_TESTED"
+  | "GRADED"
+  | "ACCEPTED"
+  | "REJECTED"
+  | "PROCESSED"
+  | "FINAL_GRADE";
+
+export type ReceivingDisposition = "ACCEPTED" | "PARTIAL" | "REJECTED";
 
 export type LotEventType =
   | "CREATED"
@@ -859,8 +1028,17 @@ export type LotEventType =
   | "PACKAGED"
   | "SOLD_LOCAL"
   | "ALLOCATED_EXPORT"
+  | "RELEASED_EXPORT"
   | "SHIPPED"
-  | "VOIDED";
+  | "DELIVERED"
+  | "VOIDED"
+  | "SAMPLE_TESTED"
+  | "GRADED"
+  | "RECEIVING_ACCEPTED"
+  | "RECEIVING_REJECTED"
+  | "FINAL_GRADED"
+  | "SALE_RETURNED"
+  | "PRODUCTION_LOSS";
 
 export interface Lot {
   id: string;
@@ -873,9 +1051,20 @@ export interface Lot {
   variety?: string | null;
   processMethod?: string | null;
   region?: string | null;
+  zone?: string | null;
   woreda?: string | null;
   kebele?: string | null;
   moisturePercent?: string | null;
+  screenSize?: string | null;
+  cuppingScore?: string | null;
+  defectCount?: number | null;
+  defectLevel?: string | null;
+  qcPhase?: LotQcPhase;
+  inspectorId?: string | null;
+  inspectedAt?: string | null;
+  rejectReason?: string | null;
+  rejectPercent?: string | null;
+  rejectAction?: string | null;
   roastDate?: string | null;
   bestBefore?: string | null;
   roastProfileId?: string | null;
@@ -887,7 +1076,8 @@ export interface Lot {
   item?: Item | null;
   location?: Location | null;
   roastProfile?: RoastProfile | null;
-  parentLot?: Pick<Lot, "id" | "code"> | null;
+  inspector?: { id: string; fullName?: string } | null;
+  parentLot?: Lot | null;
   createdBy?: { id: string; fullName?: string; email?: string } | null;
   createdAt?: string;
   updatedAt?: string;
@@ -911,6 +1101,7 @@ export type ExportContractStatus =
   | "ALLOCATED"
   | "STAGED"
   | "SHIPPED"
+  | "DELIVERED"
   | "CLOSED"
   | "CANCELLED";
 
@@ -920,6 +1111,8 @@ export interface ExportDocCheckItem {
   key: string;
   label: string;
   done: boolean;
+  reference?: string | null;
+  url?: string | null;
 }
 
 export interface ExportPackingLine {
@@ -943,15 +1136,23 @@ export interface ExportAllocation {
 export interface ExportContract {
   id: string;
   contractNumber: string;
+  orderNumber?: string | null;
   buyerName: string;
+  buyerCountry?: string | null;
   customerId?: string | null;
   volumeKg: string;
   grade?: string | null;
+  coffeeType?: string | null;
+  origin?: string | null;
   pricePerKg: string;
   currencyCode: string;
   incoterm: Incoterm;
   windowStart?: string | null;
   windowEnd?: string | null;
+  destination?: string | null;
+  containerNumber?: string | null;
+  shippingDate?: string | null;
+  expectedArrival?: string | null;
   status: ExportContractStatus;
   allocatedKg: string;
   shippedKg: string;
@@ -962,9 +1163,17 @@ export interface ExportContract {
   docChecklist?: ExportDocCheckItem[];
   notes?: string | null;
   shippedAt?: string | null;
+  deliveredAt?: string | null;
   customer?: Customer | null;
   stagingLocation?: Location | null;
   allocations?: ExportAllocation[];
+  sale?: Sale | null;
+  /** Derived: RESERVED | SHIPPED | DELIVERED | NONE */
+  stockState?: string;
+  paymentStatus?: "UNPAID" | "PARTIAL" | "PAID" | "NONE";
+  paidAmount?: string | null;
+  outstandingAmount?: string | null;
+  invoiceTotal?: string | null;
   createdAt?: string;
   updatedAt?: string;
 }
@@ -1010,6 +1219,10 @@ export interface CollectionTicket {
   lotId: string;
   purchaseId?: string | null;
   weightKg: string;
+  disposition?: ReceivingDisposition;
+  acceptedWeightKg?: string | null;
+  rejectedWeightKg?: string;
+  rejectLotId?: string | null;
   grade?: string | null;
   pricePerKg: string;
   totalAmount: string;
@@ -1018,17 +1231,31 @@ export interface CollectionTicket {
   moisturePercent?: string | null;
   cropYear?: string | null;
   region?: string | null;
+  zone?: string | null;
   woreda?: string | null;
   kebele?: string | null;
   variety?: string | null;
+  processMethod?: string | null;
+  screenSize?: string | null;
+  cuppingScore?: string | null;
+  defectLevel?: string | null;
+  inspectorId?: string | null;
+  inspectedAt?: string | null;
+  rejectReason?: string | null;
+  rejectPercent?: string | null;
+  rejectAction?: string | null;
+  rejectDestinationId?: string | null;
   notes?: string | null;
   status: DocumentStatus;
   supplier?: Supplier;
   location?: Location;
   item?: Item;
   lot?: Lot;
+  rejectLot?: Lot | null;
   purchase?: Purchase | null;
   bankAccount?: BankAccount | null;
+  inspector?: { id: string; fullName?: string } | null;
+  rejectDestination?: Location | null;
   createdBy?: { id: string; fullName?: string; email?: string } | null;
   createdAt?: string;
   updatedAt?: string;
@@ -1048,6 +1275,8 @@ export interface ProcessTemplate {
   name: string;
   inputForm: CoffeeForm;
   outputForm: CoffeeForm;
+  operationType?: ProcessOperationType;
+  packSizeKg?: string | null;
   expectedYieldPercent: string;
   requiresQc: boolean;
   stages: string[];
@@ -1083,6 +1312,8 @@ export interface ProcessRun {
   quantityInput: string;
   quantityOutput?: string | null;
   quantityReject?: string;
+  quantityLoss?: string;
+  packCount?: string | null;
   expectedYieldPercent: string;
   actualYieldPercent?: string | null;
   status: ProcessRunStatus;
@@ -1090,6 +1321,7 @@ export interface ProcessRun {
   stages: string[];
   stagesCompleted: string[];
   processCost?: string;
+  roastProfileId?: string | null;
   notes?: string | null;
   startedAt?: string | null;
   completedAt?: string | null;
@@ -1097,19 +1329,74 @@ export interface ProcessRun {
   inputLot?: Lot;
   outputLot?: Lot | null;
   location?: Location;
+  roastProfile?: RoastProfile | null;
   qcResults?: QcResult[];
   createdBy?: { id: string; fullName?: string } | null;
   createdAt?: string;
 }
 
+export interface StockMovement {
+  id: string;
+  movedAt: string;
+  direction: StockMovementDirection;
+  sourceType: StockMovementSourceType;
+  itemId: string;
+  lotId?: string | null;
+  locationId: string;
+  quantity: string;
+  grade?: string | null;
+  batchCode?: string | null;
+  referenceType?: string | null;
+  referenceId?: string | null;
+  reference?: string | null;
+  notes?: string | null;
+  createdById?: string | null;
+  item?: Item;
+  lot?: Lot | null;
+  location?: Location;
+  createdBy?: { id: string; fullName?: string } | null;
+  createdAt?: string;
+}
+
+export interface SaleReturn {
+  id: string;
+  returnNumber: string;
+  saleId: string;
+  locationId: string;
+  totalAmount: string;
+  refundMethod: PaymentMethod | string;
+  bankAccountId?: string | null;
+  notes?: string | null;
+  status: string;
+  lines?: SaleReturnLine[];
+  createdAt?: string;
+}
+
+export interface SaleReturnLine {
+  id: string;
+  saleReturnId: string;
+  saleLineId?: string | null;
+  itemId: string;
+  lotId?: string | null;
+  quantity: string;
+  unitPrice: string;
+  lineTotal: string;
+  item?: Item;
+  lot?: Lot | null;
+}
+
 export type AiInsightKind =
   | "DEMAND_FORECAST"
   | "INTAKE_ADVICE"
+  | "STOCK_PREDICTION"
+  | "PROCUREMENT"
   | "YIELD_ANOMALY"
   | "BLEND_OPTIMIZER"
   | "PRICING"
   | "EXPORT_READINESS"
-  | "QUALITY_RISK";
+  | "QUALITY_RISK"
+  | "CREDIT_RISK"
+  | "MARKET_ALERT";
 
 export type AiInsightSeverity = "info" | "warn" | "critical";
 
@@ -1178,7 +1465,14 @@ export interface AiStockTrends {
     week: string;
     projectedGreenNeedKg: number;
     projectedIntakeKg: number;
+    projectedLocalKg?: number;
+    projectedExportKg?: number;
   }>;
+  demand?: {
+    localDailyKg: number;
+    exportDailyKg: number;
+    sampleDays: number;
+  };
   signals: Array<{
     code: string;
     title: string;
@@ -1193,6 +1487,15 @@ export interface AiStockTrends {
     avgDailyIntakeKg: number;
     avgDailySoldKg: number;
   };
+}
+
+export interface AiAskResponse {
+  question: string;
+  intent: string;
+  answer: string;
+  data?: Record<string, unknown>;
+  href?: string;
+  suggestions: string[];
 }
 
 

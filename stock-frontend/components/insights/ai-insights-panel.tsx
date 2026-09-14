@@ -40,6 +40,7 @@ import { api } from "@/lib/api";
 import { buildListPath } from "@/lib/list-query";
 import { errorMessage, formatQty } from "@/lib/format";
 import type {
+  AiAskResponse,
   AiFeedbackDecision,
   AiInsight,
   AiInsightKind,
@@ -48,10 +49,12 @@ import type {
   AiSummary,
 } from "@/lib/types";
 import { toast } from "sonner";
+import { Input } from "@/components/ui/input";
 import {
   AlertTriangleIcon,
   CheckIcon,
   InfoIcon,
+  MessageSquareIcon,
   RefreshCwIcon,
   SparklesIcon,
   TrendingUpIcon,
@@ -63,11 +66,15 @@ const ALL = "__all__";
 const KIND_LABEL: Record<AiInsightKind, string> = {
   DEMAND_FORECAST: "Demand forecast",
   INTAKE_ADVICE: "Intake advice",
+  STOCK_PREDICTION: "Stock prediction",
+  PROCUREMENT: "Procurement",
   YIELD_ANOMALY: "Yield anomaly",
   BLEND_OPTIMIZER: "Blend optimizer",
   PRICING: "Pricing",
   EXPORT_READINESS: "Export readiness",
-  QUALITY_RISK: "Quality risk",
+  QUALITY_RISK: "Quality analysis",
+  CREDIT_RISK: "Credit risk",
+  MARKET_ALERT: "Market alert",
 };
 
 function severityIcon(severity: string) {
@@ -153,6 +160,29 @@ function InsightPayload({ insight }: { insight: AiInsight }) {
       <p className="mt-2 text-sm text-muted-foreground">
         Local {local.currency} {local.floorPerKg}–{local.targetPerKg}/kg · Export{" "}
         {exp.currency} {exp.floorPerKg}–{exp.ceilingPerKg}/kg
+      </p>
+    );
+  }
+  if (insight.kind === "STOCK_PREDICTION" && insight.score != null) {
+    return (
+      <p className="mt-2 text-sm text-muted-foreground">
+        ≈ {insight.score} days to minimum · available{" "}
+        {formatQty(String((p.availableKg as number) ?? 0))} kg
+      </p>
+    );
+  }
+  if (insight.kind === "PROCUREMENT" && p.recommendQuintals != null) {
+    return (
+      <p className="mt-2 text-sm text-muted-foreground">
+        Buy ~{String(p.recommendQuintals)} quintals
+        {p.suggestedGrade ? ` · ${String(p.suggestedGrade)}` : ""}
+      </p>
+    );
+  }
+  if (insight.kind === "CREDIT_RISK" && p.analysis) {
+    return (
+      <p className="mt-2 text-sm text-muted-foreground">
+        Signal: {String(p.analysis).replace(/_/g, " ")}
       </p>
     );
   }
@@ -406,6 +436,110 @@ function StockTrendsSection({ trends }: { trends: AiStockTrends }) {
   );
 }
 
+function AiBusinessAssistant() {
+  const [question, setQuestion] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [history, setHistory] = useState<AiAskResponse[]>([]);
+  const defaults = [
+    "How much Grade 1 coffee do we currently have?",
+    "How much coffee is reserved for export?",
+    "Who owes us the most money?",
+    "Which supplier has the highest rejection rate?",
+    "How much coffee did we export this month?",
+    "What is our total outstanding balance?",
+    "Which grade generated the highest profit?",
+  ];
+
+  async function ask(q: string) {
+    const text = q.trim();
+    if (!text) return;
+    setBusy(true);
+    try {
+      const res = await api<AiAskResponse>("/ai/ask", {
+        method: "POST",
+        body: { question: text },
+      });
+      setHistory((prev) => [res, ...prev].slice(0, 8));
+      setQuestion("");
+    } catch (err) {
+      toast.error(errorMessage(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="space-y-3 rounded border border-[var(--frappe-border)] bg-[var(--frappe-section-head)] p-4">
+      <div className="flex items-center gap-2">
+        <MessageSquareIcon className="size-4 text-[var(--frappe-primary)]" />
+        <h2 className="text-base font-semibold text-[var(--frappe-text)]">
+          AI Business Assistant
+        </h2>
+      </div>
+      <p className="text-sm text-muted-foreground">
+        Ask management questions about stock, exports, credits, quality, and
+        profit. Answers use live system data (rules-based).
+      </p>
+      <form
+        className="flex flex-wrap gap-2"
+        onSubmit={(e) => {
+          e.preventDefault();
+          void ask(question);
+        }}
+      >
+        <Input
+          value={question}
+          onChange={(e) => setQuestion(e.target.value)}
+          placeholder="e.g. How much coffee is reserved for export?"
+          className="min-w-[16rem] flex-1 bg-[var(--frappe-surface)]"
+          disabled={busy}
+        />
+        <FrappeButtonPrimary type="submit" disabled={busy || !question.trim()}>
+          {busy ? "Thinking…" : "Ask"}
+        </FrappeButtonPrimary>
+      </form>
+      <div className="flex flex-wrap gap-2">
+        {defaults.map((s) => (
+          <Button
+            key={s}
+            type="button"
+            size="sm"
+            variant="outline"
+            className="h-auto whitespace-normal px-2 py-1 text-left text-xs"
+            disabled={busy}
+            onClick={() => void ask(s)}
+          >
+            {s}
+          </Button>
+        ))}
+      </div>
+      {history.length > 0 ? (
+        <ul className="space-y-3">
+          {history.map((h, i) => (
+            <li
+              key={`${h.intent}-${i}`}
+              className="rounded border border-[var(--frappe-border)] bg-[var(--frappe-surface)] p-3"
+            >
+              <p className="text-xs text-muted-foreground">{h.question}</p>
+              <p className="mt-1 text-sm text-[var(--frappe-text)]">
+                {h.answer}
+              </p>
+              {h.href ? (
+                <Link
+                  href={h.href}
+                  className="mt-2 inline-block text-xs text-[var(--frappe-primary)] hover:underline"
+                >
+                  Open related screen →
+                </Link>
+              ) : null}
+            </li>
+          ))}
+        </ul>
+      ) : null}
+    </div>
+  );
+}
+
 export function AiInsightsPanel() {
   const [insights, setInsights] = useState<AiInsight[]>([]);
   const [summary, setSummary] = useState<AiSummary | null>(null);
@@ -526,6 +660,7 @@ export function AiInsightsPanel() {
 
   return (
     <div className="space-y-6">
+      <AiBusinessAssistant />
       {trends ? <StockTrendsSection trends={trends} /> : null}
 
       <div className="space-y-4">

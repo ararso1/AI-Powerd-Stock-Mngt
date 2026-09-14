@@ -16,6 +16,7 @@ import {
   LotStatus,
   PaymentMethod,
   SaleChannel,
+  StockMovementSourceType,
 } from '../common/enums';
 import { computeCommissionAmount } from '../common/utils/commission.util';
 import {
@@ -32,6 +33,8 @@ import { Item } from '../database/entities/item.entity';
 import { Lot } from '../database/entities/lot.entity';
 import { LotEvent } from '../database/entities/lot-event.entity';
 import { SaleLine } from '../database/entities/sale-line.entity';
+import { SaleReturnLine } from '../database/entities/sale-return-line.entity';
+import { SaleReturn } from '../database/entities/sale-return.entity';
 import { Sale } from '../database/entities/sale.entity';
 import { User } from '../database/entities/user.entity';
 import { StockService } from '../inventory/stock.service';
@@ -42,7 +45,9 @@ import {
 } from '../notifications/low-stock.service';
 import { CommissionSummaryQueryDto } from './dto/commission-summary-query.dto';
 import { CreateSaleDto, SaleLineDto } from './dto/sale.dto';
+import { CreateSaleReturnDto } from './dto/sale-return.dto';
 import { UpdateSaleDto } from './dto/update-sale.dto';
+import { CreditsService } from '../credits/credits.service';
 
 type SaleCommissionLineInput = Pick<
   SaleLine,
@@ -68,6 +73,7 @@ export class SalesService {
     private readonly banksService: BanksService,
     private readonly notifications: NotificationsService,
     private readonly lowStockService: LowStockService,
+    private readonly creditsService: CreditsService,
   ) {}
 
   async findAll(query: SalesListQueryDto) {
@@ -151,10 +157,21 @@ export class SalesService {
         lines: { item: true, lot: true },
         credit: true,
         soldByUser: true,
+        bankAccount: true,
       },
     });
     if (!sale) throw new NotFoundException('Sale not found');
-    return sale;
+    const total = parseFloat(sale.total);
+    const paid = parseFloat(sale.paidAmount ?? '0');
+    const creditBalance = sale.credit
+      ? parseFloat(sale.credit.balance)
+      : Math.max(0, total - paid);
+    const outstanding =
+      sale.paymentMethod === PaymentMethod.CREDIT ? creditBalance : 0;
+    return {
+      ...sale,
+      outstandingAmount: outstanding.toFixed(2),
+    };
   }
 
   async commissionSummary(query: CommissionSummaryQueryDto) {
@@ -660,6 +677,18 @@ export class SalesService {
 
     const stockChanges: StockQuantityChange[] = [];
 
+    // Pre-calc subtotal for credit-limit check
+    const estimatedTotal = dto.lines.reduce(
+      (sum, l) => sum + l.quantity * l.unitPrice,
+      0,
+    );
+    if (dto.paymentMethod === PaymentMethod.CREDIT && dto.customerId) {
+      await this.creditsService.assertCustomerWithinLimit(
+        dto.customerId,
+        estimatedTotal,
+      );
+    }
+
     const result = await this.dataSource.transaction(async (manager) => {
       if (paysViaBank && dto.bankAccountId) {
         await this.banksService.assertPaymentAccount(
@@ -746,6 +775,7 @@ export class SalesService {
 
       const sale = await saleRepo.save(
         saleRepo.create({
+          invoiceNumber: `INV-${new Date().getFullYear()}-${String((await saleRepo.count()) + 1).padStart(5, '0')}`,
           customerId: dto.customerId ?? null,
           locationId: dto.locationId,
           channel,
@@ -757,6 +787,10 @@ export class SalesService {
           allowNegativeStock: allowNegative,
           subtotal: subtotal.toFixed(2),
           total: subtotal.toFixed(2),
+          paidAmount:
+            dto.paymentMethod === PaymentMethod.CREDIT
+              ? '0.00'
+              : subtotal.toFixed(2),
           notes: dto.notes ?? null,
           stockWarnings: stockWarnings.length ? stockWarnings : null,
           status: DocumentStatus.ACTIVE,
@@ -783,6 +817,17 @@ export class SalesService {
             itemId: line.itemId,
             quantityDelta: -line.quantity,
             lotId,
+            meta: {
+              sourceType:
+                channel === SaleChannel.LOCAL
+                  ? StockMovementSourceType.SALE_LOCAL
+                  : StockMovementSourceType.SALE_EXPORT,
+              referenceType: 'sale',
+              referenceId: sale.id,
+              reference: sale.invoiceNumber ?? sale.id.slice(0, 8),
+              createdById: userId ?? null,
+              notes: `Sale ${sale.invoiceNumber ?? sale.id.slice(0, 8)}`,
+            },
           },
           manager,
         );
@@ -875,4 +920,189 @@ export class SalesService {
       stockWarnings: result.stockWarnings,
     };
   }
+
+  async createReturn(saleId: string, dto: CreateSaleReturnDto, userId?: string) {
+    const sale = await this.findOne(saleId);
+    if (sale.status === DocumentStatus.VOIDED) {
+      throw new BadRequestException('Cannot return a voided sale');
+    }
+    if (sale.channel !== SaleChannel.LOCAL) {
+      throw new BadRequestException('Sales returns are for local sales only');
+    }
+
+    const paysViaBank =
+      dto.refundMethod === PaymentMethod.BANK ||
+      dto.refundMethod === PaymentMethod.CASH;
+    if (paysViaBank && !dto.bankAccountId) {
+      throw new BadRequestException(
+        'bankAccountId required for BANK and CASH refunds',
+      );
+    }
+
+    const returnId = await this.dataSource.transaction(async (manager) => {
+      if (paysViaBank && dto.bankAccountId) {
+        await this.banksService.assertPaymentAccount(
+          dto.refundMethod,
+          dto.bankAccountId,
+          manager,
+        );
+      }
+
+      const returnRepo = manager.getRepository(SaleReturn);
+      const lineRepo = manager.getRepository(SaleReturnLine);
+      const lotRepo = manager.getRepository(Lot);
+      const eventRepo = manager.getRepository(LotEvent);
+      const creditRepo = manager.getRepository(CustomerCredit);
+      const saleRepo = manager.getRepository(Sale);
+
+      let total = 0;
+      const lineDrafts: Array<{
+        saleLineId: string | null;
+        itemId: string;
+        lotId: string | null;
+        quantity: string;
+        unitPrice: string;
+        lineTotal: string;
+      }> = [];
+
+      for (const line of dto.lines) {
+        const lineTotal = line.quantity * line.unitPrice;
+        total += lineTotal;
+        lineDrafts.push({
+          saleLineId: line.saleLineId ?? null,
+          itemId: line.itemId,
+          lotId: line.lotId ?? null,
+          quantity: line.quantity.toFixed(3),
+          unitPrice: line.unitPrice.toFixed(2),
+          lineTotal: lineTotal.toFixed(2),
+        });
+      }
+
+      const returnNumber = `SR-${new Date().getFullYear()}-${String((await returnRepo.count()) + 1).padStart(5, '0')}`;
+      const saleReturn = await returnRepo.save(
+        returnRepo.create({
+          returnNumber,
+          saleId: sale.id,
+          locationId: sale.locationId,
+          totalAmount: total.toFixed(2),
+          refundMethod: dto.refundMethod,
+          bankAccountId: dto.bankAccountId ?? null,
+          notes: dto.notes ?? null,
+          status: 'ACTIVE',
+          createdById: userId ?? null,
+        }),
+      );
+
+      for (const draft of lineDrafts) {
+        await lineRepo.save(
+          lineRepo.create({
+            saleReturnId: saleReturn.id,
+            ...draft,
+          }),
+        );
+        await this.stockService.adjust(
+          {
+            locationId: sale.locationId,
+            itemId: draft.itemId,
+            quantityDelta: parseFloat(draft.quantity),
+            lotId: draft.lotId,
+            meta: {
+              sourceType: StockMovementSourceType.SALE_RETURN,
+              referenceType: 'sale_return',
+              referenceId: saleReturn.id,
+              reference: returnNumber,
+              createdById: userId ?? null,
+              notes: `Return against ${sale.invoiceNumber ?? sale.id.slice(0, 8)}`,
+            },
+          },
+          manager,
+        );
+        if (draft.lotId) {
+          const lot = await lotRepo.findOne({ where: { id: draft.lotId } });
+          if (lot) {
+            lot.quantity = (
+              parseFloat(lot.quantity) + parseFloat(draft.quantity)
+            ).toFixed(3);
+            if (lot.status === LotStatus.VOIDED) {
+              lot.status = LotStatus.ACTIVE;
+            }
+            await lotRepo.save(lot);
+            await eventRepo.save(
+              eventRepo.create({
+                lotId: lot.id,
+                eventType: LotEventType.SALE_RETURNED,
+                quantity: draft.quantity,
+                toLocationId: sale.locationId,
+                notes: `Sale return ${returnNumber}`,
+                createdById: userId ?? null,
+                metadata: {
+                  saleId: sale.id,
+                  saleReturnId: saleReturn.id,
+                },
+              }),
+            );
+          }
+        }
+      }
+
+      if (paysViaBank && dto.bankAccountId) {
+        await this.bankLedger.recordTransaction(
+          {
+            bankAccountId: dto.bankAccountId,
+            type: BankTransactionType.ADJUSTMENT,
+            amount: total,
+            direction: 'out',
+            description: `Sale return ${returnNumber}`,
+            refType: 'sale_return',
+            refId: saleReturn.id,
+            createdById: userId,
+          },
+          manager,
+        );
+        const paid = Math.max(0, parseFloat(sale.paidAmount) - total);
+        sale.paidAmount = paid.toFixed(2);
+        await saleRepo.save(sale);
+      } else if (
+        dto.refundMethod === PaymentMethod.CREDIT &&
+        sale.customerId
+      ) {
+        const credit = await creditRepo.findOne({
+          where: { saleId: sale.id },
+        });
+        if (credit) {
+          const newBalance = Math.max(
+            0,
+            parseFloat(credit.balance) - total,
+          );
+          const newAmount = Math.max(0, parseFloat(credit.amount) - total);
+          credit.amount = newAmount.toFixed(2);
+          credit.balance = newBalance.toFixed(2);
+          credit.status =
+            newBalance <= 0.001
+              ? CreditStatus.PAID
+              : parseFloat(credit.paidAmount) > 0
+                ? CreditStatus.PARTIAL
+                : CreditStatus.OPEN;
+          await creditRepo.save(credit);
+        }
+      }
+
+      return saleReturn.id;
+    });
+
+    return managerFindReturn(this.dataSource, returnId);
+  }
+}
+
+async function managerFindReturn(ds: DataSource, id: string) {
+  return ds.getRepository(SaleReturn).findOne({
+    where: { id },
+    relations: {
+      lines: { item: true, lot: true },
+      sale: true,
+      location: true,
+      bankAccount: true,
+      createdBy: true,
+    },
+  });
 }

@@ -11,7 +11,7 @@ import {
   MaxLength,
   Min,
 } from 'class-validator';
-import { CoffeeForm } from '../../common/enums';
+import { CoffeeForm, ProcessOperationType } from '../../common/enums';
 
 export class CreateProcessTemplateDto {
   @IsString()
@@ -49,6 +49,16 @@ export class CreateProcessTemplateDto {
   @IsOptional()
   @IsUUID()
   outputItemId?: string;
+
+  @IsOptional()
+  @IsEnum(ProcessOperationType)
+  operationType?: ProcessOperationType;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0.001)
+  packSizeKg?: number;
 
   @IsOptional()
   @Type(() => Number)

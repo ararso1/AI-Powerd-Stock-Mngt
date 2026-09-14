@@ -114,6 +114,24 @@ export function PurchaseDetail({ purchase }: { purchase: Purchase }) {
               value={formatMoney(documentTotal(purchase))}
             />
             <DetailField
+              label="Paid"
+              value={formatMoney(
+                purchase.paidAmount ??
+                  (purchase.paymentMethod === "CREDIT"
+                    ? "0"
+                    : documentTotal(purchase))
+              )}
+            />
+            <DetailField
+              label="Outstanding"
+              value={formatMoney(
+                purchase.outstandingAmount ??
+                  purchase.credit?.balance ??
+                  purchase.supplierCredit?.balance ??
+                  "0"
+              )}
+            />
+            <DetailField
               label="Document ID"
               value={
                 <span className="font-mono text-xs">{purchase.id}</span>

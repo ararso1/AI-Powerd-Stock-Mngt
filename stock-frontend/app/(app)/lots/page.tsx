@@ -29,6 +29,7 @@ import {
   COFFEE_FORM_OPTIONS,
   LOT_STATUS_OPTIONS,
   coffeeFormLabel,
+  lotQcPhaseLabel,
   lotStatusLabel,
 } from "@/lib/lots";
 import type { CoffeeForm, Lot, LotStatus } from "@/lib/types";
@@ -219,6 +220,11 @@ export default function LotsPage() {
                 cell: (r) => (
                   <Badge variant="outline">{lotStatusLabel(r.status)}</Badge>
                 ),
+              },
+              {
+                key: "qc",
+                header: "QC phase",
+                cell: (r) => lotQcPhaseLabel(r.qcPhase),
               },
               {
                 key: "created",

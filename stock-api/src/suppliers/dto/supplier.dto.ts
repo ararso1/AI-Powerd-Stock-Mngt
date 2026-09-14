@@ -1,4 +1,12 @@
-import { IsBoolean, IsEmail, IsOptional, IsString } from 'class-validator';
+import { Type } from 'class-transformer';
+import {
+  IsBoolean,
+  IsEmail,
+  IsNumber,
+  IsOptional,
+  IsString,
+  Min,
+} from 'class-validator';
 
 export class CreateSupplierDto {
   @IsString()
@@ -15,6 +23,12 @@ export class CreateSupplierDto {
   @IsOptional()
   @IsString()
   address?: string;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0)
+  creditLimit?: number;
 }
 
 export class UpdateSupplierDto {
@@ -37,4 +51,10 @@ export class UpdateSupplierDto {
   @IsOptional()
   @IsBoolean()
   isActive?: boolean;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0)
+  creditLimit?: number | null;
 }

@@ -23,6 +23,10 @@ export type ExportDocCheckItem = {
   key: string;
   label: string;
   done: boolean;
+  /** External / internal document reference (invoice #, BL #, cert #). */
+  reference?: string | null;
+  /** Optional link or file path to the document. */
+  url?: string | null;
 };
 
 export type ExportPackingLine = {
@@ -42,6 +46,13 @@ export class ExportContract extends UuidBaseEntity {
   @Column({ name: 'buyer_name', type: 'varchar', length: 200 })
   buyerName: string;
 
+  @Column({ name: 'buyer_country', type: 'varchar', length: 100, nullable: true })
+  buyerCountry: string | null;
+
+  /** Optional commercial order reference (distinct from contract number). */
+  @Column({ name: 'order_number', type: 'varchar', length: 40, nullable: true })
+  orderNumber: string | null;
+
   @Column({ name: 'customer_id', type: 'uuid', nullable: true })
   customerId: string | null;
 
@@ -55,6 +66,12 @@ export class ExportContract extends UuidBaseEntity {
 
   @Column({ type: 'varchar', length: 80, nullable: true })
   grade: string | null;
+
+  @Column({ name: 'coffee_type', type: 'varchar', length: 80, nullable: true })
+  coffeeType: string | null;
+
+  @Column({ type: 'varchar', length: 120, nullable: true })
+  origin: string | null;
 
   @Column({
     name: 'price_per_kg',
@@ -126,8 +143,28 @@ export class ExportContract extends UuidBaseEntity {
   @Column({ type: 'text', nullable: true })
   notes: string | null;
 
+  @Column({ type: 'varchar', length: 200, nullable: true })
+  destination: string | null;
+
+  @Column({
+    name: 'container_number',
+    type: 'varchar',
+    length: 40,
+    nullable: true,
+  })
+  containerNumber: string | null;
+
+  @Column({ name: 'shipping_date', type: 'date', nullable: true })
+  shippingDate: string | null;
+
+  @Column({ name: 'expected_arrival', type: 'date', nullable: true })
+  expectedArrival: string | null;
+
   @Column({ name: 'shipped_at', type: 'timestamptz', nullable: true })
   shippedAt: Date | null;
+
+  @Column({ name: 'delivered_at', type: 'timestamptz', nullable: true })
+  deliveredAt: Date | null;
 
   @Column({ name: 'created_by_id', type: 'uuid', nullable: true })
   createdById: string | null;

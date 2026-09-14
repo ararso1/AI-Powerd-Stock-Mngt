@@ -9,6 +9,7 @@ import {
   FrappeButtonLink,
 } from "@/components/frappe";
 import { SaleDocumentActions } from "@/components/transactions/document-actions";
+import { SaleReturnDialog } from "@/components/sales/sale-return-dialog";
 import { formatMoney, formatDate, formatQty } from "@/lib/format";
 import { documentTotal } from "@/lib/document-utils";
 import {
@@ -57,7 +58,13 @@ function lineAmount(line: SaleLine) {
   return "0";
 }
 
-export function SaleDetail({ sale }: { sale: Sale }) {
+export function SaleDetail({
+  sale,
+  onReload,
+}: {
+  sale: Sale;
+  onReload?: () => void;
+}) {
   const lines = sale.lines ?? [];
   const paymentLabel = sale.paymentMethod.replace("_", " ");
   const isVoided = sale.status === "VOIDED";
@@ -73,6 +80,9 @@ export function SaleDetail({ sale }: { sale: Sale }) {
           ) : (
             <Badge variant="outline">{paymentLabel}</Badge>
           )}
+          {!isVoided ? (
+            <SaleReturnDialog sale={sale} onDone={() => onReload?.()} />
+          ) : null}
           <SaleDocumentActions saleId={sale.id} status={sale.status} />
         </div>
       </div>
@@ -88,8 +98,20 @@ export function SaleDetail({ sale }: { sale: Sale }) {
         >
           <FrappeFormGrid columns={2}>
             <DetailField
+              label="Invoice #"
+              value={sale.invoiceNumber ?? sale.id.slice(0, 8)}
+            />
+            <DetailField
               label="Customer"
-              value={sale.customer?.name ?? "—"}
+              value={
+                sale.customer
+                  ? `${sale.customer.name}${
+                      sale.customer.customerType
+                        ? ` · ${sale.customer.customerType}`
+                        : ""
+                    }`
+                  : "—"
+              }
               href={sale.customerId ? `/customers` : undefined}
             />
             <DetailField
@@ -97,6 +119,23 @@ export function SaleDetail({ sale }: { sale: Sale }) {
               value={sale.location?.name ?? "—"}
             />
             <DetailField label="Payment method" value={paymentLabel} />
+            <DetailField
+              label="Total"
+              value={formatMoney(documentTotal(sale))}
+            />
+            <DetailField
+              label="Paid"
+              value={formatMoney(sale.paidAmount ?? (sale.paymentMethod === "CREDIT" ? "0" : documentTotal(sale)))}
+            />
+            <DetailField
+              label="Outstanding"
+              value={formatMoney(
+                sale.outstandingAmount ??
+                  sale.credit?.balance ??
+                  sale.customerCredit?.balance ??
+                  "0"
+              )}
+            />
             {sale.paymentMethod !== "CREDIT" ? (
               <DetailField
                 label="Bank account"
@@ -112,10 +151,6 @@ export function SaleDetail({ sale }: { sale: Sale }) {
                 }
               />
             )}
-            <DetailField
-              label="Total amount"
-              value={formatMoney(documentTotal(sale))}
-            />
             {soldBy ? (
               <DetailField label="Sales rep" value={soldBy.fullName} />
             ) : null}

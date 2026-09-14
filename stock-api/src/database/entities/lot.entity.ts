@@ -8,7 +8,7 @@ import {
   OneToMany,
   UpdateDateColumn,
 } from 'typeorm';
-import { CoffeeForm, LotStatus } from '../../common/enums';
+import { CoffeeForm, LotQcPhase, LotStatus } from '../../common/enums';
 import { Item } from './item.entity';
 import { Location } from './location.entity';
 import { LotEvent } from './lot-event.entity';
@@ -56,6 +56,10 @@ export class Lot extends UuidBaseEntity {
   @Column({ type: 'varchar', length: 120, nullable: true })
   region: string | null;
 
+  /** Origin zone (optional; region/woreda still used). */
+  @Column({ type: 'varchar', length: 120, nullable: true })
+  zone: string | null;
+
   @Column({ type: 'varchar', length: 120, nullable: true })
   woreda: string | null;
 
@@ -64,6 +68,55 @@ export class Lot extends UuidBaseEntity {
 
   @Column({ name: 'moisture_percent', type: 'decimal', precision: 5, scale: 2, nullable: true })
   moisturePercent: string | null;
+
+  @Column({ name: 'screen_size', type: 'varchar', length: 40, nullable: true })
+  screenSize: string | null;
+
+  @Column({
+    name: 'cupping_score',
+    type: 'decimal',
+    precision: 5,
+    scale: 2,
+    nullable: true,
+  })
+  cuppingScore: string | null;
+
+  @Column({ name: 'defect_count', type: 'int', nullable: true })
+  defectCount: number | null;
+
+  @Column({ name: 'defect_level', type: 'varchar', length: 40, nullable: true })
+  defectLevel: string | null;
+
+  @Column({
+    name: 'qc_phase',
+    type: 'enum',
+    enum: LotQcPhase,
+    enumName: 'lots_qc_phase_enum',
+    default: LotQcPhase.RECEIVED,
+  })
+  qcPhase: LotQcPhase;
+
+  @Column({ name: 'inspector_id', type: 'uuid', nullable: true })
+  inspectorId: string | null;
+
+  @Column({ name: 'inspected_at', type: 'timestamptz', nullable: true })
+  inspectedAt: Date | null;
+
+  @Column({ name: 'reject_reason', type: 'text', nullable: true })
+  rejectReason: string | null;
+
+  @Column({
+    name: 'reject_percent',
+    type: 'decimal',
+    precision: 6,
+    scale: 2,
+    nullable: true,
+  })
+  rejectPercent: string | null;
+
+  /** Destination / action for rejected coffee (e.g. local market, reprocess, discard hold). */
+  @Column({ name: 'reject_action', type: 'varchar', length: 120, nullable: true })
+  rejectAction: string | null;
 
   @Column({ name: 'roast_date', type: 'date', nullable: true })
   roastDate: string | null;
@@ -109,6 +162,10 @@ export class Lot extends UuidBaseEntity {
   @ManyToOne(() => User, { nullable: true })
   @JoinColumn({ name: 'created_by_id' })
   createdBy: User | null;
+
+  @ManyToOne(() => User, { nullable: true })
+  @JoinColumn({ name: 'inspector_id' })
+  inspector: User | null;
 
   @ManyToOne(() => RoastProfile, { nullable: true })
   @JoinColumn({ name: 'roast_profile_id' })

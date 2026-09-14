@@ -305,10 +305,14 @@ export default function ProcessRunDetailPage() {
                     }
                   />
                   <DetailField
-                    label="Output kg"
+                    label="Output qty"
                     value={
                       run.quantityOutput
-                        ? formatQty(run.quantityOutput)
+                        ? `${formatQty(run.quantityOutput)}${
+                            run.template?.packSizeKg
+                              ? ` packs (${run.template.packSizeKg} kg each)`
+                              : " kg"
+                          }`
                         : "—"
                     }
                   />
@@ -317,8 +321,22 @@ export default function ProcessRunDetailPage() {
                     value={formatQty(run.quantityReject)}
                   />
                   <DetailField
+                    label="Production loss"
+                    value={
+                      run.quantityLoss
+                        ? `${formatQty(run.quantityLoss)} kg`
+                        : run.status === "COMPLETED"
+                          ? "0"
+                          : "—"
+                    }
+                  />
+                  <DetailField
                     label="Process cost"
                     value={formatMoney(run.processCost)}
+                  />
+                  <DetailField
+                    label="Operation"
+                    value={run.template?.operationType ?? "—"}
                   />
                   <DetailField
                     label="Started"
@@ -489,8 +507,17 @@ export default function ProcessRunDetailPage() {
                   <DialogTitle>Complete with yield</DialogTitle>
                 </DialogHeader>
                 <div className="grid gap-3 py-2">
+                  <p className="text-xs text-[var(--frappe-text-muted)]">
+                    {run?.template?.packSizeKg
+                      ? `Packaging: enter pack count. Each pack = ${run.template.packSizeKg} kg. Loss = input − (packs × size) − reject.`
+                      : "Production loss is calculated automatically: input − output − reject (e.g. 100 → 82 roasted = 18 kg loss)."}
+                  </p>
                   <div className="grid gap-1.5">
-                    <Label>Output quantity (kg)</Label>
+                    <Label>
+                      {run?.template?.packSizeKg
+                        ? "Output pack count"
+                        : "Output quantity (kg)"}
+                    </Label>
                     <Input
                       type="number"
                       min={0.001}
@@ -500,7 +527,7 @@ export default function ProcessRunDetailPage() {
                     />
                   </div>
                   <div className="grid gap-1.5">
-                    <Label>Reject / loss (kg)</Label>
+                    <Label>Reject kg (kept in inventory)</Label>
                     <Input
                       type="number"
                       min={0}
@@ -509,6 +536,22 @@ export default function ProcessRunDetailPage() {
                       onChange={(e) => setQtyReject(e.target.value)}
                     />
                   </div>
+                  {qtyOut && run ? (
+                    <p className="text-sm text-[var(--frappe-text)]">
+                      Est. loss:{" "}
+                      {(() => {
+                        const input = parseFloat(run.quantityInput);
+                        const out = parseFloat(qtyOut) || 0;
+                        const rej = parseFloat(qtyReject) || 0;
+                        const pack = run.template?.packSizeKg
+                          ? parseFloat(run.template.packSizeKg)
+                          : 0;
+                        const weightOut = pack > 0 ? out * pack : out;
+                        return Math.max(0, input - weightOut - rej).toFixed(3);
+                      })()}{" "}
+                      kg
+                    </p>
+                  ) : null}
                   <div className="grid gap-1.5">
                     <Label>Output grade</Label>
                     <Input

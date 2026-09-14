@@ -63,6 +63,7 @@ import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ExportInventoryButton } from "@/components/inventory/export-inventory-button";
 import { InventoryAdjustmentsPanel } from "@/components/inventory/inventory-adjustments-panel";
+import { InventoryMovementsPanel } from "@/components/inventory/inventory-movements-panel";
 import { StockAdjustDialog } from "@/components/inventory/stock-adjust-dialog";
 import { useAuth } from "@/lib/auth";
 import { hasPermission } from "@/lib/permissions";
@@ -188,6 +189,7 @@ export default function InventoryPage() {
         <Tabs defaultValue="stock" className="gap-4">
           <TabsList>
             <TabsTrigger value="stock">Stock</TabsTrigger>
+            <TabsTrigger value="ledger">Stock ledger</TabsTrigger>
             <TabsTrigger value="adjustments">Adjustments</TabsTrigger>
           </TabsList>
           <TabsContent value="stock" className="mt-0 space-y-0">
@@ -371,14 +373,25 @@ export default function InventoryPage() {
               {
                 key: "qty",
                 header: "Quantity",
-                className: "w-28 text-right tabular-nums",
+                className: "w-36 text-right tabular-nums",
                 cell: (r) => {
                   const lowRow = r as LowStockRecord;
                   const showLowBadge =
                     isLowStockView || isLowStockRow(r as StockRecord);
+                  const reserved = parseFloat(r.reservedQuantity ?? "0");
+                  const available = Math.max(
+                    0,
+                    parseFloat(r.quantity) - reserved
+                  );
                   return (
                     <div className="flex flex-col items-end gap-1">
                       <span>{formatQty(r.quantity)}</span>
+                      {reserved > 0 ? (
+                        <span className="text-[10px] text-[var(--frappe-text-muted)]">
+                          avail {formatQty(String(available))} · reserved{" "}
+                          {formatQty(String(reserved))}
+                        </span>
+                      ) : null}
                       {showLowBadge ? (
                         <Badge
                           variant={
@@ -470,6 +483,9 @@ export default function InventoryPage() {
             ]}
           />
         )}
+          </TabsContent>
+          <TabsContent value="ledger" className="mt-0">
+            <InventoryMovementsPanel />
           </TabsContent>
           <TabsContent value="adjustments" className="mt-0">
             <InventoryAdjustmentsPanel />

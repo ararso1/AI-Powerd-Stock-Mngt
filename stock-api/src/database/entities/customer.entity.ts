@@ -5,6 +5,7 @@ import {
   OneToMany,
   UpdateDateColumn,
 } from 'typeorm';
+import { CustomerType } from '../../common/enums';
 import { Sale } from './sale.entity';
 import { UuidBaseEntity } from './uuid-base.entity';
 
@@ -12,6 +13,15 @@ import { UuidBaseEntity } from './uuid-base.entity';
 export class Customer extends UuidBaseEntity {
   @Column({ length: 150 })
   name: string;
+
+  @Column({
+    name: 'customer_type',
+    type: 'enum',
+    enum: CustomerType,
+    enumName: 'customers_customer_type_enum',
+    default: CustomerType.RETAIL,
+  })
+  customerType: CustomerType;
 
   @Column({ type: 'varchar', length: 50, nullable: true })
   phone: string | null;
@@ -24,6 +34,16 @@ export class Customer extends UuidBaseEntity {
 
   @Column({ name: 'is_active', default: true })
   isActive: boolean;
+
+  /** Max open receivable (ETB). Null = no limit. */
+  @Column({
+    name: 'credit_limit',
+    type: 'decimal',
+    precision: 14,
+    scale: 2,
+    nullable: true,
+  })
+  creditLimit: string | null;
 
   @OneToMany(() => Sale, (sale) => sale.customer)
   sales: Sale[];

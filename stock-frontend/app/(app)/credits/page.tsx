@@ -43,7 +43,9 @@ import {
 import { formatMoney, formatDate, errorMessage } from "@/lib/format";
 import type {
   BankAccount,
+  CreditAgingReport,
   CreditListTotals,
+  CreditPaymentHistoryItem,
   CreditRecord,
   CreditStatus,
 } from "@/lib/types";
@@ -52,6 +54,7 @@ import { useFetch } from "@/hooks/use-fetch";
 import { usePaginatedList } from "@/hooks/use-paginated-list";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
+import { Switch } from "@/components/ui/switch";
 
 function creditStatusBadge(status: CreditStatus) {
   const variant =
@@ -137,16 +140,18 @@ function creditColumns(
       cell: (r: CreditRecord) => (
         <span
           className={cn(
-            isCreditOverdue(r) && "font-medium text-[var(--frappe-red)]"
+            (r.isOverdue || isCreditOverdue(r)) &&
+              "font-medium text-[var(--frappe-red)]"
           )}
         >
           {formatDate(r.dueDate)}
+          {r.daysOverdue ? ` · ${r.daysOverdue}d overdue` : null}
         </span>
       ),
     },
     {
       key: "amount",
-      header: "Amount",
+      header: "Invoice",
       className: "text-right",
       cell: (r: CreditRecord) => formatMoney(r.amount),
     },
@@ -158,14 +163,21 @@ function creditColumns(
     },
     {
       key: "balance",
-      header: "Balance",
+      header: "Outstanding",
       className: "text-right",
       cell: (r: CreditRecord) => formatMoney(creditBalance(r)),
     },
     {
       key: "status",
       header: "Status",
-      cell: (r: CreditRecord) => creditStatusBadge(r.status),
+      cell: (r: CreditRecord) => (
+        <div className="flex flex-wrap items-center gap-1">
+          {creditStatusBadge(r.status)}
+          {r.isOverdue || isCreditOverdue(r) ? (
+            <Badge variant="destructive">OVERDUE</Badge>
+          ) : null}
+        </div>
+      ),
     },
     {
       key: "pay",
@@ -187,8 +199,10 @@ function creditColumns(
 export default function CreditsPage() {
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState<CreditStatus | "">("");
+  const [overdueOnly, setOverdueOnly] = useState(false);
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
+  const [reminding, setReminding] = useState(false);
   const debouncedSearch = useDebouncedValue(search);
 
   const customerList = usePaginatedList<CreditRecord, CreditListTotals>(
@@ -199,11 +213,12 @@ export default function CreditsPage() {
           to: to || undefined,
           search: debouncedSearch || undefined,
           status: status || undefined,
+          overdue: overdueOnly || undefined,
         },
         page,
         limit
       ),
-    [from, to, debouncedSearch, status]
+    [from, to, debouncedSearch, status, overdueOnly]
   );
   const supplierList = usePaginatedList<CreditRecord, CreditListTotals>(
     (page, limit) =>
@@ -213,20 +228,56 @@ export default function CreditsPage() {
           to: to || undefined,
           search: debouncedSearch || undefined,
           status: status || undefined,
+          overdue: overdueOnly || undefined,
         },
         page,
         limit
       ),
-    [from, to, debouncedSearch, status]
+    [from, to, debouncedSearch, status, overdueOnly]
+  );
+
+  const { data: aging, reload: reloadAging } = useFetch(
+    () => api<CreditAgingReport>("/credits/aging"),
+    []
   );
 
   const reloadAll = () => {
     customerList.reload();
     supplierList.reload();
+    void reloadAging();
   };
 
+  async function sendReminders() {
+    setReminding(true);
+    try {
+      const res = await api<{ sent: number }>("/credits/reminders", {
+        method: "POST",
+        body: {},
+      });
+      toast.success(`Sent ${res.sent} payment reminder${res.sent === 1 ? "" : "s"}`);
+    } catch (err) {
+      toast.error(errorMessage(err));
+    } finally {
+      setReminding(false);
+    }
+  }
+
   return (
-    <AppShell title="Credits">
+    <AppShell
+      title="Credits"
+      subtitle="Customer receivables & supplier payables — invoice, paid, outstanding"
+      actions={
+        <PermissionGate permission="credit.write">
+          <Button
+            variant="outline"
+            disabled={reminding}
+            onClick={() => void sendReminders()}
+          >
+            {reminding ? "Sending…" : "Send payment reminders"}
+          </Button>
+        </PermissionGate>
+      }
+    >
       <PermissionGate permission="credit.read">
         <FrappeFilterBar>
           <ListSearchField
@@ -256,11 +307,22 @@ export default function CreditsPage() {
               <SelectItem value="PAID">Paid</SelectItem>
             </SelectContent>
           </Select>
+          <div className="flex items-center gap-2 rounded border border-[var(--frappe-border)] px-3 py-2">
+            <Switch
+              checked={overdueOnly}
+              onCheckedChange={setOverdueOnly}
+              id="overdue-only"
+            />
+            <Label htmlFor="overdue-only" className="text-sm">
+              Overdue only
+            </Label>
+          </div>
         </FrappeFilterBar>
         <Tabs defaultValue="customers">
           <TabsList>
             <TabsTrigger value="customers">Customer credit</TabsTrigger>
-            <TabsTrigger value="suppliers">Supplier credit</TabsTrigger>
+            <TabsTrigger value="suppliers">Supplier payables</TabsTrigger>
+            <TabsTrigger value="aging">Aging analysis</TabsTrigger>
           </TabsList>
           <TabsContent value="customers" className="mt-4">
             <FrappeListToolbar>
@@ -272,7 +334,7 @@ export default function CreditsPage() {
                 <ListPageTotals
                   items={[
                     {
-                      label: "Amount",
+                      label: "Invoice",
                       value: formatMoney(customerList.totals.amount),
                     },
                     {
@@ -280,7 +342,7 @@ export default function CreditsPage() {
                       value: formatMoney(customerList.totals.paidAmount),
                     },
                     {
-                      label: "Balance",
+                      label: "Outstanding",
                       value: formatMoney(customerList.totals.balance),
                     },
                   ]}
@@ -313,7 +375,7 @@ export default function CreditsPage() {
                 <ListPageTotals
                   items={[
                     {
-                      label: "Amount",
+                      label: "Invoice",
                       value: formatMoney(supplierList.totals.amount),
                     },
                     {
@@ -321,7 +383,7 @@ export default function CreditsPage() {
                       value: formatMoney(supplierList.totals.paidAmount),
                     },
                     {
-                      label: "Balance",
+                      label: "Outstanding",
                       value: formatMoney(supplierList.totals.balance),
                     },
                   ]}
@@ -344,9 +406,71 @@ export default function CreditsPage() {
               />
             )}
           </TabsContent>
+          <TabsContent value="aging" className="mt-4 space-y-6">
+            {!aging ? (
+              <PageLoading />
+            ) : (
+              <div className="grid gap-6 lg:grid-cols-2">
+                <AgingPanel
+                  title="Customer receivables aging"
+                  side={aging.customers}
+                />
+                <AgingPanel
+                  title="Supplier payables aging"
+                  side={aging.suppliers}
+                />
+              </div>
+            )}
+          </TabsContent>
         </Tabs>
       </PermissionGate>
     </AppShell>
+  );
+}
+
+function AgingPanel({
+  title,
+  side,
+}: {
+  title: string;
+  side: CreditAgingReport["customers"];
+}) {
+  return (
+    <div className="rounded border border-[var(--frappe-border)]">
+      <div className="border-b border-[var(--frappe-border)] bg-[var(--frappe-section-head)] px-4 py-3">
+        <h3 className="text-sm font-semibold text-[var(--frappe-text)]">
+          {title}
+        </h3>
+        <p className="mt-1 text-xs text-[var(--frappe-text-muted)]">
+          Outstanding{" "}
+          <span className="font-medium tabular-nums text-[var(--frappe-text)]">
+            {formatMoney(side.totalOutstanding)}
+          </span>
+        </p>
+      </div>
+      <div className="overflow-x-auto">
+        <table className="frappe-list-table">
+          <thead>
+            <tr>
+              <th>Bucket</th>
+              <th className="text-right">Count</th>
+              <th className="text-right">Balance</th>
+            </tr>
+          </thead>
+          <tbody>
+            {side.buckets.map((b) => (
+              <tr key={b.key}>
+                <td>{b.label}</td>
+                <td className="text-right tabular-nums">{b.count}</td>
+                <td className="text-right tabular-nums">
+                  {formatMoney(b.balance)}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
   );
 }
 
@@ -370,6 +494,17 @@ function PaymentButton({
     () => apiList<BankAccount>("/banks/accounts"),
     []
   );
+  const historyPath =
+    type === "customer"
+      ? `/credits/customers/${credit.id}/payments`
+      : `/credits/suppliers/${credit.id}/payments`;
+  const { data: history } = useFetch(
+    () =>
+      open
+        ? api<CreditPaymentHistoryItem[]>(historyPath)
+        : Promise.resolve([] as CreditPaymentHistoryItem[]),
+    [open, historyPath]
+  );
 
   function handleOpen() {
     setAmount(outstanding);
@@ -380,11 +515,7 @@ function PaymentButton({
     e.preventDefault();
     setSaving(true);
     try {
-      const path =
-        type === "customer"
-          ? `/credits/customers/${credit.id}/payments`
-          : `/credits/suppliers/${credit.id}/payments`;
-      await api(path, {
+      await api(historyPath, {
         method: "POST",
         body: { amount: parseFloat(amount), bankAccountId },
       });
@@ -411,7 +542,7 @@ function PaymentButton({
           if (!next) setAmount("");
         }}
       >
-        <DialogContent>
+        <DialogContent className="max-w-lg">
           <form onSubmit={handleSubmit}>
             <DialogHeader>
               <DialogTitle>Record payment</DialogTitle>
@@ -425,20 +556,32 @@ function PaymentButton({
                   </span>
                 </p>
               ) : null}
-              <p className="text-sm text-[var(--frappe-text-muted)]">
-                Outstanding balance:{" "}
-                <span className="font-medium tabular-nums text-[var(--frappe-text)]">
-                  {formatMoney(outstanding)}
-                </span>
+              <div className="rounded border border-[var(--frappe-border)] bg-[var(--frappe-section-head)] px-3 py-2 text-sm">
+                <div className="flex justify-between gap-2">
+                  <span className="text-[var(--frappe-text-muted)]">Invoice</span>
+                  <span className="tabular-nums">{formatMoney(credit.amount)}</span>
+                </div>
+                <div className="flex justify-between gap-2">
+                  <span className="text-[var(--frappe-text-muted)]">Paid</span>
+                  <span className="tabular-nums">
+                    {formatMoney(credit.paidAmount)}
+                  </span>
+                </div>
+                <div className="flex justify-between gap-2 font-medium">
+                  <span>Outstanding</span>
+                  <span className="tabular-nums">{formatMoney(outstanding)}</span>
+                </div>
                 {credit.dueDate ? (
-                  <>
-                    {" "}
-                    · Due {formatDate(credit.dueDate)}
-                  </>
+                  <p className="mt-1 text-xs text-[var(--frappe-text-muted)]">
+                    Due {formatDate(credit.dueDate)}
+                    {credit.isOverdue || isCreditOverdue(credit)
+                      ? ` · ${credit.daysOverdue ?? ""}d overdue`
+                      : null}
+                  </p>
                 ) : null}
-              </p>
+              </div>
               <div className="grid gap-2">
-                <Label>Amount</Label>
+                <Label>Partial / full payment amount</Label>
                 <Input
                   type="number"
                   step="any"
@@ -465,6 +608,33 @@ function PaymentButton({
                     )}
                   </SelectContent>
                 </Select>
+              </div>
+              <div className="grid gap-2">
+                <Label>Payment history</Label>
+                {!history?.length ? (
+                  <p className="text-xs text-[var(--frappe-text-muted)]">
+                    No payments recorded yet.
+                  </p>
+                ) : (
+                  <ul className="max-h-40 space-y-1 overflow-y-auto text-xs">
+                    {history.map((p) => (
+                      <li
+                        key={p.id}
+                        className="flex justify-between gap-2 border-b border-[var(--frappe-border)] py-1"
+                      >
+                        <span>
+                          {formatDate(p.date)}
+                          {p.bankAccount?.name
+                            ? ` · ${p.bankAccount.name}`
+                            : ""}
+                        </span>
+                        <span className="tabular-nums font-medium">
+                          {formatMoney(p.amount)}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
               </div>
             </div>
             <DialogFooter>

@@ -2,6 +2,18 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
+import {
+  Bar,
+  BarChart,
+  CartesianGrid,
+  Cell,
+  Line,
+  LineChart,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from "recharts";
 import { Badge } from "@/components/ui/badge";
 import {
   Card,
@@ -31,15 +43,19 @@ import {
   ArrowDownIcon,
   ArrowUpIcon,
   CheckCircle2Icon,
+  FactoryIcon,
   InfoIcon,
   PackageIcon,
   ScaleIcon,
   ShipIcon,
+  SparklesIcon,
   TrendingUpIcon,
+  WalletIcon,
   WorkflowIcon,
 } from "lucide-react";
 
 const POLL_MS = 45000;
+const CHART_COLORS = ["#2f6f4e", "#c47b3a", "#4a6fa5", "#8b5e3c", "#6b8f71"];
 
 function MetricLink({
   href,
@@ -70,6 +86,75 @@ function MetricLink({
   );
 }
 
+function KpiTile({
+  label,
+  value,
+  href,
+}: {
+  label: string;
+  value: string;
+  href?: string;
+}) {
+  const body = (
+    <>
+      <p className="text-xs text-[var(--frappe-text-muted)]">{label}</p>
+      <p className="mt-1 text-base font-semibold tabular-nums text-[var(--frappe-text)]">
+        {value}
+      </p>
+    </>
+  );
+  if (href) {
+    return (
+      <Link
+        href={href}
+        className="rounded-md border border-[var(--frappe-border)] p-3 transition hover:border-[var(--frappe-primary)]"
+      >
+        {body}
+      </Link>
+    );
+  }
+  return (
+    <div className="rounded-md border border-[var(--frappe-border)] p-3">
+      {body}
+    </div>
+  );
+}
+
+function MiniBarChart({
+  data,
+  valueKey = "value",
+  nameKey = "label",
+}: {
+  data: Array<Record<string, string | number>>;
+  valueKey?: string;
+  nameKey?: string;
+}) {
+  if (!data.length) {
+    return (
+      <p className="flex h-36 items-center justify-center text-sm text-muted-foreground">
+        No chart data yet
+      </p>
+    );
+  }
+  return (
+    <div className="h-36 w-full">
+      <ResponsiveContainer width="100%" height="100%">
+        <BarChart data={data} margin={{ top: 4, right: 4, left: -18, bottom: 0 }}>
+          <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e5e7eb" />
+          <XAxis dataKey={nameKey} tick={{ fontSize: 11 }} />
+          <YAxis tick={{ fontSize: 11 }} />
+          <Tooltip />
+          <Bar dataKey={valueKey} radius={[4, 4, 0, 0]}>
+            {data.map((_, i) => (
+              <Cell key={i} fill={CHART_COLORS[i % CHART_COLORS.length]} />
+            ))}
+          </Bar>
+        </BarChart>
+      </ResponsiveContainer>
+    </div>
+  );
+}
+
 function severityIcon(severity: string) {
   if (severity === "critical") {
     return <AlertTriangleIcon className="size-4 text-red-600" />;
@@ -78,6 +163,46 @@ function severityIcon(severity: string) {
     return <AlertTriangleIcon className="size-4 text-amber-600" />;
   }
   return <InfoIcon className="size-4 text-[var(--csolve-moss)]" />;
+}
+
+function insightTone(tone: string) {
+  switch (tone) {
+    case "critical":
+      return {
+        border: "border-red-200",
+        bg: "bg-red-50",
+        badge: "bg-red-100 text-red-800",
+        mark: "🔴",
+      };
+    case "warn":
+      return {
+        border: "border-amber-200",
+        bg: "bg-amber-50",
+        badge: "bg-amber-100 text-amber-900",
+        mark: "⚠️",
+      };
+    case "profit":
+      return {
+        border: "border-emerald-200",
+        bg: "bg-emerald-50",
+        badge: "bg-emerald-100 text-emerald-900",
+        mark: "💰",
+      };
+    case "info":
+      return {
+        border: "border-sky-200",
+        bg: "bg-sky-50",
+        badge: "bg-sky-100 text-sky-900",
+        mark: "📈",
+      };
+    default:
+      return {
+        border: "border-emerald-200",
+        bg: "bg-emerald-50",
+        badge: "bg-emerald-100 text-emerald-900",
+        mark: "🟢",
+      };
+  }
 }
 
 export function CommandCenter() {
@@ -128,14 +253,17 @@ export function CommandCenter() {
   const links = data.links ?? {};
   const pnl = data.profitAndLoss;
   const fin = data.financialOverview;
+  const analytics = data.analytics;
+  const insights = data.executiveInsights ?? [];
+  const market = data.market;
 
   return (
     <div className="flex flex-col gap-6">
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <p className="text-sm text-[var(--frappe-text-muted)]">
-            Where is the coffee? Is quality OK? Are we covering contracts? Are we
-            making money?
+            Executive analytics across inventory, trading, quality, finance,
+            production, and export — with live AI insights on top.
           </p>
           {data.asOf ? (
             <p className="mt-1 text-xs text-[var(--frappe-text-muted)]">
@@ -150,6 +278,445 @@ export function CommandCenter() {
           onToChange={setTo}
         />
       </div>
+
+      <section>
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+          <div className="flex items-center gap-2">
+            <SparklesIcon className="size-4 text-[var(--csolve-moss)]" />
+            <h2 className="text-sm font-semibold uppercase tracking-wide text-[var(--frappe-text-muted)]">
+              AI Executive Insights
+            </h2>
+          </div>
+          <Link
+            href={links.insights ?? "/insights"}
+            className="text-xs font-medium text-[var(--frappe-primary)] hover:underline"
+          >
+            Open AI advice →
+          </Link>
+        </div>
+        {insights.length > 0 ? (
+          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+            {insights.map((card) => {
+              const tone = insightTone(card.tone);
+              return (
+                <Link
+                  key={card.id}
+                  href={card.href}
+                  className={`rounded-lg border ${tone.border} ${tone.bg} p-4 transition hover:shadow-sm`}
+                >
+                  <div className="mb-2 flex items-center gap-2">
+                    <span aria-hidden>{tone.mark}</span>
+                    <span
+                      className={`rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${tone.badge}`}
+                    >
+                      {card.category}
+                    </span>
+                  </div>
+                  <p className="text-sm font-medium text-[var(--frappe-text)]">
+                    {card.title}
+                  </p>
+                  <p className="mt-1 text-xs text-[var(--frappe-text-muted)]">
+                    {card.detail}
+                  </p>
+                </Link>
+              );
+            })}
+          </div>
+        ) : (
+          <Card>
+            <CardContent className="py-6 text-sm text-muted-foreground">
+              No executive insights yet — add sales, collections, or credits to
+              surface stock days, credit risk, quality, and profit mix.
+            </CardContent>
+          </Card>
+        )}
+      </section>
+
+      {market ? (
+        <section>
+          <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+            <h2 className="text-sm font-semibold uppercase tracking-wide text-[var(--frappe-text-muted)]">
+              ICE market prices
+            </h2>
+            <Link
+              href={links.marketPrices ?? "/market-prices"}
+              className="text-xs font-medium text-[var(--frappe-primary)] hover:underline"
+            >
+              Open market prices →
+            </Link>
+          </div>
+          <div className="grid gap-4 xl:grid-cols-3">
+            <Card className="xl:col-span-2">
+              <CardHeader className="pb-2">
+                <CardTitle className="text-base">Arabica KC · 30-day USD/kg</CardTitle>
+                <CardDescription>
+                  FX 1 USD = {market.fx.rate.toFixed(2)} ETB
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div className="h-40 w-full">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <LineChart
+                      data={market.chart30d}
+                      margin={{ top: 4, right: 4, left: -18, bottom: 0 }}
+                    >
+                      <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                      <XAxis dataKey="date" tick={{ fontSize: 10 }} />
+                      <YAxis tick={{ fontSize: 10 }} />
+                      <Tooltip />
+                      <Line
+                        type="monotone"
+                        dataKey="usdPerKg"
+                        stroke="#2f6f4e"
+                        dot={false}
+                        strokeWidth={2}
+                      />
+                    </LineChart>
+                  </ResponsiveContainer>
+                </div>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-base">Spot & valuation</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                {(market.instruments ?? []).map((raw) => {
+                  const inst = raw as {
+                    symbol?: string;
+                    name?: string;
+                    available?: boolean;
+                    usdPerKg?: number;
+                    etbPerKg?: number;
+                    change7dPercent?: number | null;
+                  };
+                  if (!inst.available) return null;
+                  return (
+                    <div key={String(inst.symbol)} className="rounded-md border p-3">
+                      <p className="text-xs text-muted-foreground">{inst.name}</p>
+                      <p className="text-lg font-semibold tabular-nums">
+                        {Number(inst.usdPerKg).toFixed(3)} USD/kg
+                      </p>
+                      <p className="text-xs text-muted-foreground">
+                        {Number(inst.etbPerKg).toFixed(1)} ETB/kg · 7d{" "}
+                        {inst.change7dPercent == null
+                          ? "—"
+                          : `${inst.change7dPercent > 0 ? "+" : ""}${inst.change7dPercent}%`}
+                      </p>
+                    </div>
+                  );
+                })}
+                <div className="rounded-md border p-3">
+                  <p className="text-xs text-muted-foreground">
+                    Green stock market vs book
+                  </p>
+                  <p className="font-semibold tabular-nums">
+                    {formatMoney(String(market.valuation.marketValueEtb))}
+                  </p>
+                  <p className="text-xs text-muted-foreground">
+                    Book {formatMoney(String(market.valuation.bookValueEtb))}
+                    {market.valuation.gapPercent != null
+                      ? ` · gap ${market.valuation.gapPercent}%`
+                      : ""}
+                  </p>
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+        </section>
+      ) : null}
+
+      {analytics ? (
+        <section className="space-y-4">
+          <h2 className="text-sm font-semibold uppercase tracking-wide text-[var(--frappe-text-muted)]">
+            Analytical dashboard
+          </h2>
+
+          <div className="grid gap-4 xl:grid-cols-2">
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2 text-base">
+                  <PackageIcon className="size-4" />
+                  Inventory
+                </CardTitle>
+                <CardDescription>
+                  Total, available, reserved, and export-committed stock
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+                  <KpiTile
+                    label="Total stock"
+                    value={`${formatQty(analytics.inventory.totalStockKg)} kg`}
+                    href="/inventory"
+                  />
+                  <KpiTile
+                    label="Stock value"
+                    value={formatMoney(analytics.inventory.stockValue)}
+                    href="/inventory"
+                  />
+                  <KpiTile
+                    label="Available"
+                    value={`${formatQty(analytics.inventory.availableKg)} kg`}
+                    href="/inventory"
+                  />
+                  <KpiTile
+                    label="Reserved"
+                    value={`${formatQty(analytics.inventory.reservedKg)} kg`}
+                    href="/inventory"
+                  />
+                  <KpiTile
+                    label="Export stock"
+                    value={`${formatQty(analytics.inventory.exportStockKg)} kg`}
+                    href={links.exportStaged ?? "/exports"}
+                  />
+                  <KpiTile
+                    label="Low-stock items"
+                    value={String(analytics.inventory.lowStockItems)}
+                    href="/inventory?lowStock=1"
+                  />
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2 text-base">
+                  <TrendingUpIcon className="size-4" />
+                  Trading
+                </CardTitle>
+                <CardDescription>
+                  Purchases vs local and export sales for the period
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+                  <KpiTile
+                    label="Total purchases"
+                    value={formatMoney(analytics.trading.totalPurchases)}
+                    href="/purchases"
+                  />
+                  <KpiTile
+                    label="Local sales"
+                    value={formatMoney(analytics.trading.localSalesValue)}
+                    href={links.localSales ?? "/sales?channel=LOCAL"}
+                  />
+                  <KpiTile
+                    label="Export sales"
+                    value={formatMoney(analytics.trading.exportSalesValue)}
+                    href="/sales?channel=EXPORT"
+                  />
+                  <KpiTile
+                    label="Sales volume"
+                    value={`${formatQty(analytics.trading.salesVolumeKg)} kg`}
+                    href="/sales"
+                  />
+                  <KpiTile
+                    label="Sales value"
+                    value={formatMoney(analytics.trading.salesValue)}
+                    href="/sales"
+                  />
+                </div>
+                <MiniBarChart data={analytics.trading.chart} />
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2 text-base">
+                  <ScaleIcon className="size-4" />
+                  Quality
+                </CardTitle>
+                <CardDescription>
+                  Acceptance, rejection, grade mix, and supplier ranking
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+                  <KpiTile
+                    label="Accepted qty"
+                    value={`${formatQty(analytics.quality.acceptedQtyKg)} kg`}
+                    href={links.collectionsToday ?? "/collections"}
+                  />
+                  <KpiTile
+                    label="Rejected qty"
+                    value={`${formatQty(analytics.quality.rejectedQtyKg)} kg`}
+                    href="/collections"
+                  />
+                  <KpiTile
+                    label="Rejection %"
+                    value={`${analytics.quality.rejectionPercent}%`}
+                    href="/collections"
+                  />
+                </div>
+                <MiniBarChart
+                  data={analytics.quality.gradeDistribution.map((g) => ({
+                    label: g.grade,
+                    value: g.kg,
+                  }))}
+                />
+                {analytics.quality.supplierRanking.length > 0 ? (
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Supplier</TableHead>
+                        <TableHead className="text-right">Reject %</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {analytics.quality.supplierRanking.slice(0, 5).map((s) => (
+                        <TableRow key={s.supplierName}>
+                          <TableCell>{s.supplierName}</TableCell>
+                          <TableCell className="text-right tabular-nums">
+                            {s.rejectionPercent}%
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                ) : null}
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2 text-base">
+                  <WalletIcon className="size-4" />
+                  Finance
+                </CardTitle>
+                <CardDescription>
+                  Receivables, payables, overdue, and paid vs unpaid
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+                  <KpiTile
+                    label="Receivables"
+                    value={formatMoney(analytics.finance.totalReceivables)}
+                    href={links.credits ?? "/credits"}
+                  />
+                  <KpiTile
+                    label="Payables"
+                    value={formatMoney(analytics.finance.totalPayables)}
+                    href="/credits?tab=suppliers"
+                  />
+                  <KpiTile
+                    label="Customer outstanding"
+                    value={formatMoney(analytics.finance.customerOutstanding)}
+                    href="/credits"
+                  />
+                  <KpiTile
+                    label="Supplier outstanding"
+                    value={formatMoney(analytics.finance.supplierOutstanding)}
+                    href="/credits?tab=suppliers"
+                  />
+                  <KpiTile
+                    label="Overdue balances"
+                    value={formatMoney(analytics.finance.overdueBalances)}
+                    href="/credits?overdue=1"
+                  />
+                  <KpiTile
+                    label="Paid / unpaid"
+                    value={`${formatMoney(analytics.finance.paidAmount)} / ${formatMoney(analytics.finance.unpaidAmount)}`}
+                    href="/credits"
+                  />
+                </div>
+                <MiniBarChart data={analytics.finance.chart} />
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2 text-base">
+                  <FactoryIcon className="size-4" />
+                  Production
+                </CardTitle>
+                <CardDescription>
+                  Processing volume, roast, yield, and loss
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+                  <KpiTile
+                    label="Processing volume"
+                    value={`${formatQty(analytics.production.processingVolumeKg)} kg`}
+                    href={links.processWip ?? "/process-runs"}
+                  />
+                  <KpiTile
+                    label="Roasting volume"
+                    value={`${formatQty(analytics.production.roastingVolumeKg)} kg`}
+                    href="/process-runs"
+                  />
+                  <KpiTile
+                    label="Production yield"
+                    value={`${analytics.production.productionYieldPercent}%`}
+                    href="/process-runs"
+                  />
+                  <KpiTile
+                    label="Processing loss"
+                    value={`${formatQty(analytics.production.processingLossKg)} kg`}
+                    href="/process-runs"
+                  />
+                  <KpiTile
+                    label="Wastage"
+                    value={`${formatQty(analytics.production.wastageKg)} kg`}
+                    href="/process-runs"
+                  />
+                </div>
+                <MiniBarChart data={analytics.production.chart} />
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2 text-base">
+                  <ShipIcon className="size-4" />
+                  Export
+                </CardTitle>
+                <CardDescription>
+                  Contracts, shipments, volume, and outstanding payments
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+                  <KpiTile
+                    label="Export volume"
+                    value={`${formatQty(analytics.export.exportVolumeKg)} kg`}
+                    href={links.openContracts ?? "/exports"}
+                  />
+                  <KpiTile
+                    label="Export value"
+                    value={formatMoney(analytics.export.exportValue)}
+                    href="/exports"
+                  />
+                  <KpiTile
+                    label="Active contracts"
+                    value={String(analytics.export.activeContracts)}
+                    href="/exports"
+                  />
+                  <KpiTile
+                    label="Pending shipments"
+                    value={String(analytics.export.pendingShipments)}
+                    href="/exports?status=STAGED"
+                  />
+                  <KpiTile
+                    label="Shipped quantity"
+                    value={`${formatQty(analytics.export.shippedQuantityKg)} kg`}
+                    href="/exports"
+                  />
+                  <KpiTile
+                    label="Outstanding export payments"
+                    value={formatMoney(
+                      analytics.export.outstandingExportPayments
+                    )}
+                    href="/credits"
+                  />
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+        </section>
+      ) : null}
 
       {pulse ? (
         <section>
@@ -365,7 +932,7 @@ export function CommandCenter() {
                 href="/insights"
                 className="text-[var(--frappe-primary)] hover:underline"
               >
-                Open AI Insights
+                Open AI advice
               </Link>
             </CardDescription>
           </CardHeader>

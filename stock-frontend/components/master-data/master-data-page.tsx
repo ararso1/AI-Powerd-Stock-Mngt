@@ -46,7 +46,7 @@ import { PencilIcon, PlusIcon } from "lucide-react";
 export interface MasterField {
   name: string;
   label: string;
-  type?: "text" | "email" | "textarea" | "select";
+  type?: "text" | "email" | "textarea" | "select" | "number";
   required?: boolean;
   options?: { value: string; label: string }[];
 }
@@ -214,7 +214,15 @@ function MasterFieldsForm({
           ) : (
             <Input
               id={f.name}
-              type={f.type === "email" ? "email" : "text"}
+              type={
+                f.type === "email"
+                  ? "email"
+                  : f.type === "number"
+                    ? "number"
+                    : "text"
+              }
+              step={f.type === "number" ? "any" : undefined}
+              min={f.type === "number" ? "0" : undefined}
               required={f.required}
               value={(values[f.name] as string) ?? ""}
               onChange={(e) =>
@@ -249,7 +257,9 @@ function buildBody(
   const body: Record<string, unknown> = {};
   for (const f of fields) {
     const v = values[f.name];
-    if (typeof v === "string" && v) body[f.name] = v;
+    if (typeof v === "string" && v) {
+      body[f.name] = f.type === "number" ? Number(v) : v;
+    }
   }
   if (supportsActive && isEdit) {
     body.isActive = values.isActive !== false;

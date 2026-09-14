@@ -13,26 +13,31 @@
 Csolve follows coffee from **farm intake to local cup or export container**.
 
 ```
-Farmer / supplier
-    → Collection (cherry IN)
+Farmer / supplier / cooperative / collector
+    → Collection (receiving inspection: accept / partial / reject)
+    → Grading & quality (Received → Sample tested → Graded → Accepted/Rejected → Processed → Final grade)
     → Transfer (location move)
-    → Processing + QC (form change: cherry → parchment → green → roasted → packaged)
+    → Processing (flour/hull/roast/pack — form change)
     → Warehouse / roastery / staging
          ├→ Local sales (OUT)
          └→ Export allocate → stage → ship (OUT)
+    → Payment / credit → financial & analytical reporting
 ```
 
 ### Core ideas
 
 | Concept | Meaning |
 |---------|---------|
-| **Lot** | Traceability unit (origin, crop year, grade, moisture, form, quantity). |
+| **Lot** | Traceability unit (origin, crop year, grade, moisture, form, quantity, QC phase). |
 | **Lot event** | Append-only step on the lot timeline (never edited). |
 | **Stock level** | Quantity on hand at a **location**, for coffee always linked to a **lot**. |
 | **Form** | Physical state: `CHERRY` → `PARCHMENT` → `GREEN` → `ROASTED` → `PACKAGED` (plus `REJECT`). |
+| **QC phase** | Grade lifecycle on the lot (orthogonal to Active/Hold/Voided). |
 | **Channel** | `LOCAL` (roasted market) or `EXPORT` (green/container). |
 
 **Rule:** Coffee (`COF-*` items) cannot sit as anonymous warehouse qty. Stock in/out for coffee must reference a **lot**.
+
+**Rule:** Rejected coffee **stays in inventory** as form `REJECT` (SKU `COF-REJECT`). Do not erase reject kg with a silent write-off — record reason, %, inspector, batch, and action/destination.
 
 ---
 
@@ -57,14 +62,18 @@ Password for all demo users: **`Demo@123`**
 
 After permission changes, **log out and log in again** so the nav updates.
 
+With `DB_SEED=true`, the API also loads an **executive demo pack**: multi-origin green lots, 14-day cherry collections, process WIP/QC hold, warehouse→staging transfer, local roast sales, Nordic + Tokyo export contracts, bank balances (ETB/USD), expenses, and notifications — so Dashboard and AI advice look like a live coffee season.
+
+Re-run anytime: `npm run seed` in `stock-api` (idempotent; skips pack if already present).
+
 ### 2.3 Navigation map
 
 | Group | Screens |
 |-------|---------|
-| **Insights** | Command Center, AI Insights, Reports, Profit & Loss |
-| **Operations** | Lots, Collection, Processing, Roast profiles, Exports, Inventory, BOMs, Production, Stock Transfers, Purchases, Sales |
-| **Finance** | Credits, Expenses, Bank |
-| **Master** | Locations, Suppliers, Customers |
+| **Overview** | Dashboard, AI advice, Market prices, Reports, Profit & loss |
+| **Coffee & stock** | Coffee lots, Cherry intake, Processing, Roast recipes, Exports, Stock, Product recipes, Production, Move stock, Purchases, Sales |
+| **Money** | Outstanding, Expenses, Cash & bank |
+| **Partners** | Locations, Suppliers, Customers |
 | **Admin** | Users, Roles |
 
 ---
@@ -118,45 +127,90 @@ Open any lot → **timeline** to answer: *Where did this coffee come from, and w
 
 ## 4. Insights
 
-### 4.1 Command Center (`/dashboard`)
+### 4.1 Dashboard (`/dashboard`)
 
 **Who:** Executives / managers (`insights.read` or `dashboard.read`)
 
 **What you see**
 
-- Operational pulse: intake today, process WIP, green stock, roast output, local sales, export staged kg  
-- Traceability: % of stock linked to lots  
-- Contracts: open coverage, missing docs, ship windows  
-- Recommended actions (rules-based) with drill-down links  
-- Commercial / liquidity snapshot  
+1. **AI Executive Insights** (top strip) — live cards such as:
+   - Stock days of cover from green inventory vs recent demand  
+   - Overdue customer credit exposure  
+   - Supplier rejection-rate spikes  
+   - Export demand trend vs last month  
+   - Export share of gross profit  
+2. **Analytical dashboard** with KPI tiles and charts:
+   - **Inventory** — total stock, value, available, reserved, export stock, low-stock items  
+   - **Trading** — purchases, local/export sales, volume & value (channel chart)  
+   - **Quality** — accepted/rejected qty, rejection %, grade distribution, supplier quality ranking  
+   - **Finance** — receivables, payables, outstanding, overdue, paid vs unpaid  
+   - **Production** — processing / roasting volume, yield, loss / wastage  
+   - **Export** — volume, value, active contracts, pending shipments, shipped qty, outstanding export payments  
+3. Operational **pulse**, traceability, contract risk, recommended actions, commercial / liquidity  
 
 **Stock tracking:** Read-only. Does not move stock. Refreshes about every 45 seconds.
 
 **How to use**
 
-1. Set an optional date range for commercial KPIs.  
-2. Click a KPI or recommendation to jump into Lots, Collections, Exports, or Sales.  
-3. Use “Open AI Insights” for forecasts and accept/reject workflow.
+1. Set an optional date range for period KPIs (trading, quality, production, export value).  
+2. Scan AI Executive Insights first — click a card to jump into Inventory, Credits, Collections, Exports, or P&amp;L.  
+3. Use analytical section tiles/charts for the full management picture.  
+4. Use **AI advice** for forecasts, assistant Q&amp;A, and accept/reject workflow.
 
 ---
 
-### 4.2 AI Insights (`/insights`)
+### 4.1b Market prices (`/market-prices`)
 
-**Who:** `ai.read` / `insights.read` (feedback: `ai.feedback`)
+**Who:** `market_prices.read` (sync: `market_prices.write`)
 
 **What you see**
 
-1. **Stock operation trends** — 14-day intake vs outbound, stock by form, by location, forward demand  
-2. **Recommendations** — forecast, intake advice, yield anomaly, blend, pricing, export readiness, quality risk  
+- Live **ICE Arabica (KC)** and **Robusta (RC)** spot with 7d / 30d % change  
+- Converted **USD and ETB** per kg, quintal (100 kg), and ton  
+- Historical chart, **grade differentials** (e.g. G1 vs KC), inventory market vs book valuation, and export contract spreads  
+- Prices sync on a schedule (and via **Sync prices**); Arabica from Yahoo Finance (`KC=F`); Robusta from Commodities-API when `COMMODITIES_API_KEY` is set, otherwise a documented KC-ratio proxy  
 
-**Stock tracking:** Advice only. Accepting a card does **not** move inventory or money — you still confirm the action in the linked module.
+**Stock tracking:** Read-only. Does not move stock or change contract prices automatically.
+
+---
+
+### 4.2 AI advice (`/insights`)
+
+**Who:** `ai.read` / `insights.read` (feedback: `ai.feedback`)
+
+This is Csolve’s differentiation layer vs a traditional coffee ERP — **recommend-only** intelligence on live data (no silent stock/money moves).
+
+**What you see**
+
+1. **AI Business Assistant** — ask questions such as:
+   - How much Grade 1 coffee do we currently have?
+   - How much coffee is reserved for export?
+   - Who owes us the most money?
+   - Which supplier has the highest rejection rate?
+   - How much coffee did we export this month?
+   - What is our total outstanding balance?
+   - Which grade generated the highest profit?
+2. **Stock operation trends** — 14-day intake vs outbound, stock by form/location, **local vs export demand forecast**
+3. **Recommendations** (Accept / Reject / Dismiss):
+
+| Kind | Example |
+|------|---------|
+| Demand forecast | Local & export kg projected from sales history |
+| Stock prediction | “Grade 2 will reach minimum stock in ~12 days” |
+| Procurement | “Buy ~N quintals G1 based on export commitments” |
+| Quality analysis | High-rejection suppliers, better origins, rising defects, seasonal QC |
+| Credit risk | Late payments, high exposure, unusual purchasing, rising AR |
+| Intake / export readiness / pricing / blend | Existing ops guidance cards |
+
+**Stock tracking:** Advice only. Accepting a card does **not** move inventory or money — confirm in the linked module.
 
 **How to use**
 
-1. Review trend charts first (stock in/out pace).  
-2. Filter recommendations by kind / status.  
-3. **Accept / Reject / Dismiss** to log feedback.  
-4. Click **Refresh** if the list is empty (reopens demo/rule cards).
+1. Ask the assistant for a quick management answer.  
+2. Review trend charts (local vs export demand).  
+3. Filter recommendations by kind / status.  
+4. **Accept / Reject / Dismiss** to log feedback.  
+5. Click **Refresh** to rebuild live rule/forecast cards.
 
 ---
 
@@ -211,62 +265,109 @@ Shows revenue, cost of goods sold, gross profit, expenses, and net for a date ra
 
 ---
 
-### 5.2 Collection — cherry stock IN (`/collections`)
+### 5.2 Collection — procurement & receiving (`/collections`)
 
 **Who:** `collection.read` / `collection.write`
 
-**Purpose:** Record farmer / supplier cherry intake (primary **stock IN** for coffee).
+**Purpose:** Purchase cherry from farmers, suppliers, cooperatives, and collectors. Primary **stock IN** for coffee, with receiving inspection.
 
 **What happens when you save a ticket**
 
-1. Creates a **cherry lot** (form `CHERRY`).  
-2. Posts lot events `CREATED` + `COLLECTED`.  
-3. **Increases stock** at the collection location (lot-linked).  
-4. Creates a **Purchase** (cash/bank money out, or supplier credit).
+1. Records **disposition**: fully accepted, partially accepted, or fully rejected.  
+2. Creates a **cherry lot** for accepted kg (form `CHERRY`, QC phase `RECEIVED` / `ACCEPTED`).  
+3. If any kg is rejected → creates a **reject lot** (form `REJECT`, QC phase `REJECTED`) that **remains in inventory** with reason, %, inspector, and action.  
+4. Posts lot events (`CREATED`, `COLLECTED`, `RECEIVING_ACCEPTED` / `RECEIVING_REJECTED`).  
+5. Creates a **Purchase** only for **accepted** kg (cash/bank out, or supplier credit / outstanding balance).
+
+**Quality fields at receive**
+
+Coffee type (item), origin (region / zone / woreda / kebele), grade, process method, moisture, defect level, screen size, batch/lot, inspection date, inspector.
 
 **How to record intake**
 
 1. **Collection → New**.  
-2. Choose supplier (farmer), location (collection center), coffee item, weight kg, price/kg, payment method.  
-3. Save → note the lot code on the ticket.  
-4. Optionally transfer cherry to wet/dry mill.
+2. Choose supplier, location (collection center), coffee item, gross weight kg, grade, price/kg, payment method.  
+3. Set **receiving inspection**: Fully accepted / Partially accepted / Fully rejected.  
+4. For partial: enter accepted kg + rejected kg (must sum to gross). Enter reject reason and action/destination.  
+5. Optionally capture zone, process, screen, defects, moisture, origin.  
+6. Save → open the ticket to see accepted lot and reject lot links.  
+7. Optionally transfer accepted cherry to wet/dry mill.
 
-**Tip:** Prefer Collection over generic Purchases for cherry so lots stay complete.
+**Tip:** Prefer Collection over generic Purchases for cherry so lots and quality stay complete.
 
 ---
 
-### 5.3 Processing & QC (`/process-runs`)
+### 5.2b Grading & quality (on lot detail `/lots/:id`)
+
+**Who:** `lot.read` / `lot.write`
+
+**Purpose:** Track quality at every stage and advance the grade lifecycle without losing rejected stock.
+
+**Lifecycle (QC phase)**
+
+`Received` → `Sample tested` → `Graded` → `Accepted` / `Rejected` → `Processed` → `Final grade`
+
+Operational **status** (Active / Hold / Voided) stays separate from QC phase.
+
+**How to grade**
+
+1. Open the lot → **Grading & quality**.  
+2. Choose the next phase, update moisture, screen, cup score, defects, grade.  
+3. If marking **Rejected**, enter rejection reason (lot goes on Hold; reject inventory lots use form `REJECT`).  
+4. Timeline records `SAMPLE_TESTED`, `GRADED`, `QC_HELD`, `FINAL_GRADED`, etc.
+
+---
+
+### 5.3 Local processing — flour & roast (`/process-runs`)
 
 **Who:** `process.read` / `process.write`
 
-**Purpose:** Convert coffee form and post yield (stock **OUT** of input lot, **IN** on new output lot).
+**Purpose:** Convert coffee form and post yield (stock **OUT** of input lot, **IN** on new output lot). Output lot QC phase becomes `PROCESSED`. Supports **flour** and **roast**, plus packaging.
 
 **Seeded templates (examples)**
 
-| Template idea | Input form | Output form |
-|---------------|------------|-------------|
-| Wet / washed | Cherry | Parchment |
-| Dry mill | Parchment | Green |
-| Natural | Cherry | Green |
-| Roast | Green | Roasted |
-| Pack | Roasted | Packaged |
+| Template | Operation | Input → Output | Notes |
+|----------|-----------|----------------|-------|
+| Washed / dry / natural | Mill | Cherry/parchment → parchment/green | Hull & mill |
+| Coffee roasting | Roast | Green → Roasted (kg) | e.g. 100 → 82 kg; **18 kg loss auto** |
+| Coffee flour / grind | Flour | Roasted → Flour | Ground coffee |
+| Package 1 kg / 250g | Pack | Roasted → Packaged (pcs) | e.g. 82 kg → 82 × 1 kg packs |
 
-**Statuses:** `DRAFT` → `IN_PROGRESS` → (`QC_HOLD`) → `READY` → `COMPLETED` (or `CANCELLED`)
+**On complete the system records**
 
-**Stock IN/OUT on complete**
+- Input qty, output qty (kg or pack count), reject kg (retained as REJECT lot)
+- **Production loss** = input − output weight − reject (automatic)
+- Yield %
+- Processing cost (rolled into output unit cost)
+- Ledger rows: production consumption, output, loss, rejection
 
-1. Reduce input lot quantity / stock.  
-2. Create output lot with new form and quantity (after yield / reject).  
-3. Events: `PROCESS_STARTED`, QC events if used, `PROCESS_COMPLETED`, plus `ROASTED` / `PACKAGED` when relevant.  
-4. Reject / loss can appear as lower yield and related `ADJUSTED` notes.
+**Example roast → pack**
 
-**How to run a process**
+1. Roast: 100 kg green → 82 kg roasted (18 kg loss logged).  
+2. Pack 1 kg: 82 kg roasted → 82 packages (pcs of `COF-ROAST-1KG`).
 
-1. **Processing → New** → pick template, input lot, location, expected output.  
-2. Start the run; complete stages.  
-3. Record QC (hold/release) if needed.  
-4. Complete with actual output kg, moisture, reject — system posts stock and new lot.  
-5. Open both lots’ timelines to verify the chain.
+**How to run**
+
+1. **Processing → New** → pick roast/flour/pack template, input lot, cost.  
+2. Start → stages → QC if required.  
+3. Complete: enter output (kg or packs) and reject; loss is calculated.  
+4. Check lot timeline + **Inventory → Stock ledger**.
+
+---
+
+### 5.3b Stock ledger (`/inventory` → Stock ledger)
+
+**Who:** `inventory.read`
+
+Every movement stores: **Date · Product · Grade · Batch · Qty · Location · User · Reference**.
+
+| Stock IN | Stock OUT |
+|----------|-----------|
+| Purchases / collection | Local sales |
+| Production output | Export shipments |
+| Sale returns | Production consumption / loss |
+| Transfers in | Transfers out |
+| Adjustments (found/opening) | Rejection, damage, wastage |
 
 ---
 
@@ -280,37 +381,89 @@ Shows revenue, cost of goods sold, gross profit, expenses, and net for a date ra
 
 ---
 
+### 5.4b Local sales (`/sales`, `/customers`)
+
+**Who:** `sales.*`, `customers.*`
+
+**Purpose:** Domestic retail / wholesale / cafe invoices.
+
+- Customer types: **Retail · Wholesale · Cafe · Other**
+- Invoice with product, qty, unit price, total
+- Paid amount + outstanding (credit sales)
+- Payment history via **Credits** + bank receipts
+- **Sales return:** `POST /sales/:id/returns` restocks lot and refunds cash/bank or reduces credit
+
+Prefer **Local** channel for roasted/packaged domestic sales; use **Exports** for containers.
+
+---
+
 ### 5.5 Exports (`/exports`)
 
 **Who:** `export.read` / `export.write`
 
-**Purpose:** Dual-market export pipeline for green (and related) coffee.
+**Purpose:** International coffee export pipeline and hard stock reservation.
 
-**Contract lifecycle**
+**Lifecycle**
 
 ```
-DRAFT → ALLOCATED → STAGED → SHIPPED → CLOSED
-         (or CANCELLED)
+DRAFT → ALLOCATED → STAGED → SHIPPED → DELIVERED → CLOSED
+                    (or CANCELLED — releases reserved stock)
 ```
 
-**Stock / event impact**
+Maps to: **Export order / Contract → Allocation → QC dossier → Packaging docs → Shipment → Documents → Customer payment**.
 
-| Step | Stock | Lot event |
-|------|-------|-----------|
-| Create contract | None | — |
-| **Allocate** lots | None (reservation) | `ALLOCATED_EXPORT` |
-| **Stage** | Transfer to export staging location | `TRANSFERRED` |
-| **Ship** | **OUT** from staging | `SHIPPED` (+ optional export sale / bank IN) |
-| Doc checklist | None | — |
+**What you track**
 
-**How to ship an export**
+| Field | Notes |
+|-------|--------|
+| Buyer / country | International buyer |
+| Export order # | Optional PO / order ref (alongside contract #) |
+| Coffee type, grade, origin | Commercial description |
+| Lot / batch + qty | Via allocations |
+| Price, currency, Incoterms | Contract commercial terms |
+| Destination, container | Shipment logistics |
+| Shipping date / ETA | Window + shipping / expected arrival |
+| Payment status / outstanding | From linked export sale + Credits |
 
-1. **Exports → New** — buyer, volume kg, grade, price, currency, incoterm, window, staging location.  
-2. **Allocate** active green lots (enough kg, matching grade where required).  
-3. Complete dossier checklist (COO, phyto, QC, packing list, invoice).  
-4. **Stage** → physical move to staging warehouse.  
-5. **Ship** → stock leaves; timeline shows `SHIPPED`.  
-6. **Close** when paperwork and finance are done.
+**Documents (dossier)**
+
+Checklist with references: Certificate of Origin, Phyto, QC/cupping, Packing list, Commercial invoice, Bill of lading, Weight/quality cert. Tick done and store document numbers.
+
+**Stock / reservation (see also §8)**
+
+| Step | Stock state | Stock impact |
+|------|-------------|--------------|
+| Create | — | None |
+| **Allocate / Reserve** | **Reserved for export** | Locks kg on `stock_levels.reserved_quantity` — **cannot be sold locally** |
+| **Stage** | Reserved (at staging) | Transfer reserved qty to export staging |
+| **Ship** | **Shipped** | Physical OUT; reservation cleared; optional export sale |
+| **Deliver** | **Delivered** | Status only (stock already left) |
+| Cancel (pre-ship) | Back to **Available** | Releases reservation |
+
+**How to run an export**
+
+1. **Exports → New** — buyer, country, order #, type/grade/origin, volume, price, currency, incoterm, destination, container, dates, staging.  
+2. **Reserve for export** — pick green lots; kg is hard-locked.  
+3. Complete dossier (docs + references).  
+4. **Stage** → move reserved coffee to staging.  
+5. **Ship + sale** → stock OUT; invoice/payment status appears.  
+6. **Mark delivered** when cargo arrives / is confirmed.  
+7. Settle outstanding on **Credits** if credit sale; **Close** when done.
+
+---
+
+### 5.5b Export stock reservation
+
+Coffee for export is split into four states:
+
+| State | Meaning |
+|-------|---------|
+| **Available** | On hand minus reserved — safe for local sales |
+| **Reserved for export** | Allocated to open contracts (`ALLOCATED` / `STAGED`) |
+| **Shipped** | Left warehouse on a `SHIPPED` contract |
+| **Delivered** | Confirmed with buyer (`DELIVERED` / `CLOSED`) |
+
+Inventory list shows **avail · reserved** under quantity when any kg is locked. Local sales that would touch reserved coffee are rejected.
 
 ---
 
@@ -406,9 +559,37 @@ Cash and bank accounts (ETB; seed may include USD for export). Transactions from
 
 ### 6.2 Credits (`/credits`)
 
-Customer receivables and supplier payables (`OPEN` / `PARTIAL` / `PAID`). Record payments and receipts.
+Tracks **customer receivables** and **supplier payables** so every party has Invoice → Paid → Outstanding.
 
-**Stock:** None.
+Example (customer):
+
+| Description | Amount |
+| --- | --- |
+| Invoice | 500,000 ETB |
+| Paid | 300,000 ETB |
+| Outstanding | 200,000 ETB |
+
+**What you can do**
+
+- **Customer credit balance** — open/partial receivables per sale
+- **Supplier payable balance** — open/partial payables per purchase
+- **Cash vs credit sales/purchases** — cash/bank settles immediately; credit creates an outstanding record with optional due date
+- **Partial payments** — pay less than outstanding; status becomes `PARTIAL` until fully paid
+- **Payment history** — each settlement posts a bank transaction; view history from the Pay dialog
+- **Due dates & overdue** — filter **Overdue only**; overdue rows show days past due
+- **Aging analysis** — Current / 1–30 / 31–60 / 61–90 / 90+ on the Aging tab (also on Reports → Credits)
+- **Credit limits** — set on Customers and Suppliers; credit sales/purchases that would exceed the limit are blocked
+- **Payment reminders** — daily in-app notifications for due-soon and overdue; **Send payment reminders** forces a run now
+
+**Workflow**
+
+1. Create a **credit sale** or **credit purchase** with due date.
+2. Open **Credits** → Customer credit or Supplier payables.
+3. Use **Pay** for full or partial settlement into a bank/cash account.
+4. Watch Outstanding drop; sale/purchase Paid amounts stay in sync.
+5. Review **Aging** and Reports → Credits for overdue concentration.
+
+**Stock:** None — money and balances only.
 
 ### 6.3 Expenses (`/expenses`)
 
@@ -430,11 +611,11 @@ Seeded examples: Main Warehouse, collection center, wet mill, roastery, showroom
 
 ### 7.2 Suppliers (`/suppliers`)
 
-Farmers and vendors for collection and purchases.
+Farmers and vendors for collection and purchases. Optional **payable credit limit** caps how much outstanding AP you allow.
 
 ### 7.3 Customers (`/customers`)
 
-Local buyers and export buyers.
+Local buyers and export buyers (Retail / Wholesale / Cafe / Other). Optional **credit limit** caps receivables for credit sales.
 
 ### 7.4 Users & Roles (`/users`, `/roles`)
 
@@ -457,12 +638,14 @@ Admin assigns roles and permissions. Nav and screens hide what you cannot access
 
 ### 8.2 Export path
 
-1. Collection → process to **green** (as above)  
-2. Green sits in **warehouse** (lot-linked inventory)  
-3. **Export contract** → allocate green lots (`ALLOCATED_EXPORT`)  
-4. Complete docs → **stage** (transfer to staging)  
-5. **Ship** — stock OUT + `SHIPPED` (+ optional USD sale)  
-6. Command Center / AI Insights show readiness and coverage
+1. Collection → process to **green**.  
+2. **Exports → New** — buyer, country, order #, type/grade/origin, destination, container, ETA.  
+3. **Reserve** green lots → inventory shows **avail · reserved** (cannot sell reserved locally).  
+4. Complete dossier docs + references → **Stage** → **Ship + sale**.  
+5. **Mark delivered** → settle payment on Credits if needed → **Close**.  
+6. Dashboard / AI advice show readiness and coverage.
+
+Stock states: **Available → Reserved for export → Shipped → Delivered**.
 
 ### 8.3 Shrinkage / moisture (stock OUT without sale)
 
@@ -483,7 +666,7 @@ Before you allocate to export or sell:
 - [ ] Timeline shows continuous chain (collection → process → transfer)  
 - [ ] For export: contract allocated kg + docs checklist  
 
-Executives: use **Command Center** + **AI Insights** weekly; drill into gaps instead of exporting spreadsheets by hand.
+Executives: use **Dashboard** + **AI advice** weekly; drill into gaps instead of exporting spreadsheets by hand.
 
 ---
 
@@ -491,8 +674,8 @@ Executives: use **Command Center** + **AI Insights** weekly; drill into gaps ins
 
 | Need | Permission codes (examples) |
 |------|-----------------------------|
-| See Command Center | `insights.read` or `dashboard.read` |
-| AI Insights | `ai.read`; feedback `ai.feedback` |
+| See Dashboard | `insights.read` or `dashboard.read` |
+| AI advice | `ai.read`; feedback `ai.feedback` |
 | Lots | `lot.read` / `lot.write` / `lot.split` |
 | Collection | `collection.read` / `collection.write` |
 | Processing | `process.read` / `process.write` |
@@ -509,7 +692,7 @@ Executives: use **Command Center** + **AI Insights** weekly; drill into gaps ins
 
 | Symptom | Likely cause | What to do |
 |---------|--------------|------------|
-| AI Insights empty | All cards accepted/rejected | Click **Refresh** |
+| AI advice empty | All cards accepted/rejected | Click **Refresh** |
 | Cannot add coffee in Inventory | Coffee must be lot-linked | Use Collection / Process / Adjust with lot |
 | Transfer rejects coffee line | Missing lot | Pick lot stock line |
 | Sale fails on coffee | Missing `lotId` | Choose lot from stock picker |
@@ -532,12 +715,13 @@ Executives: use **Command Center** + **AI Insights** weekly; drill into gaps ins
 
 ## 13. Summary — remember this
 
-1. **Collection** = main coffee **stock IN** (cherry + lot + purchase).  
-2. **Processing** = form change (**OUT** old lot, **IN** new lot).  
-3. **Transfers** = location change (same lot).  
-4. **Sales / Export ship** = commercial **stock OUT**.  
-5. **Adjustments** = moisture, shrinkage, count corrections.  
-6. **Lot timeline** = the legal/operational story of every kg.  
-7. **Command Center + AI Insights** = watch the business; humans still confirm stock and money.
+1. **Collection** = procurement **stock IN** (receiving inspection + accepted lot + reject lot if any + purchase on accepted kg).  
+2. **Grading** = QC phase on the lot (Received → … → Final grade); rejects stay as `REJECT` inventory.  
+3. **Processing** = form change (**OUT** old lot, **IN** new lot; process rejects stay in inventory).  
+4. **Transfers** = location change (same lot).  
+5. **Sales / Export ship** = commercial **stock OUT**.  
+6. **Adjustments** = moisture, shrinkage, count corrections (not a substitute for reject lots).  
+7. **Lot timeline** = the legal/operational story of every kg.  
+8. **Dashboard + AI advice** = watch the business; humans still confirm stock and money.
 
 *Csolve — AI-Powered Stock Management for Coffee*

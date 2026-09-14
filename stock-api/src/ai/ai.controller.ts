@@ -9,6 +9,7 @@ import {
   AiFeedbackDto,
   AiInsightListQueryDto,
   AiRefreshDto,
+  AiAskDto,
 } from './dto/ai.dto';
 
 @Controller('ai')
@@ -54,5 +55,11 @@ export class AiController {
   @RequirePermissions('insights.exec', 'ai.feedback')
   refresh(@Body() dto: AiRefreshDto) {
     return this.service.refresh(dto);
+  }
+
+  @Post('ask')
+  @RequirePermissions('insights.read', 'dashboard.read', 'ai.read')
+  ask(@Body() dto: AiAskDto) {
+    return this.service.ask(dto.question);
   }
 }

@@ -26,6 +26,7 @@ import {
 } from "@/components/ui/select";
 import { buildCollectionsListPath } from "@/lib/list-query";
 import { formatDate, formatMoney, formatQty } from "@/lib/format";
+import { receivingDispositionLabel } from "@/lib/lots";
 import type {
   CollectionListTotals,
   CollectionTicket,
@@ -63,7 +64,7 @@ export default function CollectionsPage() {
   return (
     <AppShell
       title="Collection"
-      subtitle="Cherry intake from farmers — creates lot, purchase, and stock"
+      subtitle="Cherry procurement — receiving inspection, lots, purchase, and stock"
       breadcrumbs={[
         { label: "Operations", href: "/dashboard" },
         { label: "Collection" },
@@ -159,6 +160,15 @@ export default function CollectionsPage() {
                 key: "weight",
                 header: "Weight",
                 cell: (r) => `${formatQty(r.weightKg)} kg`,
+              },
+              {
+                key: "disposition",
+                header: "Inspection",
+                cell: (r) => (
+                  <Badge variant="outline">
+                    {receivingDispositionLabel(r.disposition)}
+                  </Badge>
+                ),
               },
               {
                 key: "grade",

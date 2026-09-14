@@ -59,3 +59,9 @@ export class AiRefreshDto {
   @IsIn([true, false])
   forceReopen?: boolean = true;
 }
+
+export class AiAskDto {
+  @IsString()
+  @MaxLength(500)
+  question: string;
+}

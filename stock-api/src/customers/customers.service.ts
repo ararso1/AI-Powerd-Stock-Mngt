@@ -48,12 +48,31 @@ export class CustomersService {
   }
 
   create(dto: CreateCustomerDto) {
-    return this.repo.save(this.repo.create(dto));
+    return this.repo.save(
+      this.repo.create({
+        name: dto.name,
+        customerType: dto.customerType,
+        phone: dto.phone ?? null,
+        email: dto.email ?? null,
+        address: dto.address ?? null,
+        creditLimit:
+          dto.creditLimit !== undefined ? dto.creditLimit.toFixed(2) : null,
+      }),
+    );
   }
 
   async update(id: string, dto: UpdateCustomerDto) {
     const c = await this.findOne(id);
-    Object.assign(c, dto);
+    if (dto.name !== undefined) c.name = dto.name;
+    if (dto.customerType !== undefined) c.customerType = dto.customerType;
+    if (dto.phone !== undefined) c.phone = dto.phone ?? null;
+    if (dto.email !== undefined) c.email = dto.email ?? null;
+    if (dto.address !== undefined) c.address = dto.address ?? null;
+    if (dto.isActive !== undefined) c.isActive = dto.isActive;
+    if (dto.creditLimit !== undefined) {
+      c.creditLimit =
+        dto.creditLimit === null ? null : Number(dto.creditLimit).toFixed(2);
+    }
     return this.repo.save(c);
   }
 

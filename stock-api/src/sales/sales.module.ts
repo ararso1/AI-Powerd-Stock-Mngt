@@ -5,18 +5,28 @@ import { CustomerCredit } from '../database/entities/customer-credit.entity';
 import { Item } from '../database/entities/item.entity';
 import { Lot } from '../database/entities/lot.entity';
 import { Sale } from '../database/entities/sale.entity';
+import { SaleReturn } from '../database/entities/sale-return.entity';
 import { User } from '../database/entities/user.entity';
 import { InventoryModule } from '../inventory/inventory.module';
 import { NotificationsModule } from '../notifications/notifications.module';
+import { CreditsModule } from '../credits/credits.module';
 import { SalesController } from './sales.controller';
 import { SalesService } from './sales.service';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([Sale, CustomerCredit, User, Item, Lot]),
+    TypeOrmModule.forFeature([
+      Sale,
+      SaleReturn,
+      CustomerCredit,
+      User,
+      Item,
+      Lot,
+    ]),
     InventoryModule,
     BanksModule,
     NotificationsModule,
+    CreditsModule,
   ],
   controllers: [SalesController],
   providers: [SalesService],

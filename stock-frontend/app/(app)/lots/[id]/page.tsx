@@ -25,10 +25,17 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { api } from "@/lib/api";
 import { errorMessage, formatDate, formatQty } from "@/lib/format";
-import { coffeeFormLabel, lotStatusLabel } from "@/lib/lots";
-import type { Lot, LotEvent } from "@/lib/types";
+import { coffeeFormLabel, lotQcPhaseLabel, lotStatusLabel, LOT_QC_PHASE_OPTIONS } from "@/lib/lots";
+import type { Lot, LotEvent, LotQcPhase } from "@/lib/types";
 import { useFetch } from "@/hooks/use-fetch";
 import { toast } from "sonner";
 
@@ -55,6 +62,16 @@ export default function LotDetailPage() {
   const [splitOpen, setSplitOpen] = useState(false);
   const [splitQty, setSplitQty] = useState("");
   const [splitting, setSplitting] = useState(false);
+  const [qcPhase, setQcPhase] = useState<LotQcPhase>("SAMPLE_TESTED");
+  const [qcGrade, setQcGrade] = useState("");
+  const [qcMoisture, setQcMoisture] = useState("");
+  const [qcScreen, setQcScreen] = useState("");
+  const [qcCup, setQcCup] = useState("");
+  const [qcDefects, setQcDefects] = useState("");
+  const [qcDefectLevel, setQcDefectLevel] = useState("");
+  const [qcRejectReason, setQcRejectReason] = useState("");
+  const [qcNotes, setQcNotes] = useState("");
+  const [qcSaving, setQcSaving] = useState(false);
 
   const {
     data: lot,
@@ -102,6 +119,34 @@ export default function LotDetailPage() {
     }
   }
 
+  async function handleAdvanceQc() {
+    setQcSaving(true);
+    try {
+      await api(`/lots/${id}/qc`, {
+        method: "POST",
+        body: {
+          qcPhase,
+          grade: qcGrade.trim() || undefined,
+          moisturePercent: qcMoisture ? parseFloat(qcMoisture) : undefined,
+          screenSize: qcScreen.trim() || undefined,
+          cuppingScore: qcCup ? parseFloat(qcCup) : undefined,
+          defectCount: qcDefects ? parseInt(qcDefects, 10) : undefined,
+          defectLevel: qcDefectLevel.trim() || undefined,
+          rejectReason:
+            qcPhase === "REJECTED" ? qcRejectReason.trim() : undefined,
+          notes: qcNotes.trim() || undefined,
+        },
+      });
+      toast.success(`QC phase → ${lotQcPhaseLabel(qcPhase)}`);
+      await reload();
+      await reloadEvents();
+    } catch (err) {
+      toast.error(errorMessage(err));
+    } finally {
+      setQcSaving(false);
+    }
+  }
+
   return (
     <AppShell
       title={loading ? "Lot" : lot?.code ?? "Lot"}
@@ -132,6 +177,9 @@ export default function LotDetailPage() {
               <Badge variant="outline" className="ml-auto">
                 {lotStatusLabel(lot.status)}
               </Badge>
+              <Badge variant="secondary">
+                {lotQcPhaseLabel(lot.qcPhase)}
+              </Badge>
               <PermissionGate permission="lot.split">
                 {lot.status === "ACTIVE" ? (
                   <FrappeButtonSecondary
@@ -160,12 +208,57 @@ export default function LotDetailPage() {
                     value={lot.processMethod ?? "—"}
                   />
                   <DetailField label="Region" value={lot.region ?? "—"} />
+                  <DetailField label="Zone" value={lot.zone ?? "—"} />
                   <DetailField label="Woreda" value={lot.woreda ?? "—"} />
                   <DetailField label="Kebele" value={lot.kebele ?? "—"} />
                   <DetailField
                     label="Moisture %"
                     value={lot.moisturePercent ?? "—"}
                   />
+                  <DetailField
+                    label="Screen size"
+                    value={lot.screenSize ?? "—"}
+                  />
+                  <DetailField
+                    label="Cup score"
+                    value={lot.cuppingScore ?? "—"}
+                  />
+                  <DetailField
+                    label="Defects"
+                    value={
+                      lot.defectCount != null || lot.defectLevel
+                        ? `${lot.defectCount ?? "—"} / ${lot.defectLevel ?? "—"}`
+                        : "—"
+                    }
+                  />
+                  <DetailField
+                    label="QC phase"
+                    value={lotQcPhaseLabel(lot.qcPhase)}
+                  />
+                  <DetailField
+                    label="Inspector"
+                    value={lot.inspector?.fullName ?? "—"}
+                  />
+                  <DetailField
+                    label="Inspected"
+                    value={formatDate(lot.inspectedAt ?? undefined)}
+                  />
+                  {lot.qcPhase === "REJECTED" || lot.form === "REJECT" ? (
+                    <>
+                      <DetailField
+                        label="Reject %"
+                        value={lot.rejectPercent ?? "—"}
+                      />
+                      <DetailField
+                        label="Reject reason"
+                        value={lot.rejectReason ?? "—"}
+                      />
+                      <DetailField
+                        label="Reject action"
+                        value={lot.rejectAction ?? "—"}
+                      />
+                    </>
+                  ) : null}
                   <DetailField
                     label="Location"
                     value={lot.location?.name ?? "—"}
@@ -195,6 +288,108 @@ export default function LotDetailPage() {
                   />
                   <DetailField label="Notes" value={lot.notes ?? "—"} />
                 </FrappeFormGrid>
+              </FrappeSection>
+
+              <FrappeSection
+                title="Grading & quality"
+                description="Received → Sample tested → Graded → Accepted / Rejected → Processed → Final grade"
+              >
+                <PermissionGate permission="lot.write">
+                  <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                    <div>
+                      <Label>Advance to phase</Label>
+                      <Select
+                        value={qcPhase}
+                        onValueChange={(v) => setQcPhase(v as LotQcPhase)}
+                      >
+                        <SelectTrigger>
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {LOT_QC_PHASE_OPTIONS.map((o) => (
+                            <SelectItem key={o.value} value={o.value}>
+                              {o.label}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div>
+                      <Label>Grade</Label>
+                      <Input
+                        value={qcGrade}
+                        onChange={(e) => setQcGrade(e.target.value)}
+                        placeholder={lot.grade ?? "G1"}
+                      />
+                    </div>
+                    <div>
+                      <Label>Moisture %</Label>
+                      <Input
+                        type="number"
+                        step="0.01"
+                        value={qcMoisture}
+                        onChange={(e) => setQcMoisture(e.target.value)}
+                      />
+                    </div>
+                    <div>
+                      <Label>Screen size</Label>
+                      <Input
+                        value={qcScreen}
+                        onChange={(e) => setQcScreen(e.target.value)}
+                      />
+                    </div>
+                    <div>
+                      <Label>Cup score</Label>
+                      <Input
+                        type="number"
+                        step="0.01"
+                        value={qcCup}
+                        onChange={(e) => setQcCup(e.target.value)}
+                      />
+                    </div>
+                    <div>
+                      <Label>Defect count</Label>
+                      <Input
+                        type="number"
+                        value={qcDefects}
+                        onChange={(e) => setQcDefects(e.target.value)}
+                      />
+                    </div>
+                    <div>
+                      <Label>Defect level</Label>
+                      <Input
+                        value={qcDefectLevel}
+                        onChange={(e) => setQcDefectLevel(e.target.value)}
+                      />
+                    </div>
+                    {qcPhase === "REJECTED" ? (
+                      <div className="sm:col-span-2">
+                        <Label>Rejection reason</Label>
+                        <Input
+                          value={qcRejectReason}
+                          onChange={(e) => setQcRejectReason(e.target.value)}
+                          required
+                        />
+                      </div>
+                    ) : null}
+                    <div className="sm:col-span-2 lg:col-span-3">
+                      <Label>Notes</Label>
+                      <Input
+                        value={qcNotes}
+                        onChange={(e) => setQcNotes(e.target.value)}
+                      />
+                    </div>
+                    <div className="sm:col-span-2 lg:col-span-3">
+                      <FrappeButtonPrimary
+                        type="button"
+                        disabled={qcSaving}
+                        onClick={() => void handleAdvanceQc()}
+                      >
+                        {qcSaving ? "Saving…" : "Record quality step"}
+                      </FrappeButtonPrimary>
+                    </div>
+                  </div>
+                </PermissionGate>
               </FrappeSection>
 
               <FrappeSection

@@ -9,8 +9,12 @@ import {
   CoffeeForm,
   ItemType,
   LotEventType,
+  LotQcPhase,
   LotStatus,
+  ProcessOperationType,
   ProcessRunStatus,
+  StockMovementDirection,
+  StockMovementSourceType,
 } from '../common/enums';
 import {
   applyDateRangeToQb,
@@ -25,6 +29,7 @@ import { ProcessRun } from '../database/entities/process-run.entity';
 import { ProcessTemplate } from '../database/entities/process-template.entity';
 import { QcResult } from '../database/entities/qc-result.entity';
 import { RoastProfile } from '../database/entities/roast-profile.entity';
+import { StockMovement } from '../database/entities/stock-movement.entity';
 import { StockService } from '../inventory/stock.service';
 import { ProcessRunListQueryDto } from './dto/process-run-list-query.dto';
 import {
@@ -85,6 +90,9 @@ export class ProcessRunsService {
         name: dto.name,
         inputForm: dto.inputForm,
         outputForm: dto.outputForm,
+        operationType: dto.operationType ?? ProcessOperationType.OTHER,
+        packSizeKg:
+          dto.packSizeKg !== undefined ? dto.packSizeKg.toFixed(3) : null,
         expectedYieldPercent: dto.expectedYieldPercent.toFixed(2),
         requiresQc: dto.requiresQc ?? true,
         stages: dto.stages ?? [],
@@ -432,14 +440,27 @@ export class ProcessRunsService {
     }
 
     const rejectQty = dto.quantityReject ?? 0;
-    if (dto.quantityOutput + rejectQty > parseFloat(run.quantityInput) + 1e-6) {
+    const inputQty = parseFloat(run.quantityInput);
+    const packSize = run.template.packSizeKg
+      ? parseFloat(run.template.packSizeKg)
+      : 0;
+    const isPackOp = packSize > 0;
+    // Pack ops: quantityOutput = pack count; weight out = packs × packSizeKg
+    const outputStockQty = dto.quantityOutput;
+    const outputWeightKg = isPackOp
+      ? dto.quantityOutput * packSize
+      : dto.quantityOutput;
+    if (outputWeightKg + rejectQty > inputQty + 1e-6) {
       throw new BadRequestException(
-        'Output + reject cannot exceed input quantity',
+        isPackOp
+          ? `Pack weight (${outputWeightKg.toFixed(3)} kg) + reject cannot exceed input ${inputQty} kg`
+          : 'Output + reject cannot exceed input quantity',
       );
     }
 
+    const lossQty = Math.max(0, inputQty - outputWeightKg - rejectQty);
     const actualYield =
-      (dto.quantityOutput / parseFloat(run.quantityInput)) * 100;
+      inputQty > 0 ? (outputWeightKg / inputQty) * 100 : 0;
 
     await this.dataSource.transaction(async (manager) => {
       const runRepo = manager.getRepository(ProcessRun);
@@ -455,7 +476,6 @@ export class ProcessRunsService {
         throw new BadRequestException('Input lot is on HOLD');
       }
 
-      const inputQty = parseFloat(run.quantityInput);
       const remaining = parseFloat(inputLot.quantity) - inputQty;
       if (remaining < -1e-9) {
         throw new BadRequestException('Input lot quantity changed');
@@ -486,8 +506,8 @@ export class ProcessRunsService {
       const inputCost = inputUnitCost * inputQty;
       const processCost = parseFloat(run.processCost) || 0;
       const outputUnitCost =
-        dto.quantityOutput > 0
-          ? (inputCost + processCost) / dto.quantityOutput
+        outputStockQty > 0
+          ? (inputCost + processCost) / outputStockQty
           : 0;
 
       const outputCode =
@@ -497,6 +517,9 @@ export class ProcessRunsService {
       if (codeTaken) {
         throw new BadRequestException(`Lot code ${outputCode} already exists`);
       }
+
+      const roastProfileId =
+        dto.roastProfileId ?? run.roastProfileId ?? null;
 
       const outputLot = await lotRepo.save(
         lotRepo.create({
@@ -509,15 +532,20 @@ export class ProcessRunsService {
           variety: inputLot.variety,
           processMethod: inputLot.processMethod ?? run.template.name,
           region: inputLot.region,
+          zone: inputLot.zone,
           woreda: inputLot.woreda,
           kebele: inputLot.kebele,
           moisturePercent:
             dto.moisturePercent !== undefined
               ? dto.moisturePercent.toFixed(2)
               : inputLot.moisturePercent,
-          quantity: dto.quantityOutput.toFixed(3),
+          quantity: outputStockQty.toFixed(3),
           status: LotStatus.ACTIVE,
+          qcPhase: LotQcPhase.PROCESSED,
           parentLotId: inputLot.id,
+          roastProfileId,
+          roastDate: dto.roastDate ?? null,
+          bestBefore: dto.bestBefore ?? null,
           notes: `Output of ${run.runNumber} from ${inputLot.code}`,
           createdById: userId ?? null,
         }),
@@ -529,6 +557,16 @@ export class ProcessRunsService {
           itemId: inputItemId,
           quantityDelta: -inputQty,
           lotId: inputLot.id,
+          meta: {
+            sourceType: StockMovementSourceType.PRODUCTION_CONSUMPTION,
+            referenceType: 'process_run',
+            referenceId: run.id,
+            reference: run.runNumber,
+            batchCode: inputLot.code,
+            grade: inputLot.grade,
+            createdById: userId ?? null,
+            notes: `Consumed in ${run.runNumber}`,
+          },
         },
         manager,
       );
@@ -536,9 +574,21 @@ export class ProcessRunsService {
         {
           locationId: run.locationId,
           itemId: outputItem.id,
-          quantityDelta: dto.quantityOutput,
+          quantityDelta: outputStockQty,
           purchasePrice: outputUnitCost,
           lotId: outputLot.id,
+          meta: {
+            sourceType: StockMovementSourceType.PRODUCTION_OUTPUT,
+            referenceType: 'process_run',
+            referenceId: run.id,
+            reference: run.runNumber,
+            batchCode: outputLot.code,
+            grade: outputLot.grade,
+            createdById: userId ?? null,
+            notes: isPackOp
+              ? `Packaged ${outputStockQty} × ${packSize} kg`
+              : `Produced ${outputStockQty} kg`,
+          },
         },
         manager,
       );
@@ -561,12 +611,48 @@ export class ProcessRunsService {
           createdById: userId ?? null,
           metadata: {
             processRunId: run.id,
-            quantityOutput: dto.quantityOutput,
+            quantityOutput: outputStockQty,
             quantityReject: rejectQty,
+            quantityLoss: lossQty,
+            packCount: isPackOp ? outputStockQty : null,
+            packSizeKg: isPackOp ? packSize : null,
             actualYieldPercent: actualYield,
           },
         }),
       );
+
+      if (lossQty > 1e-6) {
+        await eventRepo.save(
+          eventRepo.create({
+            lotId: inputLot.id,
+            eventType: LotEventType.PRODUCTION_LOSS,
+            quantity: lossQty.toFixed(3),
+            fromLocationId: run.locationId,
+            notes: `Production loss ${lossQty.toFixed(3)} kg on ${run.runNumber}`,
+            createdById: userId ?? null,
+            metadata: { processRunId: run.id },
+          }),
+        );
+        // Ledger-only: loss qty already included in production consumption OUT
+        await manager.getRepository(StockMovement).save(
+          manager.getRepository(StockMovement).create({
+            movedAt: new Date(),
+            direction: StockMovementDirection.OUT,
+            sourceType: StockMovementSourceType.PRODUCTION_LOSS,
+            itemId: inputItemId,
+            lotId: inputLot.id,
+            locationId: run.locationId,
+            quantity: lossQty.toFixed(3),
+            grade: inputLot.grade,
+            batchCode: inputLot.code,
+            referenceType: 'process_run',
+            referenceId: run.id,
+            reference: run.runNumber,
+            notes: `Production loss ${lossQty.toFixed(3)} kg of ${inputQty} kg input`,
+            createdById: userId ?? null,
+          }),
+        );
+      }
 
       await eventRepo.save([
         eventRepo.create({
@@ -585,24 +671,117 @@ export class ProcessRunsService {
           quantity: outputLot.quantity,
           toLocationId: run.locationId,
           relatedLotId: inputLot.id,
-          notes: `Yield ${actualYield.toFixed(1)}% (expected ${run.expectedYieldPercent}%)`,
+          notes: `Yield ${actualYield.toFixed(1)}% (expected ${run.expectedYieldPercent}%) · loss ${lossQty.toFixed(3)} kg`,
           createdById: userId ?? null,
           metadata: {
             processRunId: run.id,
             expectedYieldPercent: run.expectedYieldPercent,
             actualYieldPercent: actualYield,
+            quantityLoss: lossQty,
             unitCost: outputUnitCost,
           },
         }),
       ]);
 
-      const roastProfileId =
+      // Rejected kg stays in inventory as REJECT lot (not written off)
+      if (rejectQty > 0) {
+        let rejectItem = await itemRepo.findOne({
+          where: { sku: 'COF-REJECT' },
+        });
+        if (!rejectItem) {
+          rejectItem = await itemRepo.save(
+            itemRepo.create({
+              sku: 'COF-REJECT',
+              description: 'Rejected coffee (held in inventory)',
+              unit: 'kg',
+              itemType: ItemType.OTHER,
+            }),
+          );
+        }
+        const rejectCode = `${outputCode}-RJ`;
+        const rejectPct = (rejectQty / inputQty) * 100;
+        const rejectLot = await lotRepo.save(
+          lotRepo.create({
+            code: rejectCode,
+            itemId: rejectItem.id,
+            locationId: run.locationId,
+            form: CoffeeForm.REJECT,
+            grade: 'REJECT',
+            cropYear: inputLot.cropYear,
+            variety: inputLot.variety,
+            processMethod: inputLot.processMethod ?? run.template.name,
+            region: inputLot.region,
+            zone: inputLot.zone,
+            woreda: inputLot.woreda,
+            kebele: inputLot.kebele,
+            moisturePercent: inputLot.moisturePercent,
+            quantity: rejectQty.toFixed(3),
+            status: LotStatus.HOLD,
+            qcPhase: LotQcPhase.REJECTED,
+            inspectorId: userId ?? null,
+            inspectedAt: new Date(),
+            rejectReason: dto.notes ?? `Process reject from ${run.runNumber}`,
+            rejectPercent: rejectPct.toFixed(2),
+            rejectAction: 'Hold for reprocess / local market / disposal review',
+            parentLotId: inputLot.id,
+            notes: `Process reject ${rejectQty} kg (${rejectPct.toFixed(1)}%) — remains in inventory`,
+            createdById: userId ?? null,
+          }),
+        );
+        await this.stockService.adjust(
+          {
+            locationId: run.locationId,
+            itemId: rejectItem.id,
+            quantityDelta: rejectQty,
+            purchasePrice: inputUnitCost,
+            lotId: rejectLot.id,
+            meta: {
+              sourceType: StockMovementSourceType.REJECTION,
+              referenceType: 'process_run',
+              referenceId: run.id,
+              reference: run.runNumber,
+              batchCode: rejectCode,
+              grade: 'REJECT',
+              createdById: userId ?? null,
+              notes: 'Process reject retained in inventory',
+            },
+          },
+          manager,
+        );
+        await eventRepo.save([
+          eventRepo.create({
+            lotId: rejectLot.id,
+            eventType: LotEventType.CREATED,
+            quantity: rejectLot.quantity,
+            toLocationId: run.locationId,
+            relatedLotId: inputLot.id,
+            notes: 'Reject lot from process — stock retained',
+            createdById: userId ?? null,
+            metadata: { processRunId: run.id },
+          }),
+          eventRepo.create({
+            lotId: rejectLot.id,
+            eventType: LotEventType.RECEIVING_REJECTED,
+            quantity: rejectLot.quantity,
+            toLocationId: run.locationId,
+            relatedLotId: inputLot.id,
+            notes: rejectLot.rejectReason,
+            createdById: userId ?? null,
+            metadata: {
+              processRunId: run.id,
+              rejectPercent: rejectPct,
+            },
+          }),
+        ]);
+      }
+
+      const profileIdForShelf =
         dto.roastProfileId ?? run.roastProfileId ?? inputLot.roastProfileId;
       let shelfLifeDays = 90;
-      if (roastProfileId) {
+      if (profileIdForShelf) {
         const profile = await manager
           .getRepository(RoastProfile)
-          .findOne({ where: { id: roastProfileId } });
+          .findOne({ where: { id: profileIdForShelf } });
         if (profile) shelfLifeDays = profile.shelfLifeDays ?? 90;
       }
 
@@ -610,7 +789,8 @@ export class ProcessRunsService {
       const roastDate =
         dto.roastDate ??
         (run.template.outputForm === CoffeeForm.ROASTED ||
-        run.template.outputForm === CoffeeForm.PACKAGED
+        run.template.outputForm === CoffeeForm.PACKAGED ||
+        run.template.outputForm === CoffeeForm.FLOUR
           ? today.toISOString().slice(0, 10)
           : null);
       let bestBefore = dto.bestBefore ?? null;
@@ -622,59 +802,58 @@ export class ProcessRunsService {
 
       if (
         run.template.outputForm === CoffeeForm.ROASTED ||
-        run.template.outputForm === CoffeeForm.PACKAGED
+        run.template.outputForm === CoffeeForm.PACKAGED ||
+        run.template.outputForm === CoffeeForm.FLOUR
       ) {
         outputLot.roastDate = roastDate;
         outputLot.bestBefore = bestBefore;
-        outputLot.roastProfileId = roastProfileId;
+        outputLot.roastProfileId = roastProfileId ?? profileIdForShelf;
         await lotRepo.save(outputLot);
 
         const marketEvent =
           run.template.outputForm === CoffeeForm.PACKAGED
             ? LotEventType.PACKAGED
-            : LotEventType.ROASTED;
-        await eventRepo.save(
-          eventRepo.create({
-            lotId: outputLot.id,
-            eventType: marketEvent,
-            quantity: outputLot.quantity,
-            toLocationId: run.locationId,
-            relatedLotId: inputLot.id,
-            notes:
-              marketEvent === LotEventType.PACKAGED
-                ? `Packaged from ${inputLot.code}`
-                : `Roasted from ${inputLot.code}`,
-            createdById: userId ?? null,
-            metadata: {
-              processRunId: run.id,
-              roastProfileId,
-              roastDate,
-              bestBefore,
-            },
-          }),
-        );
-      }
-
-      if (rejectQty > 0) {
-        await eventRepo.save(
-          eventRepo.create({
-            lotId: inputLot.id,
-            eventType: LotEventType.ADJUSTED,
-            quantity: rejectQty.toFixed(3),
-            notes: `Process reject / loss on ${run.runNumber}`,
-            createdById: userId ?? null,
-            metadata: { processRunId: run.id, reason: 'REJECT' },
-          }),
-        );
+            : run.template.outputForm === CoffeeForm.FLOUR
+              ? LotEventType.PROCESS_COMPLETED
+              : LotEventType.ROASTED;
+        if (marketEvent !== LotEventType.PROCESS_COMPLETED) {
+          await eventRepo.save(
+            eventRepo.create({
+              lotId: outputLot.id,
+              eventType: marketEvent,
+              quantity: outputLot.quantity,
+              toLocationId: run.locationId,
+              relatedLotId: inputLot.id,
+              notes:
+                marketEvent === LotEventType.PACKAGED
+                  ? isPackOp
+                    ? `Packaged ${outputStockQty} × ${packSize} kg from ${inputLot.code}`
+                    : `Packaged from ${inputLot.code}`
+                  : `Roasted from ${inputLot.code}`,
+              createdById: userId ?? null,
+              metadata: {
+                processRunId: run.id,
+                roastProfileId: outputLot.roastProfileId,
+                roastDate,
+                bestBefore,
+                packCount: isPackOp ? outputStockQty : null,
+                quantityLoss: lossQty,
+              },
+            }),
+          );
+        }
       }
 
       run.outputLotId = outputLot.id;
-      run.quantityOutput = dto.quantityOutput.toFixed(3);
+      run.quantityOutput = outputStockQty.toFixed(3);
       run.quantityReject = rejectQty.toFixed(3);
+      run.quantityLoss = lossQty.toFixed(3);
+      run.packCount = isPackOp ? outputStockQty.toFixed(3) : null;
       run.actualYieldPercent = actualYield.toFixed(2);
       run.status = ProcessRunStatus.COMPLETED;
       run.completedAt = new Date();
       if (dto.notes) run.notes = dto.notes;
+      if (roastProfileId) run.roastProfileId = roastProfileId;
       await runRepo.save(run);
     });
 
@@ -723,21 +902,27 @@ export class ProcessRunsService {
     const skuByForm: Partial<Record<CoffeeForm, string>> = {
       [CoffeeForm.PARCHMENT]: 'COF-PARCHMENT',
       [CoffeeForm.GREEN]: 'COF-GREEN-G1',
-      [CoffeeForm.ROASTED]: 'COF-ROAST-250',
-      [CoffeeForm.PACKAGED]: 'COF-ROAST-250',
+      [CoffeeForm.ROASTED]: 'COF-ROASTED',
+      [CoffeeForm.FLOUR]: 'COF-FLOUR',
+      [CoffeeForm.PACKAGED]: 'COF-ROAST-1KG',
       [CoffeeForm.CHERRY]: 'COF-CHERRY',
     };
     const sku = skuByForm[template.outputForm] ?? `COF-${template.outputForm}`;
     let item = await itemRepo.findOne({ where: { sku } });
     if (!item) {
+      const unit =
+        template.outputForm === CoffeeForm.PACKAGED && template.packSizeKg
+          ? 'pcs'
+          : 'kg';
       item = await itemRepo.save(
         itemRepo.create({
           sku,
           description: `Coffee ${template.outputForm.toLowerCase()}`,
-          unit: 'kg',
+          unit,
           itemType:
             template.outputForm === CoffeeForm.ROASTED ||
-            template.outputForm === CoffeeForm.PACKAGED
+            template.outputForm === CoffeeForm.PACKAGED ||
+            template.outputForm === CoffeeForm.FLOUR
               ? ItemType.FINISHED
               : ItemType.RAW,
         }),

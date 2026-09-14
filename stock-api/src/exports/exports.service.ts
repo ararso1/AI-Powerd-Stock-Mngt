@@ -4,7 +4,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
-import { DataSource, Repository } from 'typeorm';
+import { DataSource, EntityManager, In, Repository } from 'typeorm';
 import {
   BankTransactionType,
   DocumentStatus,
@@ -14,6 +14,7 @@ import {
   LotStatus,
   PaymentMethod,
   SaleChannel,
+  StockMovementSourceType,
 } from '../common/enums';
 import {
   applyDateRangeToQb,
@@ -43,12 +44,20 @@ import {
   UpdateExportContractDto,
 } from './dto/export-contract.dto';
 
+const OPEN_RESERVE_STATUSES = [
+  ExportContractStatus.DRAFT,
+  ExportContractStatus.ALLOCATED,
+  ExportContractStatus.STAGED,
+];
+
 const DEFAULT_DOC_CHECKLIST: ExportDocCheckItem[] = [
   { key: 'COO', label: 'Certificate of Origin', done: false },
   { key: 'PHYTO', label: 'Phytosanitary certificate', done: false },
   { key: 'QC', label: 'QC / cupping certificate', done: false },
   { key: 'PACKING', label: 'Packing list', done: false },
   { key: 'INVOICE', label: 'Commercial invoice', done: false },
+  { key: 'BOL', label: 'Bill of lading / AWB', done: false },
+  { key: 'WEIGHT', label: 'Weight / quality certificate', done: false },
 ];
 
 @Injectable()
@@ -68,7 +77,7 @@ export class ExportsService {
     private readonly bankLedger: BankLedgerService,
   ) {}
 
-  findAll(query: ExportContractListQueryDto) {
+  async findAll(query: ExportContractListQueryDto) {
     const qb = this.contractRepo
       .createQueryBuilder('contract')
       .leftJoinAndSelect('contract.customer', 'customer')
@@ -80,12 +89,32 @@ export class ExportsService {
     }
     applyIlikeSearch(qb, query.search, [
       'contract.contract_number',
+      'contract.order_number',
       'contract.buyer_name',
+      'contract.buyer_country',
+      'contract.destination',
+      'contract.container_number',
       'contract.grade',
       'contract.notes',
     ]);
     applyDateRangeToQb(qb, 'contract.created_at', query.from, query.to);
-    return paginatedQueryBuilder(qb, query.page, query.limit);
+    const page = await paginatedQueryBuilder(qb, query.page, query.limit);
+    return {
+      ...page,
+      data: (page.data as ExportContract[]).map((c) => ({
+        ...c,
+        stockState:
+          c.status === ExportContractStatus.DELIVERED ||
+          c.status === ExportContractStatus.CLOSED
+            ? 'DELIVERED'
+            : c.status === ExportContractStatus.SHIPPED
+              ? 'SHIPPED'
+              : c.status === ExportContractStatus.STAGED ||
+                  c.status === ExportContractStatus.ALLOCATED
+                ? 'RESERVED'
+                : 'NONE',
+      })),
+    };
   }
 
   async findOne(id: string) {
@@ -95,12 +124,54 @@ export class ExportsService {
         customer: true,
         stagingLocation: true,
         allocations: { lot: true },
-        sale: true,
+        sale: { credit: true },
         createdBy: true,
       },
     });
     if (!contract) throw new NotFoundException('Export contract not found');
-    return contract;
+    return this.withPaymentMeta(contract);
+  }
+
+  private withPaymentMeta(contract: ExportContract) {
+    const sale = contract.sale;
+    const invoiceTotal = sale ? parseFloat(sale.total) : null;
+    const paidAmount = sale
+      ? parseFloat(sale.paidAmount ?? '0')
+      : null;
+    const outstanding =
+      invoiceTotal == null
+        ? null
+        : Math.max(0, invoiceTotal - (paidAmount ?? 0));
+    let paymentStatus: 'UNPAID' | 'PARTIAL' | 'PAID' | 'NONE' = 'NONE';
+    if (sale) {
+      if ((paidAmount ?? 0) <= 0) paymentStatus = 'UNPAID';
+      else if (outstanding != null && outstanding > 1e-6)
+        paymentStatus = 'PARTIAL';
+      else paymentStatus = 'PAID';
+    }
+
+    const stockState =
+      contract.status === ExportContractStatus.DELIVERED ||
+      contract.status === ExportContractStatus.CLOSED
+        ? 'DELIVERED'
+        : contract.status === ExportContractStatus.SHIPPED
+          ? 'SHIPPED'
+          : contract.status === ExportContractStatus.STAGED ||
+              contract.status === ExportContractStatus.ALLOCATED
+            ? 'RESERVED'
+            : 'NONE';
+
+    return {
+      ...contract,
+      paymentStatus,
+      paidAmount:
+        paidAmount != null ? paidAmount.toFixed(2) : null,
+      outstandingAmount:
+        outstanding != null ? outstanding.toFixed(2) : null,
+      invoiceTotal:
+        invoiceTotal != null ? invoiceTotal.toFixed(2) : null,
+      stockState,
+    };
   }
 
   async create(dto: CreateExportContractDto, userId?: string) {
@@ -129,15 +200,23 @@ export class ExportsService {
     const saved = await this.contractRepo.save(
       this.contractRepo.create({
         contractNumber,
+        orderNumber: dto.orderNumber?.trim() || null,
         buyerName: dto.buyerName.trim(),
+        buyerCountry: dto.buyerCountry?.trim() || null,
         customerId: dto.customerId ?? null,
         volumeKg: dto.volumeKg.toFixed(3),
         grade: dto.grade?.trim() || null,
+        coffeeType: dto.coffeeType?.trim() || null,
+        origin: dto.origin?.trim() || null,
         pricePerKg: dto.pricePerKg.toFixed(4),
         currencyCode: (dto.currencyCode ?? 'USD').toUpperCase(),
         incoterm: dto.incoterm ?? Incoterm.FOB,
         windowStart: dto.windowStart ?? null,
         windowEnd: dto.windowEnd ?? null,
+        destination: dto.destination?.trim() || null,
+        containerNumber: dto.containerNumber?.trim() || null,
+        shippingDate: dto.shippingDate ?? null,
+        expectedArrival: dto.expectedArrival ?? null,
         status: ExportContractStatus.DRAFT,
         allocatedKg: '0.000',
         shippedKg: '0.000',
@@ -153,22 +232,36 @@ export class ExportsService {
   }
 
   async update(id: string, dto: UpdateExportContractDto) {
-    const contract = await this.findOne(id);
+    const contract = await this.contractRepo.findOne({ where: { id } });
+    if (!contract) throw new NotFoundException('Export contract not found');
     if (
       contract.status === ExportContractStatus.SHIPPED ||
+      contract.status === ExportContractStatus.DELIVERED ||
       contract.status === ExportContractStatus.CLOSED ||
       contract.status === ExportContractStatus.CANCELLED
     ) {
       throw new BadRequestException('Cannot edit a shipped/closed contract');
     }
 
+    if (dto.orderNumber !== undefined) {
+      contract.orderNumber = dto.orderNumber?.trim() || null;
+    }
     if (dto.buyerName !== undefined) contract.buyerName = dto.buyerName.trim();
+    if (dto.buyerCountry !== undefined) {
+      contract.buyerCountry = dto.buyerCountry?.trim() || null;
+    }
     if (dto.customerId !== undefined) contract.customerId = dto.customerId;
     if (dto.volumeKg !== undefined) {
       contract.volumeKg = dto.volumeKg.toFixed(3);
     }
     if (dto.grade !== undefined) {
       contract.grade = dto.grade?.trim() || null;
+    }
+    if (dto.coffeeType !== undefined) {
+      contract.coffeeType = dto.coffeeType?.trim() || null;
+    }
+    if (dto.origin !== undefined) {
+      contract.origin = dto.origin?.trim() || null;
     }
     if (dto.pricePerKg !== undefined) {
       contract.pricePerKg = dto.pricePerKg.toFixed(4);
@@ -179,6 +272,18 @@ export class ExportsService {
     if (dto.incoterm !== undefined) contract.incoterm = dto.incoterm;
     if (dto.windowStart !== undefined) contract.windowStart = dto.windowStart;
     if (dto.windowEnd !== undefined) contract.windowEnd = dto.windowEnd;
+    if (dto.destination !== undefined) {
+      contract.destination = dto.destination?.trim() || null;
+    }
+    if (dto.containerNumber !== undefined) {
+      contract.containerNumber = dto.containerNumber?.trim() || null;
+    }
+    if (dto.shippingDate !== undefined) {
+      contract.shippingDate = dto.shippingDate;
+    }
+    if (dto.expectedArrival !== undefined) {
+      contract.expectedArrival = dto.expectedArrival;
+    }
     if (dto.stagingLocationId !== undefined) {
       contract.stagingLocationId = dto.stagingLocationId;
     }
@@ -191,10 +296,32 @@ export class ExportsService {
     return this.findOne(id);
   }
 
+  private async reservedOnLot(
+    lotId: string,
+    manager: EntityManager,
+    excludeContractId?: string,
+  ): Promise<number> {
+    const qb = manager
+      .getRepository(ExportAllocation)
+      .createQueryBuilder('a')
+      .innerJoin('a.contract', 'c')
+      .select('COALESCE(SUM(a.quantity_kg::numeric), 0)', 'qty')
+      .where('a.lot_id = :lotId', { lotId })
+      .andWhere('c.status IN (:...statuses)', {
+        statuses: OPEN_RESERVE_STATUSES,
+      });
+    if (excludeContractId) {
+      qb.andWhere('c.id != :excludeContractId', { excludeContractId });
+    }
+    const raw = await qb.getRawOne<{ qty: string }>();
+    return parseFloat(raw?.qty ?? '0');
+  }
+
   async allocate(id: string, dto: AllocateExportLotDto, userId?: string) {
     const contract = await this.findOne(id);
     if (
       contract.status === ExportContractStatus.SHIPPED ||
+      contract.status === ExportContractStatus.DELIVERED ||
       contract.status === ExportContractStatus.CLOSED ||
       contract.status === ExportContractStatus.CANCELLED
     ) {
@@ -209,10 +336,8 @@ export class ExportsService {
     if (lot.status !== LotStatus.ACTIVE) {
       throw new BadRequestException('Lot is not active');
     }
-    if (parseFloat(lot.quantity) < dto.quantityKg) {
-      throw new BadRequestException(
-        `Insufficient lot qty. Available: ${lot.quantity}`,
-      );
+    if (!lot.locationId || !lot.itemId) {
+      throw new BadRequestException('Lot missing location/item');
     }
     if (contract.grade && lot.grade && contract.grade !== lot.grade) {
       throw new BadRequestException(
@@ -220,8 +345,7 @@ export class ExportsService {
       );
     }
 
-    const nextAllocated =
-      parseFloat(contract.allocatedKg) + dto.quantityKg;
+    const nextAllocated = parseFloat(contract.allocatedKg) + dto.quantityKg;
     if (nextAllocated > parseFloat(contract.volumeKg) + 1e-6) {
       throw new BadRequestException(
         `Allocation would exceed contract volume (${contract.volumeKg} kg)`,
@@ -229,6 +353,38 @@ export class ExportsService {
     }
 
     await this.dataSource.transaction(async (manager) => {
+      const available = await this.stockService.getAvailableQuantity(
+        lot.locationId!,
+        lot.itemId!,
+        manager,
+        lot.id,
+      );
+      if (available + 1e-9 < dto.quantityKg) {
+        throw new BadRequestException(
+          `Insufficient available stock (excludes export-reserved). Available: ${available.toFixed(3)} kg`,
+        );
+      }
+
+      const alreadyReservedElsewhere = await this.reservedOnLot(
+        lot.id,
+        manager,
+        contract.id,
+      );
+      const onHand = parseFloat(lot.quantity);
+      if (alreadyReservedElsewhere + dto.quantityKg > onHand + 1e-6) {
+        throw new BadRequestException(
+          `Lot over-allocated. On hand ${onHand}, already reserved elsewhere ${alreadyReservedElsewhere}`,
+        );
+      }
+
+      await this.stockService.reserve(
+        lot.locationId!,
+        lot.itemId!,
+        dto.quantityKg,
+        manager,
+        lot.id,
+      );
+
       const allocationRepo = manager.getRepository(ExportAllocation);
       const contractRepo = manager.getRepository(ExportContract);
       const eventRepo = manager.getRepository(LotEvent);
@@ -242,25 +398,28 @@ export class ExportsService {
         }),
       );
 
-      contract.allocatedKg = nextAllocated.toFixed(3);
+      const c = await contractRepo.findOne({ where: { id: contract.id } });
+      if (!c) throw new NotFoundException('Export contract not found');
+      c.allocatedKg = nextAllocated.toFixed(3);
       if (
-        contract.status === ExportContractStatus.DRAFT ||
-        contract.status === ExportContractStatus.ALLOCATED
+        c.status === ExportContractStatus.DRAFT ||
+        c.status === ExportContractStatus.ALLOCATED
       ) {
-        contract.status = ExportContractStatus.ALLOCATED;
+        c.status = ExportContractStatus.ALLOCATED;
       }
-      await contractRepo.save(contract);
+      await contractRepo.save(c);
 
       await eventRepo.save(
         eventRepo.create({
           lotId: lot.id,
           eventType: LotEventType.ALLOCATED_EXPORT,
           quantity: dto.quantityKg.toFixed(3),
-          notes: `Allocated to ${contract.contractNumber}`,
+          notes: `Reserved for export ${contract.contractNumber}`,
           createdById: userId ?? null,
           metadata: {
             exportContractId: contract.id,
             contractNumber: contract.contractNumber,
+            reserved: true,
           },
         }),
       );
@@ -269,15 +428,91 @@ export class ExportsService {
     return this.findOne(id);
   }
 
+  async deallocate(id: string, allocationId: string, userId?: string) {
+    const contract = await this.contractRepo.findOne({
+      where: { id },
+      relations: { allocations: { lot: true } },
+    });
+    if (!contract) throw new NotFoundException('Export contract not found');
+    if (
+      contract.status !== ExportContractStatus.DRAFT &&
+      contract.status !== ExportContractStatus.ALLOCATED
+    ) {
+      throw new BadRequestException(
+        'Deallocate only while DRAFT or ALLOCATED (unstage first if needed)',
+      );
+    }
+
+    const alloc = contract.allocations?.find((a) => a.id === allocationId);
+    if (!alloc) throw new NotFoundException('Allocation not found');
+
+    await this.dataSource.transaction(async (manager) => {
+      await this.releaseAllocationReserve(alloc, manager, userId, contract);
+      await manager.getRepository(ExportAllocation).delete(allocationId);
+
+      const remaining = contract.allocations!
+        .filter((a) => a.id !== allocationId)
+        .reduce((s, a) => s + parseFloat(a.quantityKg), 0);
+      contract.allocatedKg = remaining.toFixed(3);
+      if (remaining <= 1e-9) {
+        contract.status = ExportContractStatus.DRAFT;
+        contract.allocatedKg = '0.000';
+      }
+      await manager.getRepository(ExportContract).save(contract);
+    });
+
+    return this.findOne(id);
+  }
+
+  private async releaseAllocationReserve(
+    alloc: ExportAllocation,
+    manager: EntityManager,
+    userId: string | undefined,
+    contract: ExportContract,
+  ) {
+    const lot =
+      alloc.lot ??
+      (await manager.getRepository(Lot).findOne({ where: { id: alloc.lotId } }));
+    if (lot?.locationId && lot.itemId) {
+      await this.stockService.releaseReserve(
+        lot.locationId,
+        lot.itemId,
+        parseFloat(alloc.quantityKg),
+        manager,
+        lot.id,
+      );
+      await manager.getRepository(LotEvent).save(
+        manager.getRepository(LotEvent).create({
+          lotId: lot.id,
+          eventType: LotEventType.RELEASED_EXPORT,
+          quantity: alloc.quantityKg,
+          notes: `Released from export ${contract.contractNumber}`,
+          createdById: userId ?? null,
+          metadata: {
+            exportContractId: contract.id,
+            contractNumber: contract.contractNumber,
+          },
+        }),
+      );
+    }
+  }
+
   async updateChecklist(id: string, dto: UpdateDocChecklistDto) {
-    const contract = await this.findOne(id);
+    const contract = await this.contractRepo.findOne({ where: { id } });
+    if (!contract) throw new NotFoundException('Export contract not found');
     if (
       contract.status === ExportContractStatus.CLOSED ||
       contract.status === ExportContractStatus.CANCELLED
     ) {
       throw new BadRequestException('Cannot update checklist');
     }
-    contract.docChecklist = dto.docChecklist;
+    contract.docChecklist = dto.docChecklist.map((d) => ({
+      key: d.key,
+      label: d.label,
+      done: d.done,
+      reference: d.reference?.trim() || null,
+      url: d.url?.trim() || null,
+    }));
     await this.contractRepo.save(contract);
     return this.findOne(id);
   }
@@ -301,7 +536,7 @@ export class ExportsService {
       const lotRepo = manager.getRepository(Lot);
       const eventRepo = manager.getRepository(LotEvent);
 
-      for (const alloc of contract.allocations) {
+      for (const alloc of contract.allocations ?? []) {
         const lot = await lotRepo.findOne({ where: { id: alloc.lotId } });
         if (!lot || !lot.locationId || !lot.itemId) continue;
         const qty = parseFloat(alloc.quantityKg);
@@ -314,6 +549,16 @@ export class ExportsService {
             qty,
             manager,
             lot.id,
+            {
+              reservedQty: qty,
+              createdById: userId ?? null,
+              notes: `Staged for ${contract.contractNumber}`,
+              referenceType: 'export_contract',
+              referenceId: contract.id,
+              reference: contract.contractNumber,
+              outSourceType: StockMovementSourceType.TRANSFER_OUT,
+              inSourceType: StockMovementSourceType.TRANSFER_IN,
+            },
           );
           lot.locationId = contract.stagingLocationId;
           await lotRepo.save(lot);
@@ -324,7 +569,7 @@ export class ExportsService {
               quantity: alloc.quantityKg,
               fromLocationId,
               toLocationId: contract.stagingLocationId,
-              notes: `Staged for ${contract.contractNumber}`,
+              notes: `Staged (reserved) for ${contract.contractNumber}`,
               createdById: userId ?? null,
               metadata: { exportContractId: contract.id, stage: true },
             }),
@@ -332,8 +577,10 @@ export class ExportsService {
         }
       }
 
-      contract.status = ExportContractStatus.STAGED;
-      await contractRepo.save(contract);
+      const c = await contractRepo.findOne({ where: { id: contract.id } });
+      if (!c) throw new NotFoundException('Export contract not found');
+      c.status = ExportContractStatus.STAGED;
+      await contractRepo.save(c);
     });
 
     return this.findOne(id);
@@ -373,7 +620,7 @@ export class ExportsService {
       const packingList: ExportPackingLine[] = [];
       let shippedKg = 0;
 
-      for (const alloc of contract.allocations) {
+      for (const alloc of contract.allocations ?? []) {
         const lot = await lotRepo.findOne({
           where: { id: alloc.lotId },
           relations: { item: true },
@@ -384,15 +631,25 @@ export class ExportsService {
           );
         }
         const qty = parseFloat(alloc.quantityKg);
-        const available = await this.stockService.getQuantity(
+
+        // Unlock reservation then ship physical OUT
+        await this.stockService.releaseReserve(
+          lot.locationId,
+          lot.itemId,
+          qty,
+          manager,
+          lot.id,
+        );
+
+        const onHand = await this.stockService.getQuantity(
           lot.locationId,
           lot.itemId,
           manager,
           lot.id,
         );
-        if (available < qty - 1e-6) {
+        if (onHand < qty - 1e-6) {
           throw new BadRequestException(
-            `Insufficient stock for lot ${lot.code}: available ${available}`,
+            `Insufficient stock for lot ${lot.code}: on hand ${onHand}`,
           );
         }
 
@@ -402,6 +659,14 @@ export class ExportsService {
             itemId: lot.itemId,
             quantityDelta: -qty,
             lotId: lot.id,
+            meta: {
+              sourceType: StockMovementSourceType.SALE_EXPORT,
+              referenceType: 'export_contract',
+              referenceId: contract.id,
+              reference: contract.contractNumber,
+              createdById: userId ?? null,
+              notes: `Shipped ${contract.contractNumber}`,
+            },
           },
           manager,
         );
@@ -424,6 +689,8 @@ export class ExportsService {
               exportContractId: contract.id,
               contractNumber: contract.contractNumber,
               incoterm: contract.incoterm,
+              containerNumber:
+                dto.containerNumber ?? contract.containerNumber,
             },
           }),
         );
@@ -439,7 +706,7 @@ export class ExportsService {
 
       let saleId: string | null = null;
       if (createSale) {
-        const first = contract.allocations[0];
+        const first = (contract.allocations ?? [])[0];
         const firstLot = await lotRepo.findOne({
           where: { id: first.lotId },
         });
@@ -451,7 +718,7 @@ export class ExportsService {
 
         const saleLines: SaleLine[] = [];
         let subtotal = 0;
-        for (const alloc of contract.allocations) {
+        for (const alloc of contract.allocations ?? []) {
           const lot = await lotRepo.findOne({
             where: { id: alloc.lotId },
           });
@@ -482,6 +749,9 @@ export class ExportsService {
           );
         }
 
+        const paymentMethod = bankAccountId
+          ? PaymentMethod.BANK
+          : PaymentMethod.CREDIT;
         const sale = await saleRepo.save(
           saleRepo.create({
             customerId: contract.customerId,
@@ -491,13 +761,15 @@ export class ExportsService {
             fxRate:
               dto.fxRate !== undefined ? dto.fxRate.toFixed(6) : null,
             exportContractId: contract.id,
-            paymentMethod: bankAccountId
-              ? PaymentMethod.BANK
-              : PaymentMethod.CREDIT,
+            paymentMethod,
             bankAccountId: bankAccountId ?? null,
             allowNegativeStock: false,
             subtotal: subtotal.toFixed(2),
             total: subtotal.toFixed(2),
+            paidAmount:
+              paymentMethod === PaymentMethod.CREDIT
+                ? '0.00'
+                : subtotal.toFixed(2),
             notes: `Export ${contract.contractNumber} · ${contract.incoterm}`,
             status: DocumentStatus.ACTIVE,
             createdById: userId ?? null,
@@ -526,38 +798,113 @@ export class ExportsService {
         }
       }
 
-      contract.packingList = packingList;
-      contract.shippedKg = shippedKg.toFixed(3);
-      contract.shippedAt = new Date();
-      contract.status = ExportContractStatus.SHIPPED;
-      contract.saleId = saleId;
-      if (dto.notes) contract.notes = dto.notes.trim();
-      await contractRepo.save(contract);
+      const c = await contractRepo.findOne({ where: { id: contract.id } });
+      if (!c) throw new NotFoundException('Export contract not found');
+      c.packingList = packingList;
+      c.shippedKg = shippedKg.toFixed(3);
+      c.shippedAt = new Date();
+      c.status = ExportContractStatus.SHIPPED;
+      c.saleId = saleId;
+      if (dto.containerNumber !== undefined) {
+        c.containerNumber = dto.containerNumber.trim() || null;
+      }
+      if (dto.shippingDate !== undefined) {
+        c.shippingDate = dto.shippingDate;
+      } else if (!c.shippingDate) {
+        c.shippingDate = new Date().toISOString().slice(0, 10);
+      }
+      if (dto.expectedArrival !== undefined) {
+        c.expectedArrival = dto.expectedArrival;
+      }
+      if (dto.destination !== undefined) {
+        c.destination = dto.destination.trim() || null;
+      }
+      if (dto.notes) c.notes = dto.notes.trim();
+      await contractRepo.save(c);
+    });
+
+    return this.findOne(id);
+  }
+
+  async markDelivered(id: string, userId?: string) {
+    const contract = await this.contractRepo.findOne({
+      where: { id },
+      relations: { allocations: true },
+    });
+    if (!contract) throw new NotFoundException('Export contract not found');
+    if (contract.status !== ExportContractStatus.SHIPPED) {
+      throw new BadRequestException('Only SHIPPED contracts can be delivered');
+    }
+    contract.status = ExportContractStatus.DELIVERED;
+    contract.deliveredAt = new Date();
+    await this.contractRepo.save(contract);
+
+    await this.dataSource.transaction(async (manager) => {
+      const eventRepo = manager.getRepository(LotEvent);
+      for (const alloc of contract.allocations ?? []) {
+        await eventRepo.save(
+          eventRepo.create({
+            lotId: alloc.lotId,
+            eventType: LotEventType.DELIVERED,
+            quantity: alloc.quantityKg,
+            notes: `Delivered ${contract.contractNumber}`,
+            createdById: userId ?? null,
+            metadata: {
+              exportContractId: contract.id,
+              contractNumber: contract.contractNumber,
+            },
+          }),
+        );
+      }
     });
 
     return this.findOne(id);
   }
 
   async close(id: string) {
-    const contract = await this.findOne(id);
-    if (contract.status !== ExportContractStatus.SHIPPED) {
-      throw new BadRequestException('Only SHIPPED contracts can be closed');
+    const contract = await this.contractRepo.findOne({ where: { id } });
+    if (!contract) throw new NotFoundException('Export contract not found');
+    if (
+      contract.status !== ExportContractStatus.SHIPPED &&
+      contract.status !== ExportContractStatus.DELIVERED
+    ) {
+      throw new BadRequestException(
+        'Only SHIPPED or DELIVERED contracts can be closed',
+      );
     }
     contract.status = ExportContractStatus.CLOSED;
     await this.contractRepo.save(contract);
     return this.findOne(id);
   }
 
-  async cancel(id: string) {
-    const contract = await this.findOne(id);
+  async cancel(id: string, userId?: string) {
+    const contract = await this.contractRepo.findOne({
+      where: { id },
+      relations: { allocations: { lot: true } },
+    });
+    if (!contract) throw new NotFoundException('Export contract not found');
     if (
       contract.status === ExportContractStatus.SHIPPED ||
+      contract.status === ExportContractStatus.DELIVERED ||
       contract.status === ExportContractStatus.CLOSED
     ) {
       throw new BadRequestException('Cannot cancel shipped/closed contract');
     }
-    contract.status = ExportContractStatus.CANCELLED;
-    await this.contractRepo.save(contract);
+
+    await this.dataSource.transaction(async (manager) => {
+      for (const alloc of contract.allocations ?? []) {
+        await this.releaseAllocationReserve(alloc, manager, userId, contract);
+      }
+      if ((contract.allocations ?? []).length > 0) {
+        await manager.getRepository(ExportAllocation).delete({
+          id: In(contract.allocations!.map((a) => a.id)),
+        });
+      }
+      contract.status = ExportContractStatus.CANCELLED;
+      contract.allocatedKg = '0.000';
+      await manager.getRepository(ExportContract).save(contract);
+    });
+
     return this.findOne(id);
   }
 }

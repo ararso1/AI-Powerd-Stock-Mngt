@@ -120,6 +120,16 @@ export const PERMISSION_DEFINITIONS = [
     name: 'Accept or reject AI recommendations',
     module: 'ai',
   },
+  {
+    code: 'market_prices.read',
+    name: 'View ICE market prices',
+    module: 'market_prices',
+  },
+  {
+    code: 'market_prices.write',
+    name: 'Sync and manage market prices',
+    module: 'market_prices',
+  },
 ] as const;
 
 export const DEFAULT_ROLE_PERMISSIONS: Record<string, string[]> = {
@@ -139,6 +149,7 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<string, string[]> = {
     'insights.read',
     'ai.read',
     'ai.feedback',
+    'market_prices.read',
     'locations.read',
     'inventory.read',
     'lot.read',
@@ -158,6 +169,7 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<string, string[]> = {
     'lot.write',
     'collection.read',
     'collection.write',
+    'market_prices.read',
   ],
   'Stock Keeper': [
     'inventory.read',
@@ -185,5 +197,6 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<string, string[]> = {
     'insights.read',
     'ai.read',
     'ai.feedback',
+    'market_prices.read',
   ],
 };

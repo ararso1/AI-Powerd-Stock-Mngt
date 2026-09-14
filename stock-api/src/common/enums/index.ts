@@ -14,14 +14,80 @@ export enum CoffeeForm {
   PARCHMENT = 'PARCHMENT',
   GREEN = 'GREEN',
   ROASTED = 'ROASTED',
+  FLOUR = 'FLOUR',
   PACKAGED = 'PACKAGED',
   REJECT = 'REJECT',
+}
+
+/** Local processing operation family. */
+export enum ProcessOperationType {
+  MILL = 'MILL',
+  FLOUR = 'FLOUR',
+  ROAST = 'ROAST',
+  PACK = 'PACK',
+  OTHER = 'OTHER',
+}
+
+/** Domestic customer segment. */
+export enum CustomerType {
+  RETAIL = 'RETAIL',
+  WHOLESALE = 'WHOLESALE',
+  CAFE = 'CAFE',
+  OTHER = 'OTHER',
+}
+
+/** Unified stock ledger direction. */
+export enum StockMovementDirection {
+  IN = 'IN',
+  OUT = 'OUT',
+}
+
+/** Unified stock ledger source (why the qty moved). */
+export enum StockMovementSourceType {
+  PURCHASE = 'PURCHASE',
+  COLLECTION = 'COLLECTION',
+  PRODUCTION_OUTPUT = 'PRODUCTION_OUTPUT',
+  PRODUCTION_CONSUMPTION = 'PRODUCTION_CONSUMPTION',
+  PRODUCTION_LOSS = 'PRODUCTION_LOSS',
+  TRANSFER_IN = 'TRANSFER_IN',
+  TRANSFER_OUT = 'TRANSFER_OUT',
+  SALE_LOCAL = 'SALE_LOCAL',
+  SALE_EXPORT = 'SALE_EXPORT',
+  SALE_RETURN = 'SALE_RETURN',
+  EXPORT_SHIPMENT = 'EXPORT_SHIPMENT',
+  REJECTION = 'REJECTION',
+  DAMAGE = 'DAMAGE',
+  WASTAGE = 'WASTAGE',
+  RETURN_SUPPLIER = 'RETURN_SUPPLIER',
+  ADJUSTMENT = 'ADJUSTMENT',
+  OTHER = 'OTHER',
 }
 
 export enum LotStatus {
   ACTIVE = 'ACTIVE',
   HOLD = 'HOLD',
   VOIDED = 'VOIDED',
+}
+
+/**
+ * Quality / grade lifecycle on a lot (orthogonal to operational LotStatus).
+ * Received → Sample Tested → Graded → Accepted/Rejected → Processed → Final Grade
+ */
+export enum LotQcPhase {
+  RECEIVED = 'RECEIVED',
+  SAMPLE_TESTED = 'SAMPLE_TESTED',
+  GRADED = 'GRADED',
+  ACCEPTED = 'ACCEPTED',
+  REJECTED = 'REJECTED',
+  PROCESSED = 'PROCESSED',
+  FINAL_GRADE = 'FINAL_GRADE',
+}
+
+/** Receiving inspection outcome on collection / purchase intake. */
+export enum ReceivingDisposition {
+  ACCEPTED = 'ACCEPTED',
+  PARTIAL = 'PARTIAL',
+  REJECTED = 'REJECTED',
 }
 
 /** Append-only lot lifecycle events. */
@@ -40,8 +106,17 @@ export enum LotEventType {
   PACKAGED = 'PACKAGED',
   SOLD_LOCAL = 'SOLD_LOCAL',
   ALLOCATED_EXPORT = 'ALLOCATED_EXPORT',
+  RELEASED_EXPORT = 'RELEASED_EXPORT',
   SHIPPED = 'SHIPPED',
+  DELIVERED = 'DELIVERED',
   VOIDED = 'VOIDED',
+  SAMPLE_TESTED = 'SAMPLE_TESTED',
+  GRADED = 'GRADED',
+  RECEIVING_ACCEPTED = 'RECEIVING_ACCEPTED',
+  RECEIVING_REJECTED = 'RECEIVING_REJECTED',
+  FINAL_GRADED = 'FINAL_GRADED',
+  SALE_RETURNED = 'SALE_RETURNED',
+  PRODUCTION_LOSS = 'PRODUCTION_LOSS',
 }
 
 export enum PaymentMethod {
@@ -160,6 +235,7 @@ export enum ExportContractStatus {
   ALLOCATED = 'ALLOCATED',
   STAGED = 'STAGED',
   SHIPPED = 'SHIPPED',
+  DELIVERED = 'DELIVERED',
   CLOSED = 'CLOSED',
   CANCELLED = 'CANCELLED',
 }
@@ -186,15 +262,19 @@ export enum NotificationType {
   FRESHNESS = 'FRESHNESS',
 }
 
-/** AI decision-support insight categories (Step 8). */
+/** AI decision-support insight categories (Step 8 / §10). */
 export enum AiInsightKind {
   DEMAND_FORECAST = 'DEMAND_FORECAST',
   INTAKE_ADVICE = 'INTAKE_ADVICE',
+  STOCK_PREDICTION = 'STOCK_PREDICTION',
+  PROCUREMENT = 'PROCUREMENT',
   YIELD_ANOMALY = 'YIELD_ANOMALY',
   BLEND_OPTIMIZER = 'BLEND_OPTIMIZER',
   PRICING = 'PRICING',
   EXPORT_READINESS = 'EXPORT_READINESS',
   QUALITY_RISK = 'QUALITY_RISK',
+  CREDIT_RISK = 'CREDIT_RISK',
+  MARKET_ALERT = 'MARKET_ALERT',
 }
 
 export enum AiInsightSeverity {

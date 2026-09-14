@@ -37,10 +37,20 @@ export class CreateExportContractDto {
   @MaxLength(40)
   contractNumber?: string;
 
+  @IsOptional()
+  @IsString()
+  @MaxLength(40)
+  orderNumber?: string;
+
   @IsString()
   @MinLength(2)
   @MaxLength(200)
   buyerName: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(100)
+  buyerCountry?: string;
 
   @IsOptional()
   @IsUUID()
@@ -55,6 +65,16 @@ export class CreateExportContractDto {
   @IsString()
   @MaxLength(80)
   grade?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(80)
+  coffeeType?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  origin?: string;
 
   @Type(() => Number)
   @IsNumber()
@@ -79,6 +99,24 @@ export class CreateExportContractDto {
   windowEnd?: string;
 
   @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  destination?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(40)
+  containerNumber?: string;
+
+  @IsOptional()
+  @IsDateString()
+  shippingDate?: string;
+
+  @IsOptional()
+  @IsDateString()
+  expectedArrival?: string;
+
+  @IsOptional()
   @IsUUID()
   stagingLocationId?: string;
 
@@ -94,8 +132,18 @@ export class CreateExportContractDto {
 export class UpdateExportContractDto {
   @IsOptional()
   @IsString()
+  @MaxLength(40)
+  orderNumber?: string | null;
+
+  @IsOptional()
+  @IsString()
   @MaxLength(200)
   buyerName?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(100)
+  buyerCountry?: string | null;
 
   @IsOptional()
   @IsUUID()
@@ -111,6 +159,16 @@ export class UpdateExportContractDto {
   @IsString()
   @MaxLength(80)
   grade?: string | null;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(80)
+  coffeeType?: string | null;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  origin?: string | null;
 
   @IsOptional()
   @Type(() => Number)
@@ -134,6 +192,24 @@ export class UpdateExportContractDto {
   @IsOptional()
   @IsDateString()
   windowEnd?: string | null;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  destination?: string | null;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(40)
+  containerNumber?: string | null;
+
+  @IsOptional()
+  @IsDateString()
+  shippingDate?: string | null;
+
+  @IsOptional()
+  @IsDateString()
+  expectedArrival?: string | null;
 
   @IsOptional()
   @IsUUID()
@@ -171,6 +247,16 @@ export class DocCheckItemDto {
 
   @IsBoolean()
   done: boolean;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  reference?: string | null;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  url?: string | null;
 }
 
 export class UpdateDocChecklistDto {
@@ -195,6 +281,24 @@ export class ShipExportContractDto {
   @IsNumber()
   @Min(0)
   fxRate?: number;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(40)
+  containerNumber?: string;
+
+  @IsOptional()
+  @IsDateString()
+  shippingDate?: string;
+
+  @IsOptional()
+  @IsDateString()
+  expectedArrival?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  destination?: string;
 
   @IsOptional()
   @IsString()

@@ -13,6 +13,7 @@ import {
 import {
   CoffeeForm,
   LotEventType,
+  LotQcPhase,
   LotStatus,
 } from '../common/enums';
 import { Lot } from '../database/entities/lot.entity';
@@ -20,6 +21,7 @@ import { LotEvent } from '../database/entities/lot-event.entity';
 import { Location } from '../database/entities/location.entity';
 import { Item } from '../database/entities/item.entity';
 import {
+  AdvanceLotQcDto,
   AppendLotEventDto,
   CreateLotDto,
   MergeLotsDto,
@@ -33,6 +35,7 @@ const LOT_RELATIONS = {
   location: true,
   createdBy: true,
   parentLot: true,
+  inspector: true,
 } as const;
 
 @Injectable()
@@ -407,6 +410,92 @@ export class LotsService {
         }),
       );
     });
+
+    return this.findOne(id);
+  }
+
+  /**
+   * Advance grade / quality lifecycle:
+   * Received → Sample Tested → Graded → Accepted / Rejected → Processed → Final Grade
+   */
+  async advanceQc(id: string, dto: AdvanceLotQcDto, userId?: string) {
+    const lot = await this.findOne(id);
+    if (lot.status === LotStatus.VOIDED) {
+      throw new BadRequestException('Cannot grade a voided lot');
+    }
+
+    const phase = dto.qcPhase;
+    if (phase === LotQcPhase.REJECTED && !dto.rejectReason) {
+      throw new BadRequestException('rejectReason required when marking REJECTED');
+    }
+
+    lot.qcPhase = phase;
+    if (dto.grade !== undefined) lot.grade = dto.grade;
+    if (dto.moisturePercent !== undefined) {
+      lot.moisturePercent = dto.moisturePercent.toFixed(2);
+    }
+    if (dto.screenSize !== undefined) lot.screenSize = dto.screenSize;
+    if (dto.cuppingScore !== undefined) {
+      lot.cuppingScore = dto.cuppingScore.toFixed(2);
+    }
+    if (dto.defectCount !== undefined) lot.defectCount = dto.defectCount;
+    if (dto.defectLevel !== undefined) lot.defectLevel = dto.defectLevel;
+    if (dto.rejectReason !== undefined) lot.rejectReason = dto.rejectReason;
+    if (dto.rejectAction !== undefined) lot.rejectAction = dto.rejectAction;
+    lot.inspectorId = userId ?? lot.inspectorId;
+    lot.inspectedAt = new Date();
+
+    if (phase === LotQcPhase.REJECTED) {
+      lot.status = LotStatus.HOLD;
+      lot.form = lot.form === CoffeeForm.REJECT ? lot.form : lot.form;
+      // Keep coffee in inventory; mark as reject form only when explicitly rejected product
+      if (lot.form !== CoffeeForm.REJECT) {
+        // stay as current form but HOLD + REJECTED phase — user can move to reject lot via receiving
+      }
+    } else if (
+      phase === LotQcPhase.ACCEPTED ||
+      phase === LotQcPhase.FINAL_GRADE ||
+      phase === LotQcPhase.PROCESSED
+    ) {
+      if (lot.status === LotStatus.HOLD && lot.form !== CoffeeForm.REJECT) {
+        lot.status = LotStatus.ACTIVE;
+      }
+    }
+
+    await this.lotRepo.save(lot);
+
+    const eventMap: Partial<Record<LotQcPhase, LotEventType>> = {
+      [LotQcPhase.SAMPLE_TESTED]: LotEventType.SAMPLE_TESTED,
+      [LotQcPhase.GRADED]: LotEventType.GRADED,
+      [LotQcPhase.ACCEPTED]: LotEventType.QC_RELEASED,
+      [LotQcPhase.REJECTED]: LotEventType.QC_HELD,
+      [LotQcPhase.FINAL_GRADE]: LotEventType.FINAL_GRADED,
+      [LotQcPhase.PROCESSED]: LotEventType.PROCESS_COMPLETED,
+      [LotQcPhase.RECEIVED]: LotEventType.COLLECTED,
+    };
+
+    await this.eventRepo.save(
+      this.eventRepo.create({
+        lotId: lot.id,
+        eventType: eventMap[phase] ?? LotEventType.GRADED,
+        quantity: lot.quantity,
+        notes:
+          dto.notes ??
+          `QC phase → ${phase}${dto.grade ? ` · grade ${dto.grade}` : ''}`,
+        createdById: userId ?? null,
+        metadata: {
+          qcPhase: phase,
+          grade: dto.grade ?? null,
+          moisturePercent: dto.moisturePercent ?? null,
+          screenSize: dto.screenSize ?? null,
+          cuppingScore: dto.cuppingScore ?? null,
+          defectCount: dto.defectCount ?? null,
+          defectLevel: dto.defectLevel ?? null,
+          rejectReason: dto.rejectReason ?? null,
+          rejectAction: dto.rejectAction ?? null,
+        },
+      }),
+    );
 
     return this.findOne(id);
   }

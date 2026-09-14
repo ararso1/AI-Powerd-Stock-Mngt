@@ -65,6 +65,16 @@ export class ExportsController {
     return this.service.allocate(id, dto, user.sub);
   }
 
+  @Post(':id/allocations/:allocationId/deallocate')
+  @RequirePermissions('export.write')
+  deallocate(
+    @Param('id') id: string,
+    @Param('allocationId') allocationId: string,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.service.deallocate(id, allocationId, user.sub);
+  }
+
   @Patch(':id/checklist')
   @RequirePermissions('export.write')
   updateChecklist(
@@ -90,6 +100,12 @@ export class ExportsController {
     return this.service.ship(id, dto ?? {}, user.sub);
   }
 
+  @Post(':id/deliver')
+  @RequirePermissions('export.write')
+  deliver(@Param('id') id: string, @CurrentUser() user: JwtPayload) {
+    return this.service.markDelivered(id, user.sub);
+  }
+
   @Post(':id/close')
   @RequirePermissions('export.write')
   close(@Param('id') id: string) {
@@ -98,7 +114,7 @@ export class ExportsController {
 
   @Post(':id/cancel')
   @RequirePermissions('export.write')
-  cancel(@Param('id') id: string) {
-    return this.service.cancel(id);
+  cancel(@Param('id') id: string, @CurrentUser() user: JwtPayload) {
+    return this.service.cancel(id, user.sub);
   }
 }

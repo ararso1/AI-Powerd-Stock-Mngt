@@ -49,12 +49,29 @@ export class SuppliersService {
   }
 
   create(dto: CreateSupplierDto) {
-    return this.repo.save(this.repo.create(dto));
+    return this.repo.save(
+      this.repo.create({
+        name: dto.name,
+        phone: dto.phone ?? null,
+        email: dto.email ?? null,
+        address: dto.address ?? null,
+        creditLimit:
+          dto.creditLimit !== undefined ? dto.creditLimit.toFixed(2) : null,
+      }),
+    );
   }
 
   async update(id: string, dto: UpdateSupplierDto) {
     const s = await this.findOne(id);
-    Object.assign(s, dto);
+    if (dto.name !== undefined) s.name = dto.name;
+    if (dto.phone !== undefined) s.phone = dto.phone ?? null;
+    if (dto.email !== undefined) s.email = dto.email ?? null;
+    if (dto.address !== undefined) s.address = dto.address ?? null;
+    if (dto.isActive !== undefined) s.isActive = dto.isActive;
+    if (dto.creditLimit !== undefined) {
+      s.creditLimit =
+        dto.creditLimit === null ? null : Number(dto.creditLimit).toFixed(2);
+    }
     return this.repo.save(s);
   }
 

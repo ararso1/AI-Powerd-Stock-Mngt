@@ -34,6 +34,19 @@ export class StockLevel extends UuidBaseEntity {
   @Column({ type: 'decimal', precision: 14, scale: 3, default: 0 })
   quantity: string;
 
+  /**
+   * Kg locked for open export allocations (ALLOCATED / STAGED).
+   * Available for local sale = quantity − reservedQuantity.
+   */
+  @Column({
+    name: 'reserved_quantity',
+    type: 'decimal',
+    precision: 14,
+    scale: 3,
+    default: 0,
+  })
+  reservedQuantity: string;
+
   @Column({
     name: 'purchase_price',
     type: 'decimal',

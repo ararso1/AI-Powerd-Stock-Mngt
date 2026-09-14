@@ -7,7 +7,7 @@ import {
   OneToMany,
   UpdateDateColumn,
 } from 'typeorm';
-import { CoffeeForm } from '../../common/enums';
+import { CoffeeForm, ProcessOperationType } from '../../common/enums';
 import { Item } from './item.entity';
 import { ProcessRun } from './process-run.entity';
 import { UuidBaseEntity } from './uuid-base.entity';
@@ -35,6 +35,25 @@ export class ProcessTemplate extends UuidBaseEntity {
     enumName: 'process_templates_output_form_enum',
   })
   outputForm: CoffeeForm;
+
+  @Column({
+    name: 'operation_type',
+    type: 'enum',
+    enum: ProcessOperationType,
+    enumName: 'process_templates_operation_type_enum',
+    default: ProcessOperationType.OTHER,
+  })
+  operationType: ProcessOperationType;
+
+  /** When set, quantityOutput on complete is pack count; kg = packs × packSizeKg. */
+  @Column({
+    name: 'pack_size_kg',
+    type: 'decimal',
+    precision: 14,
+    scale: 3,
+    nullable: true,
+  })
+  packSizeKg: string | null;
 
   @Column({
     name: 'expected_yield_percent',

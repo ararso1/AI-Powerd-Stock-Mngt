@@ -6,10 +6,11 @@ import {
   IsOptional,
   IsString,
   IsUUID,
+  Max,
   MaxLength,
   Min,
 } from 'class-validator';
-import { PaymentMethod } from '../../common/enums';
+import { PaymentMethod, ReceivingDisposition } from '../../common/enums';
 
 export class CreateCollectionDto {
   @IsUUID()
@@ -39,6 +40,25 @@ export class CreateCollectionDto {
   @IsUUID()
   bankAccountId?: string;
 
+  /** Receiving inspection outcome. Default ACCEPTED. */
+  @IsOptional()
+  @IsEnum(ReceivingDisposition)
+  disposition?: ReceivingDisposition;
+
+  /** Accepted kg (defaults to full weight when ACCEPTED). */
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0)
+  acceptedWeightKg?: number;
+
+  /** Rejected kg that remains in inventory as REJECT lot. */
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0)
+  rejectedWeightKg?: number;
+
   @IsOptional()
   @IsString()
   @MaxLength(80)
@@ -63,6 +83,11 @@ export class CreateCollectionDto {
   @IsOptional()
   @IsString()
   @MaxLength(120)
+  zone?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
   woreda?: string;
 
   @IsOptional()
@@ -74,6 +99,41 @@ export class CreateCollectionDto {
   @IsString()
   @MaxLength(80)
   variety?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(80)
+  processMethod?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(40)
+  screenSize?: string;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0)
+  @Max(100)
+  cuppingScore?: number;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(40)
+  defectLevel?: string;
+
+  @IsOptional()
+  @IsString()
+  rejectReason?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  rejectAction?: string;
+
+  @IsOptional()
+  @IsUUID()
+  rejectDestinationId?: string;
 
   @IsOptional()
   @IsString()

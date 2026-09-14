@@ -38,8 +38,10 @@ import type {
   CollectionTicket,
   Location,
   PaymentMethod,
+  ReceivingDisposition,
   Supplier,
 } from "@/lib/types";
+import { RECEIVING_DISPOSITION_OPTIONS } from "@/lib/lots";
 import { useFetch } from "@/hooks/use-fetch";
 import { useLocations } from "@/hooks/use-locations";
 import { useAutoPaymentAccount } from "@/hooks/use-payment-bank-account";
@@ -57,9 +59,19 @@ export function CollectionForm() {
   const [bankAccountId, setBankAccountId] = useState("");
   const [moisture, setMoisture] = useState("");
   const [region, setRegion] = useState("Yirgacheffe");
+  const [zone, setZone] = useState("");
   const [woreda, setWoreda] = useState("");
   const [kebele, setKebele] = useState("");
   const [variety, setVariety] = useState("Heirloom");
+  const [processMethod, setProcessMethod] = useState("");
+  const [screenSize, setScreenSize] = useState("");
+  const [defectLevel, setDefectLevel] = useState("");
+  const [disposition, setDisposition] =
+    useState<ReceivingDisposition>("ACCEPTED");
+  const [acceptedWeightKg, setAcceptedWeightKg] = useState("");
+  const [rejectedWeightKg, setRejectedWeightKg] = useState("");
+  const [rejectReason, setRejectReason] = useState("");
+  const [rejectAction, setRejectAction] = useState("Hold reject stock");
   const [notes, setNotes] = useState("");
   const [saving, setSaving] = useState(false);
 
@@ -112,9 +124,15 @@ export function CollectionForm() {
   const total = useMemo(() => {
     const w = parseFloat(weightKg);
     const p = parseFloat(pricePerKg);
-    if (!Number.isFinite(w) || !Number.isFinite(p)) return 0;
-    return w * p;
-  }, [weightKg, pricePerKg]);
+    const accepted =
+      disposition === "REJECTED"
+        ? 0
+        : disposition === "PARTIAL"
+          ? parseFloat(acceptedWeightKg)
+          : w;
+    if (!Number.isFinite(accepted) || !Number.isFinite(p)) return 0;
+    return Math.max(0, accepted) * p;
+  }, [weightKg, pricePerKg, disposition, acceptedWeightKg]);
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -137,12 +155,35 @@ export function CollectionForm() {
       return;
     }
 
+    let accepted = w;
+    let rejected = 0;
+    if (disposition === "PARTIAL") {
+      accepted = parseFloat(acceptedWeightKg);
+      rejected = parseFloat(rejectedWeightKg);
+      if (!Number.isFinite(accepted) || !Number.isFinite(rejected)) {
+        toast.error("Enter accepted and rejected weights");
+        return;
+      }
+      if (Math.abs(accepted + rejected - w) > 0.001) {
+        toast.error("Accepted + rejected must equal total weight");
+        return;
+      }
+    } else if (disposition === "REJECTED") {
+      accepted = 0;
+      rejected = w;
+    }
+    if (rejected > 0 && !rejectReason.trim()) {
+      toast.error("Rejection reason is required when rejecting coffee");
+      return;
+    }
+
     const resolvedBank = resolveBankAccountId(
       paymentMethod,
       banks,
       bankAccountId
     );
     if (
+      accepted > 0 &&
       (paymentMethod === "CASH" || paymentMethod === "BANK") &&
       !resolvedBank
     ) {
@@ -164,18 +205,32 @@ export function CollectionForm() {
           weightKg: w,
           pricePerKg: p,
           paymentMethod,
-          bankAccountId: resolvedBank,
+          bankAccountId: accepted > 0 ? resolvedBank : undefined,
+          disposition,
+          acceptedWeightKg: accepted,
+          rejectedWeightKg: rejected,
+          rejectReason: rejected > 0 ? rejectReason.trim() : undefined,
+          rejectAction: rejected > 0 ? rejectAction.trim() || undefined : undefined,
           grade: grade.trim() || undefined,
           cropYear: cropYear.trim() || undefined,
           moisturePercent: moisture ? parseFloat(moisture) : undefined,
           region: region.trim() || undefined,
+          zone: zone.trim() || undefined,
           woreda: woreda.trim() || undefined,
           kebele: kebele.trim() || undefined,
           variety: variety.trim() || undefined,
+          processMethod: processMethod.trim() || undefined,
+          screenSize: screenSize.trim() || undefined,
+          defectLevel: defectLevel.trim() || undefined,
           notes: notes.trim() || undefined,
         },
       });
-      toast.success(`Collected — lot ${ticket.lot?.code ?? ticket.lotId}`);
+      const rejectNote = ticket.rejectLot
+        ? ` · reject lot ${ticket.rejectLot.code}`
+        : "";
+      toast.success(
+        `Received — lot ${ticket.lot?.code ?? ticket.lotId}${rejectNote}`
+      );
       router.push(`/collections/${ticket.id}`);
     } catch (err) {
       toast.error(errorMessage(err));
@@ -198,7 +253,7 @@ export function CollectionForm() {
       <FrappeDocument>
         <FrappeSection
           title="Cherry intake"
-          description="Creates lot + purchase + stock and records COLLECTED on the lot timeline"
+          description="Purchase & receiving with inspection — accepted coffee becomes a lot; rejected coffee stays in inventory as a REJECT lot"
         >
           <FrappeFormGrid columns={2}>
             <FrappeField label="Farmer / supplier" required>
@@ -260,6 +315,68 @@ export function CollectionForm() {
               />
             </FrappeField>
 
+            <FrappeField label="Receiving inspection" required>
+              <Select
+                value={disposition}
+                onValueChange={(v) =>
+                  setDisposition(v as ReceivingDisposition)
+                }
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {RECEIVING_DISPOSITION_OPTIONS.map((o) => (
+                    <SelectItem key={o.value} value={o.value}>
+                      {o.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </FrappeField>
+
+            {disposition === "PARTIAL" ? (
+              <>
+                <FrappeField label="Accepted kg" required>
+                  <Input
+                    type="number"
+                    min={0}
+                    step="0.001"
+                    value={acceptedWeightKg}
+                    onChange={(e) => setAcceptedWeightKg(e.target.value)}
+                  />
+                </FrappeField>
+                <FrappeField label="Rejected kg" required>
+                  <Input
+                    type="number"
+                    min={0}
+                    step="0.001"
+                    value={rejectedWeightKg}
+                    onChange={(e) => setRejectedWeightKg(e.target.value)}
+                  />
+                </FrappeField>
+              </>
+            ) : null}
+
+            {disposition !== "ACCEPTED" ? (
+              <>
+                <FrappeField label="Rejection reason" required>
+                  <Input
+                    value={rejectReason}
+                    onChange={(e) => setRejectReason(e.target.value)}
+                    placeholder="e.g. High defect / underripe"
+                  />
+                </FrappeField>
+                <FrappeField label="Reject action / destination">
+                  <Input
+                    value={rejectAction}
+                    onChange={(e) => setRejectAction(e.target.value)}
+                    placeholder="Hold / reprocess / local market"
+                  />
+                </FrappeField>
+              </>
+            ) : null}
+
             <FrappeField label="Grade" hint="Uses price table when matched">
               <Select value={grade} onValueChange={setGrade}>
                 <SelectTrigger>
@@ -289,7 +406,7 @@ export function CollectionForm() {
               />
             </FrappeField>
 
-            <FrappeField label="Total">
+            <FrappeField label="Payable total (accepted only)">
               <Input value={formatMoney(total)} readOnly />
             </FrappeField>
 
@@ -350,6 +467,9 @@ export function CollectionForm() {
             <FrappeField label="Region">
               <Input value={region} onChange={(e) => setRegion(e.target.value)} />
             </FrappeField>
+            <FrappeField label="Zone">
+              <Input value={zone} onChange={(e) => setZone(e.target.value)} />
+            </FrappeField>
             <FrappeField label="Woreda">
               <Input value={woreda} onChange={(e) => setWoreda(e.target.value)} />
             </FrappeField>
@@ -360,6 +480,27 @@ export function CollectionForm() {
               <Input
                 value={variety}
                 onChange={(e) => setVariety(e.target.value)}
+              />
+            </FrappeField>
+            <FrappeField label="Process method">
+              <Input
+                value={processMethod}
+                onChange={(e) => setProcessMethod(e.target.value)}
+                placeholder="Washed / Natural / Honey"
+              />
+            </FrappeField>
+            <FrappeField label="Screen size">
+              <Input
+                value={screenSize}
+                onChange={(e) => setScreenSize(e.target.value)}
+                placeholder="e.g. 14/15"
+              />
+            </FrappeField>
+            <FrappeField label="Defect level">
+              <Input
+                value={defectLevel}
+                onChange={(e) => setDefectLevel(e.target.value)}
+                placeholder="Low / Medium / High"
               />
             </FrappeField>
             <FrappeField label="Notes" fullWidth>

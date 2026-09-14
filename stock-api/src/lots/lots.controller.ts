@@ -15,6 +15,7 @@ import { RequirePermissions } from '../common/decorators/permissions.decorator';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { PermissionsGuard } from '../common/guards/permissions.guard';
 import {
+  AdvanceLotQcDto,
   AppendLotEventDto,
   CreateLotDto,
   MergeLotsDto,
@@ -57,6 +58,16 @@ export class LotsController {
   @RequirePermissions('lot.write')
   update(@Param('id') id: string, @Body() dto: UpdateLotDto) {
     return this.service.update(id, dto);
+  }
+
+  @Post(':id/qc')
+  @RequirePermissions('lot.write', 'process.write')
+  advanceQc(
+    @Param('id') id: string,
+    @Body() dto: AdvanceLotQcDto,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.service.advanceQc(id, dto, user.sub);
   }
 
   @Post(':id/events')

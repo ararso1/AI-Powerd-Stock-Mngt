@@ -23,6 +23,7 @@ import {
   Ship,
   Flame,
   Sparkles,
+  LineChart,
 } from "lucide-react";
 
 export interface NavItem {
@@ -33,19 +34,25 @@ export interface NavItem {
   permissions?: string[];
 }
 
-/** Real-time pulse & decision-support surfaces */
+/** Overview: dashboard, advice, reports */
 export const insightsNav: NavItem[] = [
   {
-    title: "Command Center",
+    title: "Dashboard",
     href: "/dashboard",
     icon: LayoutDashboard,
     permissions: ["insights.read", "dashboard.read"],
   },
   {
-    title: "AI Insights",
+    title: "AI advice",
     href: "/insights",
     icon: Sparkles,
     permissions: ["ai.read", "insights.read"],
+  },
+  {
+    title: "Market prices",
+    href: "/market-prices",
+    icon: LineChart,
+    permissions: ["market_prices.read", "insights.read", "dashboard.read"],
   },
   {
     title: "Reports",
@@ -54,23 +61,23 @@ export const insightsNav: NavItem[] = [
     permission: "reports.read",
   },
   {
-    title: "Profit & Loss",
+    title: "Profit & loss",
     href: "/profit-loss",
     icon: TrendingUp,
     permission: "profit_loss.read",
   },
 ];
 
-/** Day-to-day stock & trading */
+/** Day-to-day coffee stock & trading */
 export const operationsNav: NavItem[] = [
   {
-    title: "Lots",
+    title: "Coffee lots",
     href: "/lots",
     icon: Layers,
     permission: "lot.read",
   },
   {
-    title: "Collection",
+    title: "Cherry intake",
     href: "/collections",
     icon: Scale,
     permission: "collection.read",
@@ -82,7 +89,7 @@ export const operationsNav: NavItem[] = [
     permission: "process.read",
   },
   {
-    title: "Roast profiles",
+    title: "Roast recipes",
     href: "/roast-profiles",
     icon: Flame,
     permission: "process.read",
@@ -94,13 +101,13 @@ export const operationsNav: NavItem[] = [
     permission: "export.read",
   },
   {
-    title: "Inventory",
+    title: "Stock",
     href: "/inventory",
     icon: Package,
     permission: "inventory.read",
   },
   {
-    title: "BOMs",
+    title: "Product recipes",
     href: "/boms",
     icon: ClipboardList,
     permission: "bom.read",
@@ -112,7 +119,7 @@ export const operationsNav: NavItem[] = [
     permission: "production.read",
   },
   {
-    title: "Stock Transfers",
+    title: "Move stock",
     href: "/stock-transfers",
     icon: ArrowLeftRight,
     permission: "stock_transfer.read",
@@ -134,7 +141,7 @@ export const operationsNav: NavItem[] = [
 /** Cash, credit, banking */
 export const financeNav: NavItem[] = [
   {
-    title: "Credits",
+    title: "Outstanding",
     href: "/credits",
     icon: CreditCard,
     permission: "credit.read",
@@ -146,7 +153,7 @@ export const financeNav: NavItem[] = [
     permission: "expense.read",
   },
   {
-    title: "Bank",
+    title: "Cash & bank",
     href: "/banks",
     icon: Landmark,
     permission: "bank.read",

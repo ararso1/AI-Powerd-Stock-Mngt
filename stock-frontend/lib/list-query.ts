@@ -71,11 +71,13 @@ export type ExpensesListQueryParams = GenericListQueryParams & {
 export type CreditsCustomersListQueryParams = GenericListQueryParams & {
   status?: CreditStatus;
   customerId?: string;
+  overdue?: boolean;
 };
 
 export type CreditsSuppliersListQueryParams = GenericListQueryParams & {
   status?: CreditStatus;
   supplierId?: string;
+  overdue?: boolean;
 };
 
 export type StockTransfersListQueryParams = GenericListQueryParams & {

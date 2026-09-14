@@ -25,6 +25,16 @@ export class Supplier extends UuidBaseEntity {
   @Column({ name: 'is_active', default: true })
   isActive: boolean;
 
+  /** Max open payable (ETB). Null = no limit. */
+  @Column({
+    name: 'credit_limit',
+    type: 'decimal',
+    precision: 14,
+    scale: 2,
+    nullable: true,
+  })
+  creditLimit: string | null;
+
   @OneToMany(() => Purchase, (purchase) => purchase.supplier)
   purchases: Purchase[];
 

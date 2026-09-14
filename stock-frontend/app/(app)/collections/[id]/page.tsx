@@ -14,6 +14,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { api } from "@/lib/api";
 import { formatDate, formatMoney, formatQty } from "@/lib/format";
+import { receivingDispositionLabel } from "@/lib/lots";
 import type { CollectionTicket } from "@/lib/types";
 import { useFetch } from "@/hooks/use-fetch";
 
@@ -80,12 +81,15 @@ export default function CollectionDetailPage() {
               <Badge variant="outline" className="ml-auto">
                 {ticket.status}
               </Badge>
+              <Badge variant="secondary">
+                {receivingDispositionLabel(ticket.disposition)}
+              </Badge>
             </div>
 
             <FrappeDocument>
               <FrappeSection
                 title="Receipt"
-                description={`${formatQty(ticket.weightKg)} kg · ${formatMoney(ticket.totalAmount)}`}
+                description={`${formatQty(ticket.weightKg)} kg · ${formatMoney(ticket.totalAmount)} (accepted)`}
               >
                 <FrappeFormGrid columns={3}>
                   <DetailField label="Ticket" value={ticket.ticketNumber} />
@@ -98,8 +102,20 @@ export default function CollectionDetailPage() {
                     value={ticket.location?.name ?? "—"}
                   />
                   <DetailField
-                    label="Weight"
+                    label="Inspection"
+                    value={receivingDispositionLabel(ticket.disposition)}
+                  />
+                  <DetailField
+                    label="Gross weight"
                     value={`${formatQty(ticket.weightKg)} kg`}
+                  />
+                  <DetailField
+                    label="Accepted kg"
+                    value={`${formatQty(ticket.acceptedWeightKg ?? ticket.weightKg)} kg`}
+                  />
+                  <DetailField
+                    label="Rejected kg"
+                    value={`${formatQty(ticket.rejectedWeightKg ?? "0")} kg`}
                   />
                   <DetailField label="Grade" value={ticket.grade ?? "—"} />
                   <DetailField
@@ -107,7 +123,7 @@ export default function CollectionDetailPage() {
                     value={formatMoney(ticket.pricePerKg)}
                   />
                   <DetailField
-                    label="Total"
+                    label="Payable total"
                     value={formatMoney(ticket.totalAmount)}
                   />
                   <DetailField
@@ -119,7 +135,7 @@ export default function CollectionDetailPage() {
                     value={ticket.bankAccount?.name ?? "—"}
                   />
                   <DetailField
-                    label="Lot"
+                    label="Accepted lot"
                     value={
                       ticket.lot ? (
                         <Link
@@ -127,6 +143,21 @@ export default function CollectionDetailPage() {
                           className="font-medium text-[var(--frappe-primary)] hover:underline"
                         >
                           {ticket.lot.code}
+                        </Link>
+                      ) : (
+                        "—"
+                      )
+                    }
+                  />
+                  <DetailField
+                    label="Reject lot"
+                    value={
+                      ticket.rejectLot ? (
+                        <Link
+                          href={`/lots/${ticket.rejectLotId}`}
+                          className="font-medium text-[var(--frappe-primary)] hover:underline"
+                        >
+                          {ticket.rejectLot.code}
                         </Link>
                       ) : (
                         "—"
@@ -149,12 +180,49 @@ export default function CollectionDetailPage() {
                     }
                   />
                   <DetailField
+                    label="Inspector"
+                    value={ticket.inspector?.fullName ?? "—"}
+                  />
+                  <DetailField
+                    label="Inspected"
+                    value={formatDate(ticket.inspectedAt ?? undefined)}
+                  />
+                  {ticket.disposition && ticket.disposition !== "ACCEPTED" ? (
+                    <>
+                      <DetailField
+                        label="Reject %"
+                        value={ticket.rejectPercent ?? "—"}
+                      />
+                      <DetailField
+                        label="Reject reason"
+                        value={ticket.rejectReason ?? "—"}
+                      />
+                      <DetailField
+                        label="Reject action"
+                        value={ticket.rejectAction ?? "—"}
+                      />
+                    </>
+                  ) : null}
+                  <DetailField
                     label="Crop year"
                     value={ticket.cropYear ?? "—"}
                   />
                   <DetailField label="Region" value={ticket.region ?? "—"} />
+                  <DetailField label="Zone" value={ticket.zone ?? "—"} />
                   <DetailField label="Woreda" value={ticket.woreda ?? "—"} />
                   <DetailField label="Kebele" value={ticket.kebele ?? "—"} />
+                  <DetailField
+                    label="Process"
+                    value={ticket.processMethod ?? "—"}
+                  />
+                  <DetailField
+                    label="Screen"
+                    value={ticket.screenSize ?? "—"}
+                  />
+                  <DetailField
+                    label="Defect level"
+                    value={ticket.defectLevel ?? "—"}
+                  />
                   <DetailField
                     label="Moisture %"
                     value={ticket.moisturePercent ?? "—"}

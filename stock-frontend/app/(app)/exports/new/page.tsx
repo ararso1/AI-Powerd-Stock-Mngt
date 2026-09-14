@@ -32,13 +32,21 @@ export default function NewExportPage() {
   const router = useRouter();
   const { data: locations } = useLocations();
   const [buyerName, setBuyerName] = useState("");
+  const [buyerCountry, setBuyerCountry] = useState("");
+  const [orderNumber, setOrderNumber] = useState("");
   const [volumeKg, setVolumeKg] = useState("19200");
   const [grade, setGrade] = useState("G1");
+  const [coffeeType, setCoffeeType] = useState("Arabica washed");
+  const [origin, setOrigin] = useState("Yirgacheffe");
   const [pricePerKg, setPricePerKg] = useState("4.85");
   const [currencyCode, setCurrencyCode] = useState("USD");
   const [incoterm, setIncoterm] = useState<Incoterm>("FOB");
   const [windowStart, setWindowStart] = useState("");
   const [windowEnd, setWindowEnd] = useState("");
+  const [destination, setDestination] = useState("");
+  const [containerNumber, setContainerNumber] = useState("");
+  const [shippingDate, setShippingDate] = useState("");
+  const [expectedArrival, setExpectedArrival] = useState("");
   const [stagingLocationId, setStagingLocationId] = useState("");
   const [notes, setNotes] = useState("");
   const [saving, setSaving] = useState(false);
@@ -56,13 +64,21 @@ export default function NewExportPage() {
         method: "POST",
         body: {
           buyerName: buyerName.trim(),
+          buyerCountry: buyerCountry.trim() || undefined,
+          orderNumber: orderNumber.trim() || undefined,
           volumeKg: parseFloat(volumeKg),
           grade: grade.trim() || undefined,
+          coffeeType: coffeeType.trim() || undefined,
+          origin: origin.trim() || undefined,
           pricePerKg: parseFloat(pricePerKg),
           currencyCode,
           incoterm,
           windowStart: windowStart || undefined,
           windowEnd: windowEnd || undefined,
+          destination: destination.trim() || undefined,
+          containerNumber: containerNumber.trim() || undefined,
+          shippingDate: shippingDate || undefined,
+          expectedArrival: expectedArrival || undefined,
           stagingLocationId: stagingLocationId || undefined,
           notes: notes.trim() || undefined,
         },
@@ -99,10 +115,37 @@ export default function NewExportPage() {
                     required
                   />
                 </FrappeField>
+                <FrappeField label="Buyer country">
+                  <Input
+                    value={buyerCountry}
+                    onChange={(e) => setBuyerCountry(e.target.value)}
+                    placeholder="e.g. Japan"
+                  />
+                </FrappeField>
+                <FrappeField label="Export order #">
+                  <Input
+                    value={orderNumber}
+                    onChange={(e) => setOrderNumber(e.target.value)}
+                    placeholder="Optional PO / order ref"
+                  />
+                </FrappeField>
+                <FrappeField label="Coffee type">
+                  <Input
+                    value={coffeeType}
+                    onChange={(e) => setCoffeeType(e.target.value)}
+                  />
+                </FrappeField>
                 <FrappeField label="Grade">
                   <Input
                     value={grade}
                     onChange={(e) => setGrade(e.target.value)}
+                  />
+                </FrappeField>
+                <FrappeField label="Origin">
+                  <Input
+                    value={origin}
+                    onChange={(e) => setOrigin(e.target.value)}
+                    placeholder="Region / zone"
                   />
                 </FrappeField>
                 <FrappeField label="Volume (kg)" required>
@@ -151,6 +194,19 @@ export default function NewExportPage() {
                     </SelectContent>
                   </Select>
                 </FrappeField>
+                <FrappeField label="Destination">
+                  <Input
+                    value={destination}
+                    onChange={(e) => setDestination(e.target.value)}
+                    placeholder="Port / city"
+                  />
+                </FrappeField>
+                <FrappeField label="Container #">
+                  <Input
+                    value={containerNumber}
+                    onChange={(e) => setContainerNumber(e.target.value)}
+                  />
+                </FrappeField>
                 <FrappeField label="Window start">
                   <Input
                     type="date"
@@ -163,6 +219,20 @@ export default function NewExportPage() {
                     type="date"
                     value={windowEnd}
                     onChange={(e) => setWindowEnd(e.target.value)}
+                  />
+                </FrappeField>
+                <FrappeField label="Shipping date">
+                  <Input
+                    type="date"
+                    value={shippingDate}
+                    onChange={(e) => setShippingDate(e.target.value)}
+                  />
+                </FrappeField>
+                <FrappeField label="Expected arrival">
+                  <Input
+                    type="date"
+                    value={expectedArrival}
+                    onChange={(e) => setExpectedArrival(e.target.value)}
                   />
                 </FrappeField>
                 <EntitySelectField

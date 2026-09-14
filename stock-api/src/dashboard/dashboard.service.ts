@@ -28,11 +28,14 @@ import { Location } from '../database/entities/location.entity';
 import { Lot } from '../database/entities/lot.entity';
 import { Notification } from '../database/entities/notification.entity';
 import { ProcessRun } from '../database/entities/process-run.entity';
+import { ProcessTemplate } from '../database/entities/process-template.entity';
 import { Purchase } from '../database/entities/purchase.entity';
 import { Sale } from '../database/entities/sale.entity';
 import { SaleLine } from '../database/entities/sale-line.entity';
 import { StockLevel } from '../database/entities/stock-level.entity';
+import { Supplier } from '../database/entities/supplier.entity';
 import { SupplierCredit } from '../database/entities/supplier-credit.entity';
+import { MarketPricesService } from '../market-prices/market-prices.service';
 
 type Recommendation = {
   id: string;
@@ -48,6 +51,7 @@ export class DashboardService {
   constructor(
     private readonly config: ConfigService,
     private readonly banksService: BanksService,
+    private readonly marketPrices: MarketPricesService,
     @InjectRepository(StockLevel)
     private readonly stockRepo: Repository<StockLevel>,
     @InjectRepository(Location)
@@ -219,6 +223,21 @@ export class DashboardService {
       pulse,
     });
 
+    const fromIso = period.start?.toISOString().slice(0, 10);
+    const toIso = period.end?.toISOString().slice(0, 10);
+    const [analytics, executiveInsights, market] = await Promise.all([
+      this.buildAnalytics(stocks, fromIso, toIso, todayStr),
+      this.buildExecutiveInsights(fromIso, toIso, todayStr, profitAndLoss),
+      this.marketPrices.getDashboardMarket().catch((err) => {
+        // Keep dashboard resilient if market feed is mid-sync.
+        // eslint-disable-next-line no-console
+        console.warn(
+          `Dashboard market widget skipped: ${err instanceof Error ? err.message : err}`,
+        );
+        return null;
+      }),
+    ]);
+
     return {
       currency: getAppCurrency(this.config),
       asOf: new Date().toISOString(),
@@ -265,6 +284,9 @@ export class DashboardService {
       commercial,
       contracts,
       recommendations,
+      analytics,
+      executiveInsights,
+      market,
       links: {
         collectionsToday: `/collections?from=${todayStr}`,
         processWip: '/process-runs?status=IN_PROGRESS',
@@ -277,6 +299,9 @@ export class DashboardService {
         notifications: '/notifications',
         reports: '/reports',
         profitLoss: '/profit-loss',
+        insights: '/insights',
+        credits: '/credits',
+        marketPrices: '/market-prices',
       },
     };
   }
@@ -612,5 +637,568 @@ export class DashboardService {
       totalExpenses: totalExpenses.toFixed(2),
       netProfit: netProfit.toFixed(2),
     };
+  }
+
+  private async buildAnalytics(
+    stocks: StockLevel[],
+    from: string | undefined,
+    to: string | undefined,
+    todayStr: string,
+  ) {
+    let totalStockKg = 0;
+    let availableKg = 0;
+    let reservedKg = 0;
+    let stockValue = 0;
+    let lowStockItems = 0;
+
+    for (const s of stocks) {
+      const qty = parseFloat(s.quantity);
+      const reserved = parseFloat(s.reservedQuantity ?? '0');
+      totalStockKg += qty;
+      reservedKg += reserved;
+      availableKg += Math.max(0, qty - reserved);
+      stockValue += qty * parseFloat(s.purchasePrice);
+      const reorder = s.reorderPoint != null ? parseFloat(s.reorderPoint) : null;
+      if (reorder != null && qty <= reorder) lowStockItems += 1;
+    }
+
+    const exportStock = await this.exportRepo
+      .createQueryBuilder('c')
+      .select(
+        `COALESCE(SUM(CASE WHEN c.status IN ('ALLOCATED','STAGED') THEN c.allocated_kg::numeric ELSE 0 END), 0)`,
+        'reservedExport',
+      )
+      .addSelect(
+        `COALESCE(SUM(CASE WHEN c.status IN ('SHIPPED','DELIVERED','CLOSED') THEN c.shipped_kg::numeric ELSE 0 END), 0)`,
+        'shippedAll',
+      )
+      .getRawOne<{ reservedExport: string; shippedAll: string }>();
+
+    const purchasesQb = this.purchaseRepo
+      .createQueryBuilder('p')
+      .select('COALESCE(SUM(p.total::numeric), 0)', 'total')
+      .where('p.status = :status', { status: DocumentStatus.ACTIVE });
+    applyDateRangeToQb(purchasesQb, 'p.created_at', from, to);
+    const purchases = await purchasesQb.getRawOne<{ total: string }>();
+
+    const salesByChannel = await this.saleLineRepo
+      .createQueryBuilder('line')
+      .innerJoin('line.sale', 'sale')
+      .select('sale.channel', 'channel')
+      .addSelect('COALESCE(SUM(line.quantity::numeric), 0)', 'volumeKg')
+      .addSelect('COALESCE(SUM(line."lineTotal"::numeric), 0)', 'value')
+      .where('sale.status = :status', { status: DocumentStatus.ACTIVE })
+      .groupBy('sale.channel');
+    applyDateRangeToQb(salesByChannel, 'sale.created_at', from, to);
+    const channelRows = await salesByChannel.getRawMany<{
+      channel: string;
+      volumeKg: string;
+      value: string;
+    }>();
+
+    let localSalesValue = 0;
+    let exportSalesValue = 0;
+    let localSalesVolume = 0;
+    let exportSalesVolume = 0;
+    for (const r of channelRows) {
+      if (r.channel === SaleChannel.EXPORT) {
+        exportSalesValue += Number(r.value) || 0;
+        exportSalesVolume += Number(r.volumeKg) || 0;
+      } else {
+        localSalesValue += Number(r.value) || 0;
+        localSalesVolume += Number(r.volumeKg) || 0;
+      }
+    }
+
+    const qualityQb = this.collectionRepo
+      .createQueryBuilder('c')
+      .select('COALESCE(SUM(c.accepted_weight_kg::numeric), 0)', 'accepted')
+      .addSelect('COALESCE(SUM(c.rejected_weight_kg::numeric), 0)', 'rejected')
+      .addSelect('COALESCE(SUM(c.weight_kg::numeric), 0)', 'total')
+      .where('c.status = :status', { status: DocumentStatus.ACTIVE });
+    applyDateRangeToQb(qualityQb, 'c.created_at', from, to);
+    const quality = await qualityQb.getRawOne<{
+      accepted: string;
+      rejected: string;
+      total: string;
+    }>();
+    const acceptedQty = Number(quality?.accepted ?? 0);
+    const rejectedQty = Number(quality?.rejected ?? 0);
+    const qualityTotal = acceptedQty + rejectedQty || Number(quality?.total ?? 0);
+    const rejectionPercent =
+      qualityTotal > 0 ? (rejectedQty / qualityTotal) * 100 : 0;
+
+    const gradeRows = await this.lotRepo
+      .createQueryBuilder('l')
+      .select(`COALESCE(NULLIF(TRIM(l.grade), ''), 'Ungraded')`, 'grade')
+      .addSelect('COALESCE(SUM(l.quantity::numeric), 0)', 'kg')
+      .where('l.status = :st', { st: LotStatus.ACTIVE })
+      .andWhere('l.form = :form', { form: CoffeeForm.GREEN })
+      .groupBy('grade')
+      .orderBy('kg', 'DESC')
+      .getRawMany<{ grade: string; kg: string }>();
+
+    const supplierQuality = await this.collectionRepo
+      .createQueryBuilder('c')
+      .innerJoin(Supplier, 'sup', 'sup.id = c.supplier_id')
+      .select('sup.name', 'supplierName')
+      .addSelect('COALESCE(SUM(c.weight_kg::numeric), 0)', 'totalKg')
+      .addSelect(
+        'COALESCE(SUM(c.rejected_weight_kg::numeric), 0)',
+        'rejectedKg',
+      )
+      .where('c.status = :status', { status: DocumentStatus.ACTIVE })
+      .groupBy('sup.name');
+    applyDateRangeToQb(supplierQuality, 'c.created_at', from, to);
+    const supplierRows = await supplierQuality.getRawMany<{
+      supplierName: string;
+      totalKg: string;
+      rejectedKg: string;
+    }>();
+    const supplierRanking = supplierRows
+      .map((r) => {
+        const total = Number(r.totalKg) || 0;
+        const rejected = Number(r.rejectedKg) || 0;
+        return {
+          supplierName: r.supplierName,
+          totalKg: total.toFixed(3),
+          rejectedKg: rejected.toFixed(3),
+          rejectionPercent:
+            total > 0 ? Number(((rejected / total) * 100).toFixed(1)) : 0,
+        };
+      })
+      .filter((r) => Number(r.totalKg) > 0)
+      .sort((a, b) => a.rejectionPercent - b.rejectionPercent)
+      .slice(0, 8);
+
+    const customerOpen = await this.customerCreditRepo
+      .createQueryBuilder('c')
+      .select(
+        `COALESCE(SUM(CASE WHEN c.status != 'PAID' THEN c.balance::numeric ELSE 0 END), 0)`,
+        'outstanding',
+      )
+      .addSelect(
+        `COALESCE(SUM(CASE WHEN c.status != 'PAID' AND c."dueDate" IS NOT NULL AND c."dueDate" < :today THEN c.balance::numeric ELSE 0 END), 0)`,
+        'overdue',
+      )
+      .addSelect(
+        `COALESCE(SUM(c.paid_amount::numeric), 0)`,
+        'paid',
+      )
+      .addSelect(`COALESCE(SUM(c.amount::numeric), 0)`, 'invoiced')
+      .setParameter('today', todayStr)
+      .getRawOne<{
+        outstanding: string;
+        overdue: string;
+        paid: string;
+        invoiced: string;
+      }>();
+
+    const supplierOpen = await this.supplierCreditRepo
+      .createQueryBuilder('c')
+      .select(
+        `COALESCE(SUM(CASE WHEN c.status != 'PAID' THEN c.balance::numeric ELSE 0 END), 0)`,
+        'outstanding',
+      )
+      .addSelect(
+        `COALESCE(SUM(CASE WHEN c.status != 'PAID' AND c."dueDate" IS NOT NULL AND c."dueDate" < :today THEN c.balance::numeric ELSE 0 END), 0)`,
+        'overdue',
+      )
+      .setParameter('today', todayStr)
+      .getRawOne<{ outstanding: string; overdue: string }>();
+
+    const processQb = this.processRunRepo
+      .createQueryBuilder('run')
+      .leftJoin(ProcessTemplate, 'tpl', 'tpl.id = run.template_id')
+      .select('COALESCE(SUM(run.quantity_input::numeric), 0)', 'inputKg')
+      .addSelect('COALESCE(SUM(run.quantity_output::numeric), 0)', 'outputKg')
+      .addSelect('COALESCE(SUM(run.quantity_loss::numeric), 0)', 'lossKg')
+      .addSelect(
+        `COALESCE(SUM(CASE WHEN tpl.operation_type = 'ROAST' THEN run.quantity_output::numeric ELSE 0 END), 0)`,
+        'roastKg',
+      )
+      .addSelect(
+        `COALESCE(AVG(NULLIF(run.actual_yield_percent, NULL)::numeric), 0)`,
+        'avgYield',
+      )
+      .where('run.status = :st', { st: ProcessRunStatus.COMPLETED });
+    applyDateRangeToQb(processQb, 'run.completed_at', from, to);
+    const process = await processQb.getRawOne<{
+      inputKg: string;
+      outputKg: string;
+      lossKg: string;
+      roastKg: string;
+      avgYield: string;
+    }>();
+
+    const exportActive = await this.exportRepo.count({
+      where: {
+        status: In([
+          ExportContractStatus.DRAFT,
+          ExportContractStatus.ALLOCATED,
+          ExportContractStatus.STAGED,
+        ]),
+      },
+    });
+    const pendingShipments = await this.exportRepo.count({
+      where: {
+        status: In([
+          ExportContractStatus.ALLOCATED,
+          ExportContractStatus.STAGED,
+        ]),
+      },
+    });
+
+    const exportShippedQb = this.exportRepo
+      .createQueryBuilder('c')
+      .select('COALESCE(SUM(c.shipped_kg::numeric), 0)', 'kg')
+      .addSelect(
+        'COALESCE(SUM(c.shipped_kg::numeric * c.price_per_kg::numeric), 0)',
+        'value',
+      )
+      .where('c.status IN (:...st)', {
+        st: [
+          ExportContractStatus.SHIPPED,
+          ExportContractStatus.DELIVERED,
+          ExportContractStatus.CLOSED,
+        ],
+      });
+    applyDateRangeToQb(exportShippedQb, 'c.shipped_at', from, to);
+    const exportShipped = await exportShippedQb.getRawOne<{
+      kg: string;
+      value: string;
+    }>();
+
+    const exportOutstanding = await this.saleRepo
+      .createQueryBuilder('s')
+      .leftJoin('s.credit', 'credit')
+      .select(
+        `COALESCE(SUM(CASE WHEN s.channel = 'EXPORT' AND credit.status IN ('OPEN','PARTIAL') THEN credit.balance::numeric ELSE 0 END), 0)`,
+        'outstanding',
+      )
+      .getRawOne<{ outstanding: string }>();
+
+    const salesVolume = localSalesVolume + exportSalesVolume;
+    const salesValue = localSalesValue + exportSalesValue;
+
+    return {
+      inventory: {
+        totalStockKg: totalStockKg.toFixed(3),
+        stockValue: stockValue.toFixed(2),
+        availableKg: availableKg.toFixed(3),
+        reservedKg: reservedKg.toFixed(3),
+        exportStockKg: parseFloat(
+          exportStock?.reservedExport ?? '0',
+        ).toFixed(3),
+        lowStockItems,
+      },
+      trading: {
+        totalPurchases: parseFloat(purchases?.total ?? '0').toFixed(2),
+        localSalesValue: localSalesValue.toFixed(2),
+        exportSalesValue: exportSalesValue.toFixed(2),
+        salesVolumeKg: salesVolume.toFixed(3),
+        salesValue: salesValue.toFixed(2),
+        chart: [
+          { label: 'Local', value: Number(localSalesValue.toFixed(2)) },
+          { label: 'Export', value: Number(exportSalesValue.toFixed(2)) },
+        ],
+      },
+      quality: {
+        acceptedQtyKg: acceptedQty.toFixed(3),
+        rejectedQtyKg: rejectedQty.toFixed(3),
+        rejectionPercent: Number(rejectionPercent.toFixed(1)),
+        gradeDistribution: gradeRows.map((g) => ({
+          grade: g.grade,
+          kg: Number(Number(g.kg).toFixed(3)),
+        })),
+        supplierRanking,
+      },
+      finance: {
+        totalReceivables: parseFloat(
+          customerOpen?.outstanding ?? '0',
+        ).toFixed(2),
+        totalPayables: parseFloat(supplierOpen?.outstanding ?? '0').toFixed(2),
+        customerOutstanding: parseFloat(
+          customerOpen?.outstanding ?? '0',
+        ).toFixed(2),
+        supplierOutstanding: parseFloat(
+          supplierOpen?.outstanding ?? '0',
+        ).toFixed(2),
+        overdueBalances: (
+          parseFloat(customerOpen?.overdue ?? '0') +
+          parseFloat(supplierOpen?.overdue ?? '0')
+        ).toFixed(2),
+        paidAmount: parseFloat(customerOpen?.paid ?? '0').toFixed(2),
+        unpaidAmount: parseFloat(customerOpen?.outstanding ?? '0').toFixed(2),
+        chart: [
+          {
+            label: 'Paid',
+            value: Number(parseFloat(customerOpen?.paid ?? '0').toFixed(2)),
+          },
+          {
+            label: 'Unpaid',
+            value: Number(
+              parseFloat(customerOpen?.outstanding ?? '0').toFixed(2),
+            ),
+          },
+        ],
+      },
+      production: {
+        processingVolumeKg: parseFloat(process?.inputKg ?? '0').toFixed(3),
+        roastingVolumeKg: parseFloat(process?.roastKg ?? '0').toFixed(3),
+        productionYieldPercent: Number(
+          parseFloat(process?.avgYield ?? '0').toFixed(1),
+        ),
+        processingLossKg: parseFloat(process?.lossKg ?? '0').toFixed(3),
+        wastageKg: parseFloat(process?.lossKg ?? '0').toFixed(3),
+        chart: [
+          {
+            label: 'Input',
+            value: Number(parseFloat(process?.inputKg ?? '0').toFixed(3)),
+          },
+          {
+            label: 'Output',
+            value: Number(parseFloat(process?.outputKg ?? '0').toFixed(3)),
+          },
+          {
+            label: 'Loss',
+            value: Number(parseFloat(process?.lossKg ?? '0').toFixed(3)),
+          },
+        ],
+      },
+      export: {
+        exportVolumeKg: parseFloat(exportShipped?.kg ?? '0').toFixed(3),
+        exportValue: parseFloat(exportShipped?.value ?? '0').toFixed(2),
+        activeContracts: exportActive,
+        pendingShipments,
+        shippedQuantityKg: parseFloat(exportShipped?.kg ?? '0').toFixed(3),
+        outstandingExportPayments: parseFloat(
+          exportOutstanding?.outstanding ?? '0',
+        ).toFixed(2),
+      },
+    };
+  }
+
+  private async buildExecutiveInsights(
+    from: string | undefined,
+    to: string | undefined,
+    todayStr: string,
+    profitAndLoss: {
+      revenue: string;
+      costOfGoodsSold: string;
+      grossProfit: string;
+    },
+  ) {
+    type Card = {
+      id: string;
+      tone: 'positive' | 'critical' | 'warn' | 'info' | 'profit';
+      category: string;
+      title: string;
+      detail: string;
+      href: string;
+    };
+    const cards: Card[] = [];
+
+    const greenLots = await this.lotRepo
+      .createQueryBuilder('l')
+      .select('COALESCE(SUM(l.quantity::numeric), 0)', 'kg')
+      .where('l.form = :form', { form: CoffeeForm.GREEN })
+      .andWhere('l.status = :st', { st: LotStatus.ACTIVE })
+      .getRawOne<{ kg: string }>();
+    const greenKg = Number(greenLots?.kg ?? 0);
+
+    const since30 = new Date();
+    since30.setDate(since30.getDate() - 30);
+    const burn = await this.saleLineRepo
+      .createQueryBuilder('line')
+      .innerJoin('line.sale', 'sale')
+      .select('COALESCE(SUM(line.quantity::numeric), 0)', 'kg')
+      .where('sale.created_at >= :since', { since: since30 })
+      .andWhere('sale.status = :st', { st: DocumentStatus.ACTIVE })
+      .getRawOne<{ kg: string }>();
+    const dailyDemand = (Number(burn?.kg ?? 0) || 0) / 30;
+    const daysSupport =
+      dailyDemand > 0.01 ? Math.round(greenKg / dailyDemand) : null;
+    if (daysSupport != null) {
+      cards.push({
+        id: 'exec-stock-days',
+        tone: daysSupport < 14 ? 'critical' : daysSupport < 28 ? 'warn' : 'positive',
+        category: 'Stock',
+        title: `Current green stock can support approximately ${daysSupport} days of projected demand.`,
+        detail: `${greenKg.toFixed(0)} kg green · ~${dailyDemand.toFixed(1)} kg/day burn`,
+        href: '/inventory',
+      });
+    }
+
+    const overdue = await this.customerCreditRepo
+      .createQueryBuilder('c')
+      .select('COUNT(DISTINCT c.customer_id)', 'customers')
+      .addSelect('COALESCE(SUM(c.balance::numeric), 0)', 'total')
+      .where('c.status != :paid', { paid: CreditStatus.PAID })
+      .andWhere('c."dueDate" IS NOT NULL')
+      .andWhere('c."dueDate" < :today', { today: todayStr })
+      .andWhere('c.balance::numeric > 0')
+      .getRawOne<{ customers: string; total: string }>();
+    const overdueCustomers = parseInt(overdue?.customers ?? '0', 10);
+    const overdueTotal = Number(overdue?.total ?? 0);
+    if (overdueCustomers > 0) {
+      cards.push({
+        id: 'exec-credit-overdue',
+        tone: 'critical',
+        category: 'Credit',
+        title: `${overdueCustomers} customer${overdueCustomers === 1 ? '' : 's'} have overdue balances totaling ${overdueTotal.toLocaleString()} ETB.`,
+        detail: 'Open Credits desk to prioritize collections',
+        href: '/credits',
+      });
+    }
+
+    const monthStart = new Date();
+    monthStart.setDate(1);
+    monthStart.setHours(0, 0, 0, 0);
+    const prevMonthStart = new Date(monthStart);
+    prevMonthStart.setMonth(prevMonthStart.getMonth() - 1);
+
+    const rejThis = await this.collectionRepo
+      .createQueryBuilder('c')
+      .innerJoin(Supplier, 'sup', 'sup.id = c.supplier_id')
+      .select('sup.name', 'name')
+      .addSelect('COALESCE(SUM(c.weight_kg::numeric), 0)', 'total')
+      .addSelect('COALESCE(SUM(c.rejected_weight_kg::numeric), 0)', 'rejected')
+      .where('c.created_at >= :start', { start: monthStart })
+      .groupBy('sup.name')
+      .having('COALESCE(SUM(c.weight_kg::numeric), 0) > 0')
+      .getRawMany<{ name: string; total: string; rejected: string }>();
+
+    const rejPrev = await this.collectionRepo
+      .createQueryBuilder('c')
+      .innerJoin(Supplier, 'sup', 'sup.id = c.supplier_id')
+      .select('sup.name', 'name')
+      .addSelect('COALESCE(SUM(c.weight_kg::numeric), 0)', 'total')
+      .addSelect('COALESCE(SUM(c.rejected_weight_kg::numeric), 0)', 'rejected')
+      .where('c.created_at >= :prev AND c.created_at < :start', {
+        prev: prevMonthStart,
+        start: monthStart,
+      })
+      .groupBy('sup.name')
+      .getRawMany<{ name: string; total: string; rejected: string }>();
+
+    const prevMap = new Map(
+      rejPrev.map((r) => {
+        const t = Number(r.total) || 0;
+        const rej = Number(r.rejected) || 0;
+        return [r.name, t > 0 ? (rej / t) * 100 : 0];
+      }),
+    );
+    let worst: { name: string; from: number; to: number } | null = null;
+    for (const r of rejThis) {
+      const t = Number(r.total) || 0;
+      const rej = Number(r.rejected) || 0;
+      const rate = t > 0 ? (rej / t) * 100 : 0;
+      const prev = prevMap.get(r.name) ?? 0;
+      if (prev > 0 && rate > prev + 2) {
+        if (!worst || rate - prev > worst.to - worst.from) {
+          worst = { name: r.name, from: prev, to: rate };
+        }
+      }
+    }
+    if (worst) {
+      cards.push({
+        id: 'exec-quality-rejection',
+        tone: 'warn',
+        category: 'Quality',
+        title: `${worst.name}'s rejection rate increased from ${worst.from.toFixed(1)}% to ${worst.to.toFixed(1)}% this month.`,
+        detail: 'Review receiving QC and supplier mix',
+        href: '/collections',
+      });
+    } else if (rejThis.length > 0) {
+      const top = rejThis
+        .map((r) => {
+          const t = Number(r.total) || 0;
+          const rej = Number(r.rejected) || 0;
+          return { name: r.name, rate: t > 0 ? (rej / t) * 100 : 0 };
+        })
+        .sort((a, b) => b.rate - a.rate)[0];
+      if (top && top.rate >= 5) {
+        cards.push({
+          id: 'exec-quality-top',
+          tone: 'warn',
+          category: 'Quality',
+          title: `${top.name} leads rejection at ${top.rate.toFixed(1)}% this month.`,
+          detail: 'Monitor intake quality',
+          href: '/collections',
+        });
+      }
+    }
+
+    const exportRecent = await this.saleLineRepo
+      .createQueryBuilder('line')
+      .innerJoin('line.sale', 'sale')
+      .select(
+        `COALESCE(SUM(CASE WHEN sale.created_at >= :monthStart AND sale.channel = 'EXPORT' THEN line.quantity::numeric ELSE 0 END), 0)`,
+        'thisMonth',
+      )
+      .addSelect(
+        `COALESCE(SUM(CASE WHEN sale.created_at >= :prev AND sale.created_at < :monthStart AND sale.channel = 'EXPORT' THEN line.quantity::numeric ELSE 0 END), 0)`,
+        'prevMonth',
+      )
+      .where('sale.status = :st', { st: DocumentStatus.ACTIVE })
+      .setParameter('monthStart', monthStart)
+      .setParameter('prev', prevMonthStart)
+      .getRawOne<{ thisMonth: string; prevMonth: string }>();
+    const thisExp = Number(exportRecent?.thisMonth ?? 0);
+    const prevExp = Number(exportRecent?.prevMonth ?? 0);
+    if (prevExp > 0) {
+      const pct = ((thisExp - prevExp) / prevExp) * 100;
+      cards.push({
+        id: 'exec-export-demand',
+        tone: pct >= 0 ? 'info' : 'warn',
+        category: 'Export',
+        title:
+          pct >= 0
+            ? `Export demand is trending ${pct.toFixed(0)}% above last month (${thisExp.toFixed(0)} kg vs ${prevExp.toFixed(0)} kg).`
+            : `Export volume is down ${Math.abs(pct).toFixed(0)}% vs last month.`,
+        detail: 'Align green allocation and staging capacity',
+        href: '/exports',
+      });
+    }
+
+    const channelProfit = await this.saleLineRepo
+      .createQueryBuilder('line')
+      .innerJoin('line.sale', 'sale')
+      .select('sale.channel', 'channel')
+      .addSelect('COALESCE(SUM(line."lineTotal"::numeric), 0)', 'revenue')
+      .addSelect(
+        'COALESCE(SUM(line.quantity::numeric * line.purchase_cost::numeric), 0)',
+        'cogs',
+      )
+      .where('sale.status = :st', { st: DocumentStatus.ACTIVE })
+      .groupBy('sale.channel');
+    applyDateRangeToQb(channelProfit, 'sale.created_at', from, to);
+    const profitRows = await channelProfit.getRawMany<{
+      channel: string;
+      revenue: string;
+      cogs: string;
+    }>();
+    let localProfit = 0;
+    let exportProfit = 0;
+    for (const r of profitRows) {
+      const p = (Number(r.revenue) || 0) - (Number(r.cogs) || 0);
+      if (r.channel === SaleChannel.EXPORT) exportProfit += p;
+      else localProfit += p;
+    }
+    const totalProfit = localProfit + exportProfit;
+    if (totalProfit > 0) {
+      const exportShare = Math.round((exportProfit / totalProfit) * 100);
+      cards.push({
+        id: 'exec-profit-mix',
+        tone: 'profit',
+        category: 'Profit',
+        title: `Export sales generated ${exportShare}% of total coffee gross profit this period.`,
+        detail: `Gross profit ${profitAndLoss.grossProfit} · export share of margin`,
+        href: '/profit-loss',
+      });
+    }
+
+    return cards.slice(0, 6);
   }
 }

@@ -5,6 +5,7 @@ import { Purchase } from '../database/entities/purchase.entity';
 import { SupplierCredit } from '../database/entities/supplier-credit.entity';
 import { InventoryModule } from '../inventory/inventory.module';
 import { NotificationsModule } from '../notifications/notifications.module';
+import { CreditsModule } from '../credits/credits.module';
 import { PurchasesController } from './purchases.controller';
 import { PurchasesService } from './purchases.service';
 
@@ -14,6 +15,7 @@ import { PurchasesService } from './purchases.service';
     InventoryModule,
     BanksModule,
     NotificationsModule,
+    CreditsModule,
   ],
   controllers: [PurchasesController],
   providers: [PurchasesService],

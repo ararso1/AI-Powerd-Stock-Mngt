@@ -12,8 +12,10 @@ import {
   DocumentStatus,
   ItemType,
   LotEventType,
+  LotQcPhase,
   LotStatus,
   PaymentMethod,
+  ReceivingDisposition,
 } from '../common/enums';
 import {
   applyDateRangeToQb,
@@ -39,12 +41,10 @@ import {
   CherryPriceQueryDto,
   CollectionListQueryDto,
 } from './dto/collection-list-query.dto';
-import {
-  CreateCollectionDto,
-  UpsertCherryPriceDto,
-} from './dto/collection.dto';
+import { CreateCollectionDto, UpsertCherryPriceDto } from './dto/collection.dto';
 
 const CHERRY_SKU = 'COF-CHERRY';
+const REJECT_SKU = 'COF-REJECT';
 
 @Injectable()
 export class CollectionsService {
@@ -147,9 +147,12 @@ export class CollectionsService {
         location: true,
         item: true,
         lot: true,
+        rejectLot: true,
         purchase: true,
         bankAccount: true,
         createdBy: true,
+        inspector: true,
+        rejectDestination: true,
       },
     });
     if (!ticket) throw new NotFoundException('Collection ticket not found');
@@ -211,11 +214,53 @@ export class CollectionsService {
     });
     if (!location) throw new BadRequestException('Location not found');
 
+    const disposition = dto.disposition ?? ReceivingDisposition.ACCEPTED;
+    let acceptedKg =
+      dto.acceptedWeightKg !== undefined ? dto.acceptedWeightKg : dto.weightKg;
+    let rejectedKg = dto.rejectedWeightKg ?? 0;
+
+    if (disposition === ReceivingDisposition.ACCEPTED) {
+      acceptedKg = dto.acceptedWeightKg ?? dto.weightKg;
+      rejectedKg = dto.rejectedWeightKg ?? 0;
+    } else if (disposition === ReceivingDisposition.REJECTED) {
+      acceptedKg = dto.acceptedWeightKg ?? 0;
+      rejectedKg = dto.rejectedWeightKg ?? dto.weightKg;
+    } else {
+      // PARTIAL
+      if (dto.acceptedWeightKg === undefined || dto.rejectedWeightKg === undefined) {
+        throw new BadRequestException(
+          'PARTIAL receiving requires acceptedWeightKg and rejectedWeightKg',
+        );
+      }
+      acceptedKg = dto.acceptedWeightKg;
+      rejectedKg = dto.rejectedWeightKg;
+    }
+
+    if (acceptedKg < 0 || rejectedKg < 0) {
+      throw new BadRequestException('Weights cannot be negative');
+    }
+    if (Math.abs(acceptedKg + rejectedKg - dto.weightKg) > 0.001) {
+      throw new BadRequestException(
+        'acceptedWeightKg + rejectedWeightKg must equal weightKg',
+      );
+    }
+    if (rejectedKg > 0 && !dto.rejectReason) {
+      throw new BadRequestException(
+        'rejectReason is required when rejectedWeightKg > 0',
+      );
+    }
+
     const item = await this.resolveCherryItem(dto.itemId);
-    const total = dto.weightKg * dto.pricePerKg;
+    const rejectItem =
+      rejectedKg > 0 ? await this.resolveRejectItem() : null;
+    const payWeight = acceptedKg;
+    const total = payWeight * dto.pricePerKg;
+    const rejectPct =
+      dto.weightKg > 0 ? (rejectedKg / dto.weightKg) * 100 : 0;
+    const inspectedAt = new Date();
 
     const ticketId = await this.dataSource.transaction(async (manager) => {
-      if (needsBank && dto.bankAccountId) {
+      if (needsBank && dto.bankAccountId && total > 0) {
         await this.banksService.assertPaymentAccount(
           dto.paymentMethod,
           dto.bankAccountId,
@@ -229,124 +274,241 @@ export class CollectionsService {
       const creditRepo = manager.getRepository(SupplierCredit);
       const ticketRepo = manager.getRepository(CollectionTicket);
 
-      const lotCode =
+      const baseCode =
         dto.lotCode?.trim() ||
         `COL-${new Date().getFullYear()}-${String((await lotRepo.count()) + 1).padStart(4, '0')}`;
-      const existingCode = await lotRepo.findOne({ where: { code: lotCode } });
+      const existingCode = await lotRepo.findOne({ where: { code: baseCode } });
       if (existingCode) {
-        throw new BadRequestException(`Lot code ${lotCode} already exists`);
+        throw new BadRequestException(`Lot code ${baseCode} already exists`);
       }
 
-      const lot = await lotRepo.save(
-        lotRepo.create({
-          code: lotCode,
-          itemId: item.id,
-          locationId: dto.locationId,
-          form: CoffeeForm.CHERRY,
-          grade: dto.grade ?? null,
-          cropYear: dto.cropYear ?? null,
-          variety: dto.variety ?? null,
-          processMethod: null,
-          region: dto.region ?? null,
-          woreda: dto.woreda ?? null,
-          kebele: dto.kebele ?? null,
-          moisturePercent:
-            dto.moisturePercent !== undefined
-              ? dto.moisturePercent.toFixed(2)
-              : null,
-          quantity: dto.weightKg.toFixed(3),
-          status: LotStatus.ACTIVE,
-          notes: dto.notes ?? `Cherry collection from ${supplier.name}`,
-          createdById: userId ?? null,
-        }),
-      );
-
-      await eventRepo.save([
-        eventRepo.create({
-          lotId: lot.id,
-          eventType: LotEventType.CREATED,
-          quantity: lot.quantity,
-          toLocationId: dto.locationId,
-          notes: 'Lot opened from cherry intake',
-          createdById: userId ?? null,
-          metadata: { source: 'collection' },
-        }),
-        eventRepo.create({
-          lotId: lot.id,
-          eventType: LotEventType.COLLECTED,
-          quantity: lot.quantity,
-          toLocationId: dto.locationId,
-          notes: `Collected ${dto.weightKg} kg @ ${dto.pricePerKg}/kg from ${supplier.name}`,
-          createdById: userId ?? null,
-          metadata: {
-            supplierId: supplier.id,
+      let acceptedLot: Lot | null = null;
+      if (acceptedKg > 0) {
+        acceptedLot = await lotRepo.save(
+          lotRepo.create({
+            code: baseCode,
+            itemId: item.id,
+            locationId: dto.locationId,
+            form: CoffeeForm.CHERRY,
             grade: dto.grade ?? null,
-            pricePerKg: dto.pricePerKg,
-          },
-        }),
-      ]);
+            cropYear: dto.cropYear ?? null,
+            variety: dto.variety ?? null,
+            processMethod: dto.processMethod ?? null,
+            region: dto.region ?? null,
+            zone: dto.zone ?? null,
+            woreda: dto.woreda ?? null,
+            kebele: dto.kebele ?? null,
+            moisturePercent:
+              dto.moisturePercent !== undefined
+                ? dto.moisturePercent.toFixed(2)
+                : null,
+            screenSize: dto.screenSize ?? null,
+            cuppingScore:
+              dto.cuppingScore !== undefined
+                ? dto.cuppingScore.toFixed(2)
+                : null,
+            defectLevel: dto.defectLevel ?? null,
+            qcPhase: LotQcPhase.RECEIVED,
+            inspectorId: userId ?? null,
+            inspectedAt,
+            quantity: acceptedKg.toFixed(3),
+            status: LotStatus.ACTIVE,
+            notes: dto.notes ?? `Cherry collection from ${supplier.name}`,
+            createdById: userId ?? null,
+          }),
+        );
 
-      const purchase = await purchaseRepo.save(
-        purchaseRepo.create({
-          supplierId: dto.supplierId,
-          locationId: dto.locationId,
-          paymentMethod: dto.paymentMethod,
-          bankAccountId: dto.bankAccountId ?? null,
-          subtotal: total.toFixed(2),
-          total: total.toFixed(2),
-          notes: `Cherry collection ${lot.code}`,
-          status: DocumentStatus.ACTIVE,
-          createdById: userId ?? null,
-          lines: [
-            Object.assign(new PurchaseLine(), {
-              itemId: item.id,
-              quantity: dto.weightKg.toFixed(3),
-              unitPrice: dto.pricePerKg.toFixed(2),
-              lineTotal: total.toFixed(2),
-            }),
-          ],
-        }),
-      );
+        await eventRepo.save([
+          eventRepo.create({
+            lotId: acceptedLot.id,
+            eventType: LotEventType.CREATED,
+            quantity: acceptedLot.quantity,
+            toLocationId: dto.locationId,
+            notes: 'Lot opened from cherry receiving',
+            createdById: userId ?? null,
+            metadata: { source: 'collection', disposition },
+          }),
+          eventRepo.create({
+            lotId: acceptedLot.id,
+            eventType: LotEventType.COLLECTED,
+            quantity: acceptedLot.quantity,
+            toLocationId: dto.locationId,
+            notes: `Received ${acceptedKg} kg accepted @ ${dto.pricePerKg}/kg from ${supplier.name}`,
+            createdById: userId ?? null,
+            metadata: {
+              supplierId: supplier.id,
+              grade: dto.grade ?? null,
+              pricePerKg: dto.pricePerKg,
+              disposition,
+            },
+          }),
+          eventRepo.create({
+            lotId: acceptedLot.id,
+            eventType: LotEventType.RECEIVING_ACCEPTED,
+            quantity: acceptedLot.quantity,
+            toLocationId: dto.locationId,
+            notes: `Receiving inspection: ${disposition}`,
+            createdById: userId ?? null,
+            metadata: {
+              acceptedKg,
+              rejectedKg,
+              rejectPercent: rejectPct,
+            },
+          }),
+        ]);
 
-      await this.stockService.adjust(
-        {
-          locationId: dto.locationId,
-          itemId: item.id,
-          quantityDelta: dto.weightKg,
-          purchasePrice: dto.pricePerKg,
-          lotId: lot.id,
-        },
-        manager,
-      );
-
-      if (needsBank && dto.bankAccountId) {
-        await this.bankLedger.recordTransaction(
+        await this.stockService.adjust(
           {
-            bankAccountId: dto.bankAccountId,
-            type: BankTransactionType.PURCHASE,
-            amount: total,
-            direction: 'out',
-            description: `Cherry collection ${lot.code}`,
-            refType: 'purchase',
-            refId: purchase.id,
-            createdById: userId,
+            locationId: dto.locationId,
+            itemId: item.id,
+            quantityDelta: acceptedKg,
+            purchasePrice: dto.pricePerKg,
+            lotId: acceptedLot.id,
           },
           manager,
         );
       }
 
-      if (dto.paymentMethod === PaymentMethod.CREDIT) {
-        await creditRepo.save(
-          creditRepo.create({
-            supplierId: dto.supplierId,
-            purchaseId: purchase.id,
-            amount: total.toFixed(2),
-            paidAmount: '0',
-            balance: total.toFixed(2),
-            status: CreditStatus.OPEN,
-            dueDate: dto.creditDueDate ?? null,
+      let rejectLot: Lot | null = null;
+      if (rejectedKg > 0 && rejectItem) {
+        const rejectLocId = dto.rejectDestinationId ?? dto.locationId;
+        const rejectCode = `${baseCode}-RJ`;
+        rejectLot = await lotRepo.save(
+          lotRepo.create({
+            code: rejectCode,
+            itemId: rejectItem.id,
+            locationId: rejectLocId,
+            form: CoffeeForm.REJECT,
+            grade: dto.grade ?? 'REJECT',
+            cropYear: dto.cropYear ?? null,
+            variety: dto.variety ?? null,
+            processMethod: dto.processMethod ?? null,
+            region: dto.region ?? null,
+            zone: dto.zone ?? null,
+            woreda: dto.woreda ?? null,
+            kebele: dto.kebele ?? null,
+            moisturePercent:
+              dto.moisturePercent !== undefined
+                ? dto.moisturePercent.toFixed(2)
+                : null,
+            screenSize: dto.screenSize ?? null,
+            defectLevel: dto.defectLevel ?? null,
+            qcPhase: LotQcPhase.REJECTED,
+            inspectorId: userId ?? null,
+            inspectedAt,
+            rejectReason: dto.rejectReason ?? null,
+            rejectPercent: rejectPct.toFixed(2),
+            rejectAction: dto.rejectAction ?? 'Hold reject stock',
+            quantity: rejectedKg.toFixed(3),
+            status: LotStatus.HOLD,
+            parentLotId: acceptedLot?.id ?? null,
+            notes: `Rejected at receiving (${rejectPct.toFixed(1)}%) — ${dto.rejectReason}`,
+            createdById: userId ?? null,
           }),
         );
+
+        await eventRepo.save([
+          eventRepo.create({
+            lotId: rejectLot.id,
+            eventType: LotEventType.CREATED,
+            quantity: rejectLot.quantity,
+            toLocationId: rejectLocId,
+            relatedLotId: acceptedLot?.id ?? null,
+            notes: 'Reject lot opened — remains in inventory',
+            createdById: userId ?? null,
+            metadata: {
+              source: 'collection_reject',
+              rejectReason: dto.rejectReason,
+              rejectAction: dto.rejectAction ?? null,
+            },
+          }),
+          eventRepo.create({
+            lotId: rejectLot.id,
+            eventType: LotEventType.RECEIVING_REJECTED,
+            quantity: rejectLot.quantity,
+            toLocationId: rejectLocId,
+            relatedLotId: acceptedLot?.id ?? null,
+            notes: dto.rejectReason ?? 'Rejected at receiving',
+            createdById: userId ?? null,
+            metadata: {
+              rejectPercent: rejectPct,
+              rejectAction: dto.rejectAction ?? null,
+              inspectorId: userId ?? null,
+            },
+          }),
+        ]);
+
+        await this.stockService.adjust(
+          {
+            locationId: rejectLocId,
+            itemId: rejectItem.id,
+            quantityDelta: rejectedKg,
+            purchasePrice: 0,
+            lotId: rejectLot.id,
+          },
+          manager,
+        );
+      }
+
+      // Ticket always needs a primary lotId — use accepted, else reject
+      const primaryLot = acceptedLot ?? rejectLot;
+      if (!primaryLot) {
+        throw new BadRequestException('No accepted or rejected quantity');
+      }
+
+      let purchase: Purchase | null = null;
+      if (payWeight > 0) {
+        purchase = await purchaseRepo.save(
+          purchaseRepo.create({
+            supplierId: dto.supplierId,
+            locationId: dto.locationId,
+            paymentMethod: dto.paymentMethod,
+            bankAccountId: dto.bankAccountId ?? null,
+            subtotal: total.toFixed(2),
+            total: total.toFixed(2),
+            notes: `Cherry collection ${primaryLot.code} (accepted ${acceptedKg} kg)`,
+            status: DocumentStatus.ACTIVE,
+            createdById: userId ?? null,
+            lines: [
+              Object.assign(new PurchaseLine(), {
+                itemId: item.id,
+                quantity: payWeight.toFixed(3),
+                unitPrice: dto.pricePerKg.toFixed(2),
+                lineTotal: total.toFixed(2),
+              }),
+            ],
+          }),
+        );
+
+        if (needsBank && dto.bankAccountId) {
+          await this.bankLedger.recordTransaction(
+            {
+              bankAccountId: dto.bankAccountId,
+              type: BankTransactionType.PURCHASE,
+              amount: total,
+              direction: 'out',
+              description: `Cherry collection ${primaryLot.code}`,
+              refType: 'purchase',
+              refId: purchase.id,
+              createdById: userId,
+            },
+            manager,
+          );
+        }
+
+        if (dto.paymentMethod === PaymentMethod.CREDIT) {
+          await creditRepo.save(
+            creditRepo.create({
+              supplierId: dto.supplierId,
+              purchaseId: purchase.id,
+              amount: total.toFixed(2),
+              paidAmount: '0',
+              balance: total.toFixed(2),
+              status: CreditStatus.OPEN,
+              dueDate: dto.creditDueDate ?? null,
+            }),
+          );
+        }
       }
 
       const ticketNumber = `TKT-${new Date().getFullYear()}-${String((await ticketRepo.count()) + 1).padStart(4, '0')}`;
@@ -356,9 +518,13 @@ export class CollectionsService {
           supplierId: dto.supplierId,
           locationId: dto.locationId,
           itemId: item.id,
-          lotId: lot.id,
-          purchaseId: purchase.id,
+          lotId: primaryLot.id,
+          purchaseId: purchase?.id ?? null,
           weightKg: dto.weightKg.toFixed(3),
+          disposition,
+          acceptedWeightKg: acceptedKg.toFixed(3),
+          rejectedWeightKg: rejectedKg.toFixed(3),
+          rejectLotId: rejectLot?.id ?? null,
           grade: dto.grade ?? null,
           pricePerKg: dto.pricePerKg.toFixed(2),
           totalAmount: total.toFixed(2),
@@ -370,9 +536,23 @@ export class CollectionsService {
               : null,
           cropYear: dto.cropYear ?? null,
           region: dto.region ?? null,
+          zone: dto.zone ?? null,
           woreda: dto.woreda ?? null,
           kebele: dto.kebele ?? null,
           variety: dto.variety ?? null,
+          processMethod: dto.processMethod ?? null,
+          screenSize: dto.screenSize ?? null,
+          cuppingScore:
+            dto.cuppingScore !== undefined
+              ? dto.cuppingScore.toFixed(2)
+              : null,
+          defectLevel: dto.defectLevel ?? null,
+          inspectorId: userId ?? null,
+          inspectedAt,
+          rejectReason: dto.rejectReason ?? null,
+          rejectPercent: rejectPct > 0 ? rejectPct.toFixed(2) : null,
+          rejectAction: dto.rejectAction ?? null,
+          rejectDestinationId: dto.rejectDestinationId ?? null,
           notes: dto.notes ?? null,
           status: DocumentStatus.ACTIVE,
           createdById: userId ?? null,
@@ -383,12 +563,14 @@ export class CollectionsService {
     });
 
     const ticket = await this.findOne(ticketId);
-    await this.notifications.onPurchaseRecorded({
-      purchaseId: ticket.purchaseId!,
-      total: ticket.totalAmount,
-      actorUserId: userId,
-      creditDueDate: dto.creditDueDate ?? null,
-    });
+    if (ticket.purchaseId) {
+      await this.notifications.onPurchaseRecorded({
+        purchaseId: ticket.purchaseId,
+        total: ticket.totalAmount,
+        actorUserId: userId,
+        creditDueDate: dto.creditDueDate ?? null,
+      });
+    }
 
     return ticket;
   }
@@ -407,6 +589,21 @@ export class CollectionsService {
           description: 'Coffee cherry',
           unit: 'kg',
           itemType: ItemType.RAW,
+        }),
+      );
+    }
+    return item;
+  }
+
+  private async resolveRejectItem(): Promise<Item> {
+    let item = await this.itemRepo.findOne({ where: { sku: REJECT_SKU } });
+    if (!item) {
+      item = await this.itemRepo.save(
+        this.itemRepo.create({
+          sku: REJECT_SKU,
+          description: 'Rejected coffee (held in inventory)',
+          unit: 'kg',
+          itemType: ItemType.OTHER,
         }),
       );
     }

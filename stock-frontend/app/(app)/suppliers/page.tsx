@@ -16,12 +16,25 @@ export default function SuppliersPage() {
         { name: "name", label: "Name", required: true },
         { name: "phone", label: "Phone" },
         { name: "email", label: "Email", type: "email" },
+        {
+          name: "creditLimit",
+          label: "Payable credit limit (ETB)",
+          type: "number",
+        },
         { name: "address", label: "Address", type: "textarea" },
       ]}
       columns={[
         { key: "name", header: "Name", cell: (r) => r.name },
         { key: "phone", header: "Phone", cell: (r) => r.phone ?? "—" },
         { key: "email", header: "Email", cell: (r) => r.email ?? "—" },
+        {
+          key: "creditLimit",
+          header: "Credit limit",
+          cell: (r) =>
+            r.creditLimit != null && r.creditLimit !== ""
+              ? Number(r.creditLimit).toLocaleString()
+              : "—",
+        },
         {
           key: "status",
           header: "Status",

@@ -7,7 +7,9 @@ import { CommonModule } from './common/common.module';
 import appConfig from './config/app.config';
 import databaseConfig from './config/database.config';
 import jwtConfig from './config/jwt.config';
+import marketConfig from './config/market.config';
 import { CreditsModule } from './credits/credits.module';
+import { MarketPricesModule } from './market-prices/market-prices.module';
 import { CustomersModule } from './customers/customers.module';
 import { DashboardModule } from './dashboard/dashboard.module';
 import { DatabaseModule } from './database/database.module';
@@ -37,7 +39,7 @@ import { HealthController } from './health.controller';
   imports: [
     ConfigModule.forRoot({
       isGlobal: true,
-      load: [appConfig, databaseConfig, jwtConfig],
+      load: [appConfig, databaseConfig, jwtConfig, marketConfig],
     }),
     CommonModule,
     DatabaseModule,
@@ -56,6 +58,7 @@ import { HealthController } from './health.controller';
     RoastProfilesModule,
     ExportsModule,
     AiModule,
+    MarketPricesModule,
     StockTransfersModule,
     SuppliersModule,
     CustomersModule,

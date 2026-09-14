@@ -1,5 +1,12 @@
 import { Type } from 'class-transformer';
-import { IsNumber, IsOptional, IsUUID, Min } from 'class-validator';
+import {
+  IsNumber,
+  IsOptional,
+  IsString,
+  IsUUID,
+  MaxLength,
+  Min,
+} from 'class-validator';
 
 export class CreditPaymentDto {
   @Type(() => Number)
@@ -10,4 +17,9 @@ export class CreditPaymentDto {
   @IsOptional()
   @IsUUID()
   bankAccountId?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  notes?: string;
 }

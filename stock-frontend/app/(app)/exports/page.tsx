@@ -21,7 +21,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { buildExportsListPath } from "@/lib/list-query";
-import { formatDate, formatMoney, formatQty } from "@/lib/format";
+import { formatMoney, formatQty } from "@/lib/format";
 import type { ExportContract, ExportContractStatus } from "@/lib/types";
 import { usePaginatedList } from "@/hooks/use-paginated-list";
 import { PlusIcon } from "lucide-react";
@@ -50,7 +50,7 @@ export default function ExportsPage() {
   return (
     <AppShell
       title="Exports"
-      subtitle="Contracts, lot allocation, dossier, and shipment"
+      subtitle="Export order → allocate → stage → ship → deliver"
       breadcrumbs={[
         { label: "Operations", href: "/dashboard" },
         { label: "Exports" },
@@ -71,7 +71,7 @@ export default function ExportsPage() {
           <ListSearchField
             value={search}
             onChange={setSearch}
-            placeholder="Search contracts…"
+            placeholder="Search buyer, country, container…"
           />
           <Select
             value={status || ALL}
@@ -90,6 +90,7 @@ export default function ExportsPage() {
                   "ALLOCATED",
                   "STAGED",
                   "SHIPPED",
+                  "DELIVERED",
                   "CLOSED",
                   "CANCELLED",
                 ] as ExportContractStatus[]
@@ -123,13 +124,32 @@ export default function ExportsPage() {
                     className="font-medium text-[var(--frappe-primary)] hover:underline"
                   >
                     {r.contractNumber}
+                    {r.orderNumber ? (
+                      <span className="ml-1 text-xs text-[var(--frappe-text-muted)]">
+                        · {r.orderNumber}
+                      </span>
+                    ) : null}
                   </Link>
                 ),
               },
               {
                 key: "buyer",
                 header: "Buyer",
-                cell: (r) => r.buyerName,
+                cell: (r) => (
+                  <div>
+                    <div>{r.buyerName}</div>
+                    {r.buyerCountry ? (
+                      <div className="text-xs text-[var(--frappe-text-muted)]">
+                        {r.buyerCountry}
+                      </div>
+                    ) : null}
+                  </div>
+                ),
+              },
+              {
+                key: "destination",
+                header: "Destination",
+                cell: (r) => r.destination ?? "—",
               },
               {
                 key: "volume",
@@ -147,14 +167,6 @@ export default function ExportsPage() {
                 key: "terms",
                 header: "Incoterm",
                 cell: (r) => r.incoterm,
-              },
-              {
-                key: "window",
-                header: "Window",
-                cell: (r) =>
-                  r.windowStart || r.windowEnd
-                    ? `${formatDate(r.windowStart ?? undefined)} → ${formatDate(r.windowEnd ?? undefined)}`
-                    : "—",
               },
               {
                 key: "status",

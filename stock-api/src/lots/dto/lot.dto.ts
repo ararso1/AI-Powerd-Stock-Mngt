@@ -10,7 +10,7 @@ import {
   Min,
   MinLength,
 } from 'class-validator';
-import { CoffeeForm, LotStatus } from '../../common/enums';
+import { CoffeeForm, LotQcPhase, LotStatus } from '../../common/enums';
 
 const APPENDABLE_EVENT_TYPES = [
   'COLLECTED',
@@ -25,6 +25,11 @@ const APPENDABLE_EVENT_TYPES = [
   'SOLD_LOCAL',
   'ALLOCATED_EXPORT',
   'SHIPPED',
+  'SAMPLE_TESTED',
+  'GRADED',
+  'RECEIVING_ACCEPTED',
+  'RECEIVING_REJECTED',
+  'FINAL_GRADED',
 ] as const;
 
 export class CreateLotDto {
@@ -206,6 +211,57 @@ export class AppendLotEventDto {
   @IsOptional()
   @IsUUID()
   toLocationId?: string;
+
+  @IsOptional()
+  @IsString()
+  notes?: string;
+}
+
+export class AdvanceLotQcDto {
+  @IsEnum(LotQcPhase)
+  qcPhase: LotQcPhase;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(80)
+  grade?: string;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0)
+  moisturePercent?: number;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(40)
+  screenSize?: string;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0)
+  cuppingScore?: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0)
+  defectCount?: number;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(40)
+  defectLevel?: string;
+
+  @IsOptional()
+  @IsString()
+  rejectReason?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  rejectAction?: string;
 
   @IsOptional()
   @IsString()

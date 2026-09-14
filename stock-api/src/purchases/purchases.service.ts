@@ -27,6 +27,7 @@ import { StockService } from '../inventory/stock.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { CreatePurchaseDto, PurchaseLineDto } from './dto/purchase.dto';
 import { UpdatePurchaseDto } from './dto/update-purchase.dto';
+import { CreditsService } from '../credits/credits.service';
 
 @Injectable()
 export class PurchasesService {
@@ -39,6 +40,7 @@ export class PurchasesService {
     private readonly bankLedger: BankLedgerService,
     private readonly banksService: BanksService,
     private readonly notifications: NotificationsService,
+    private readonly creditsService: CreditsService,
   ) {}
 
   async findAll(query: PurchaseListQueryDto) {
@@ -112,10 +114,21 @@ export class PurchasesService {
         location: true,
         lines: { item: true },
         credit: true,
+        bankAccount: true,
       },
     });
     if (!purchase) throw new NotFoundException('Purchase not found');
-    return purchase;
+    const total = parseFloat(purchase.total);
+    const paid = parseFloat(purchase.paidAmount ?? '0');
+    const creditBalance = purchase.credit
+      ? parseFloat(purchase.credit.balance)
+      : Math.max(0, total - paid);
+    const outstanding =
+      purchase.paymentMethod === PaymentMethod.CREDIT ? creditBalance : 0;
+    return {
+      ...purchase,
+      outstandingAmount: outstanding.toFixed(2),
+    };
   }
 
   private isNotesOnlyUpdate(dto: UpdatePurchaseDto): boolean {
@@ -380,6 +393,13 @@ export class PurchasesService {
       0,
     );
 
+    if (dto.paymentMethod === PaymentMethod.CREDIT) {
+      await this.creditsService.assertSupplierWithinLimit(
+        dto.supplierId,
+        subtotal,
+      );
+    }
+
     const purchaseId = await this.dataSource.transaction(async (manager) => {
       if (needsBank && dto.bankAccountId) {
         await this.banksService.assertPaymentAccount(
@@ -410,6 +430,10 @@ export class PurchasesService {
           bankAccountId: dto.bankAccountId ?? null,
           subtotal: subtotal.toFixed(2),
           total: subtotal.toFixed(2),
+          paidAmount:
+            dto.paymentMethod === PaymentMethod.CREDIT
+              ? '0.00'
+              : subtotal.toFixed(2),
           notes: dto.notes ?? null,
           status: DocumentStatus.ACTIVE,
           createdById: userId ?? null,

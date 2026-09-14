@@ -37,6 +37,16 @@ export class Purchase extends UuidBaseEntity {
   @Column({ type: 'decimal', precision: 14, scale: 2, default: 0 })
   total: string;
 
+  /** Amount paid at purchase (cash/bank = total; credit starts at 0). */
+  @Column({
+    name: 'paid_amount',
+    type: 'decimal',
+    precision: 14,
+    scale: 2,
+    default: 0,
+  })
+  paidAmount: string;
+
   @Column({ type: 'text', nullable: true })
   notes: string | null;
 

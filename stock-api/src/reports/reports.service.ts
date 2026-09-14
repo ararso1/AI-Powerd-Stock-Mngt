@@ -624,6 +624,64 @@ export class ReportsService {
           outstanding: parseFloat(row.outstanding).toFixed(2),
         })),
       },
+      aging: await this.creditsServiceAging(),
+    };
+  }
+
+  /** Local aging helper so ReportsModule does not need CreditsModule cycle. */
+  private async creditsServiceAging() {
+    // Delegate to same bucket logic used by /credits/aging via raw SQL-like days
+    const bucketDefs = [
+      { key: 'current', label: 'Current', min: -999999, max: 0 },
+      { key: 'd1_30', label: '1–30 days', min: 1, max: 30 },
+      { key: 'd31_60', label: '31–60 days', min: 31, max: 60 },
+      { key: 'd61_90', label: '61–90 days', min: 61, max: 90 },
+      { key: 'd90_plus', label: '90+ days', min: 91, max: 999999 },
+    ];
+
+    const ageSide = async (
+      repo: typeof this.customerCreditRepo | typeof this.supplierCreditRepo,
+    ) => {
+      const rows = await repo
+        .createQueryBuilder('credit')
+        .where('credit.status != :paid', { paid: CreditStatus.PAID })
+        .getMany();
+      const buckets = Object.fromEntries(
+        bucketDefs.map((b) => [b.key, { label: b.label, count: 0, balance: 0 }]),
+      );
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      let total = 0;
+      for (const row of rows) {
+        const bal = parseFloat(row.balance);
+        total += bal;
+        const anchor = row.dueDate
+          ? new Date(row.dueDate)
+          : new Date(row.createdAt);
+        anchor.setHours(0, 0, 0, 0);
+        const days = Math.floor(
+          (today.getTime() - anchor.getTime()) / (24 * 60 * 60 * 1000),
+        );
+        const bucket =
+          bucketDefs.find((b) => days >= b.min && days <= b.max) ??
+          bucketDefs[bucketDefs.length - 1];
+        buckets[bucket.key].count += 1;
+        buckets[bucket.key].balance += bal;
+      }
+      return {
+        totalOutstanding: total.toFixed(2),
+        buckets: bucketDefs.map((b) => ({
+          key: b.key,
+          label: buckets[b.key].label,
+          count: buckets[b.key].count,
+          balance: buckets[b.key].balance.toFixed(2),
+        })),
+      };
+    };
+
+    return {
+      customers: await ageSide(this.customerCreditRepo),
+      suppliers: await ageSide(this.supplierCreditRepo),
     };
   }
 

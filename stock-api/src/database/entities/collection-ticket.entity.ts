@@ -6,7 +6,11 @@ import {
   ManyToOne,
   UpdateDateColumn,
 } from 'typeorm';
-import { DocumentStatus, PaymentMethod } from '../../common/enums';
+import {
+  DocumentStatus,
+  PaymentMethod,
+  ReceivingDisposition,
+} from '../../common/enums';
 import { BankAccount } from './bank-account.entity';
 import { Item } from './item.entity';
 import { Location } from './location.entity';
@@ -38,6 +42,36 @@ export class CollectionTicket extends UuidBaseEntity {
 
   @Column({ name: 'weight_kg', type: 'decimal', precision: 14, scale: 3 })
   weightKg: string;
+
+  @Column({
+    name: 'disposition',
+    type: 'enum',
+    enum: ReceivingDisposition,
+    enumName: 'collection_tickets_disposition_enum',
+    default: ReceivingDisposition.ACCEPTED,
+  })
+  disposition: ReceivingDisposition;
+
+  @Column({
+    name: 'accepted_weight_kg',
+    type: 'decimal',
+    precision: 14,
+    scale: 3,
+    nullable: true,
+  })
+  acceptedWeightKg: string | null;
+
+  @Column({
+    name: 'rejected_weight_kg',
+    type: 'decimal',
+    precision: 14,
+    scale: 3,
+    default: 0,
+  })
+  rejectedWeightKg: string;
+
+  @Column({ name: 'reject_lot_id', type: 'uuid', nullable: true })
+  rejectLotId: string | null;
 
   @Column({ type: 'varchar', length: 80, nullable: true })
   grade: string | null;
@@ -75,6 +109,9 @@ export class CollectionTicket extends UuidBaseEntity {
   region: string | null;
 
   @Column({ type: 'varchar', length: 120, nullable: true })
+  zone: string | null;
+
+  @Column({ type: 'varchar', length: 120, nullable: true })
   woreda: string | null;
 
   @Column({ type: 'varchar', length: 120, nullable: true })
@@ -82,6 +119,58 @@ export class CollectionTicket extends UuidBaseEntity {
 
   @Column({ type: 'varchar', length: 80, nullable: true })
   variety: string | null;
+
+  @Column({
+    name: 'process_method',
+    type: 'varchar',
+    length: 80,
+    nullable: true,
+  })
+  processMethod: string | null;
+
+  @Column({ name: 'screen_size', type: 'varchar', length: 40, nullable: true })
+  screenSize: string | null;
+
+  @Column({
+    name: 'cupping_score',
+    type: 'decimal',
+    precision: 5,
+    scale: 2,
+    nullable: true,
+  })
+  cuppingScore: string | null;
+
+  @Column({ name: 'defect_level', type: 'varchar', length: 40, nullable: true })
+  defectLevel: string | null;
+
+  @Column({ name: 'inspector_id', type: 'uuid', nullable: true })
+  inspectorId: string | null;
+
+  @Column({ name: 'inspected_at', type: 'timestamptz', nullable: true })
+  inspectedAt: Date | null;
+
+  @Column({ name: 'reject_reason', type: 'text', nullable: true })
+  rejectReason: string | null;
+
+  @Column({
+    name: 'reject_percent',
+    type: 'decimal',
+    precision: 6,
+    scale: 2,
+    nullable: true,
+  })
+  rejectPercent: string | null;
+
+  @Column({
+    name: 'reject_action',
+    type: 'varchar',
+    length: 120,
+    nullable: true,
+  })
+  rejectAction: string | null;
+
+  @Column({ name: 'reject_destination_id', type: 'uuid', nullable: true })
+  rejectDestinationId: string | null;
 
   @Column({ type: 'text', nullable: true })
   notes: string | null;
@@ -113,6 +202,10 @@ export class CollectionTicket extends UuidBaseEntity {
   @JoinColumn({ name: 'lot_id' })
   lot: Lot;
 
+  @ManyToOne(() => Lot, { nullable: true })
+  @JoinColumn({ name: 'reject_lot_id' })
+  rejectLot: Lot | null;
+
   @ManyToOne(() => Purchase, { nullable: true })
   @JoinColumn({ name: 'purchase_id' })
   purchase: Purchase | null;
@@ -124,6 +217,14 @@ export class CollectionTicket extends UuidBaseEntity {
   @ManyToOne(() => User, { nullable: true })
   @JoinColumn({ name: 'created_by_id' })
   createdBy: User | null;
+
+  @ManyToOne(() => User, { nullable: true })
+  @JoinColumn({ name: 'inspector_id' })
+  inspector: User | null;
+
+  @ManyToOne(() => Location, { nullable: true })
+  @JoinColumn({ name: 'reject_destination_id' })
+  rejectDestination: Location | null;
 
   @CreateDateColumn({ name: 'created_at' })
   createdAt: Date;

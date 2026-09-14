@@ -25,6 +25,7 @@ import {
   CreateStockAdjustmentDto,
   StockAdjustmentListQueryDto,
 } from './dto/stock-adjustment.dto';
+import { StockMovementListQueryDto } from './dto/stock-movement-list-query.dto';
 import type { UploadedExcelFile } from './dto/uploaded-file.interface';
 import { InventoryService } from './inventory.service';
 
@@ -49,6 +50,12 @@ export class InventoryController {
   @RequirePermissions('inventory.read')
   findAdjustments(@Query() query: StockAdjustmentListQueryDto) {
     return this.inventoryService.findAdjustments(query);
+  }
+
+  @Get('movements')
+  @RequirePermissions('inventory.read')
+  findMovements(@Query() query: StockMovementListQueryDto) {
+    return this.inventoryService.findMovements(query);
   }
 
   @Post('adjustments')

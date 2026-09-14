@@ -14,7 +14,7 @@ export default function SaleDetailPage() {
   const params = useParams();
   const id = typeof params.id === "string" ? params.id : "";
 
-  const { data: sale, loading, error } = useFetch(
+  const { data: sale, loading, error, reload } = useFetch(
     () =>
       id
         ? api<Sale>(`/sales/${id}`)
@@ -52,7 +52,7 @@ export default function SaleDetailPage() {
             </FrappeButtonLink>
           </div>
         ) : (
-          <SaleDetail sale={sale} />
+          <SaleDetail sale={sale} onReload={() => void reload()} />
         )}
       </PermissionGate>
     </AppShell>

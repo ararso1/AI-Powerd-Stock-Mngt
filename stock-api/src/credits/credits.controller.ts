@@ -33,6 +33,48 @@ export class CreditsController {
     return this.service.findSupplierCredits(query);
   }
 
+  @Get('customers/accounts/:customerId')
+  @RequirePermissions('credit.read')
+  customerAccount(@Param('customerId') customerId: string) {
+    return this.service.customerAccountSummary(customerId);
+  }
+
+  @Get('suppliers/accounts/:supplierId')
+  @RequirePermissions('credit.read')
+  supplierAccount(@Param('supplierId') supplierId: string) {
+    return this.service.supplierAccountSummary(supplierId);
+  }
+
+  @Get('customers/:id/payments')
+  @RequirePermissions('credit.read')
+  customerPayments(@Param('id') id: string) {
+    return this.service.findCustomerPayments(id);
+  }
+
+  @Get('suppliers/:id/payments')
+  @RequirePermissions('credit.read')
+  supplierPayments(@Param('id') id: string) {
+    return this.service.findSupplierPayments(id);
+  }
+
+  @Get('aging')
+  @RequirePermissions('credit.read')
+  aging() {
+    return this.service.agingAnalysis();
+  }
+
+  @Get('overdue')
+  @RequirePermissions('credit.read')
+  overdue() {
+    return this.service.overdueAccounts();
+  }
+
+  @Post('reminders')
+  @RequirePermissions('credit.write')
+  reminders() {
+    return this.service.sendPaymentReminders(true);
+  }
+
   @Post('customers/:id/payments')
   @RequirePermissions('credit.write')
   payCustomer(

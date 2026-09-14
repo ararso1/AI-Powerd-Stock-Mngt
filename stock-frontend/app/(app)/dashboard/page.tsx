@@ -7,10 +7,10 @@ import { PermissionGate } from "@/components/permission-gate";
 export default function DashboardPage() {
   return (
     <AppShell
-      title="Command Center"
-      subtitle="Executive pulse across coffee ops, contracts, and money"
+      title="Dashboard"
+      subtitle="AI insights + analytical KPIs across inventory, trading, quality, finance, production, and export"
       layout="default"
-      breadcrumbs={[{ label: "Insights" }, { label: "Command Center" }]}
+      breadcrumbs={[{ label: "Overview" }, { label: "Dashboard" }]}
     >
       <PermissionGate
         permissions={["insights.read", "dashboard.read"]}

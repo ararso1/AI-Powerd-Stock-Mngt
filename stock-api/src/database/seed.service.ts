@@ -2,11 +2,13 @@ import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
 import * as bcrypt from 'bcrypt';
-import { IsNull, Repository } from 'typeorm';
+import { DataSource, IsNull, Repository } from 'typeorm';
 import {
   DEFAULT_ROLE_PERMISSIONS,
   PERMISSION_DEFINITIONS,
 } from './constants/permissions';
+import { seedExecutiveDemo } from './executive-demo.seed';
+import { seedProcurementGradingDemo } from './procurement-grading.seed';
 import { BankAccount } from './entities/bank-account.entity';
 import { CherryPrice } from './entities/cherry-price.entity';
 import { Item } from './entities/item.entity';
@@ -30,6 +32,7 @@ import {
   LocationType,
   LotEventType,
   LotStatus,
+  ProcessOperationType,
 } from '../common/enums';
 
 const DEMO_PASSWORD = 'Demo@123';
@@ -67,6 +70,7 @@ export class SeedService implements OnModuleInit {
 
   constructor(
     private readonly config: ConfigService,
+    private readonly dataSource: DataSource,
     @InjectRepository(Permission)
     private readonly permissionRepo: Repository<Permission>,
     @InjectRepository(Role)
@@ -167,6 +171,8 @@ export class SeedService implements OnModuleInit {
     await this.seedSampleLots(locations, greenItem, admin?.id ?? null);
     await this.seedLotStockLinks();
     await this.seedDemoExportContract(locations, greenItem, admin?.id ?? null);
+    await seedExecutiveDemo(this.dataSource, this.logger);
+    await seedProcurementGradingDemo(this.dataSource, this.logger);
 
     this.logger.log('Seeding complete');
   }
@@ -371,9 +377,56 @@ export class SeedService implements OnModuleInit {
       await this.itemRepo.save(
         this.itemRepo.create({
           sku: 'COF-ROAST-250',
-          description: 'Roasted coffee 250g',
+          description: 'Roasted coffee 250g bag',
           unit: 'pcs',
           itemType: ItemType.FINISHED,
+        }),
+      );
+    }
+
+    if (!(await this.itemRepo.findOne({ where: { sku: 'COF-ROASTED' } }))) {
+      await this.itemRepo.save(
+        this.itemRepo.create({
+          sku: 'COF-ROASTED',
+          description: 'Roasted coffee (bulk kg)',
+          unit: 'kg',
+          itemType: ItemType.FINISHED,
+        }),
+      );
+    }
+
+    if (!(await this.itemRepo.findOne({ where: { sku: 'COF-ROAST-1KG' } }))) {
+      await this.itemRepo.save(
+        this.itemRepo.create({
+          sku: 'COF-ROAST-1KG',
+          description: 'Roasted coffee 1 kg package',
+          unit: 'pcs',
+          itemType: ItemType.FINISHED,
+        }),
+      );
+    }
+
+    if (!(await this.itemRepo.findOne({ where: { sku: 'COF-FLOUR' } }))) {
+      await this.itemRepo.save(
+        this.itemRepo.create({
+          sku: 'COF-FLOUR',
+          description: 'Coffee flour / ground',
+          unit: 'kg',
+          itemType: ItemType.FINISHED,
+        }),
+      );
+    }
+
+    const reject = await this.itemRepo.findOne({
+      where: { sku: 'COF-REJECT' },
+    });
+    if (!reject) {
+      await this.itemRepo.save(
+        this.itemRepo.create({
+          sku: 'COF-REJECT',
+          description: 'Rejected coffee (held in inventory)',
+          unit: 'kg',
+          itemType: ItemType.RAW,
         }),
       );
     }
@@ -389,20 +442,42 @@ export class SeedService implements OnModuleInit {
     const green = await this.itemRepo.findOne({
       where: { sku: 'COF-GREEN-G1' },
     });
-    const roast = await this.itemRepo.findOne({
+    const roastedKg = await this.itemRepo.findOne({
+      where: { sku: 'COF-ROASTED' },
+    });
+    const roast1kg = await this.itemRepo.findOne({
+      where: { sku: 'COF-ROAST-1KG' },
+    });
+    const roast250 = await this.itemRepo.findOne({
       where: { sku: 'COF-ROAST-250' },
     });
+    const flour = await this.itemRepo.findOne({ where: { sku: 'COF-FLOUR' } });
 
-    const templates = [
+    const templates: Array<{
+      code: string;
+      name: string;
+      inputForm: CoffeeForm;
+      outputForm: CoffeeForm;
+      operationType: ProcessOperationType;
+      expectedYieldPercent: string;
+      requiresQc: boolean;
+      stages: string[];
+      maxMoisturePercent: string | null;
+      packSizeKg: string | null;
+      inputItemId: string | null;
+      outputItemId: string | null;
+    }> = [
       {
         code: 'WASHED-WET',
         name: 'Washed wet mill',
         inputForm: CoffeeForm.CHERRY,
         outputForm: CoffeeForm.PARCHMENT,
+        operationType: ProcessOperationType.MILL,
         expectedYieldPercent: '45.00',
         requiresQc: true,
         stages: ['Pulping', 'Fermentation', 'Washing', 'Drying'],
         maxMoisturePercent: '12.00',
+        packSizeKg: null,
         inputItemId: cherry?.id ?? null,
         outputItemId: parchment?.id ?? null,
       },
@@ -411,10 +486,12 @@ export class SeedService implements OnModuleInit {
         name: 'Dry mill hulling',
         inputForm: CoffeeForm.PARCHMENT,
         outputForm: CoffeeForm.GREEN,
+        operationType: ProcessOperationType.MILL,
         expectedYieldPercent: '80.00',
         requiresQc: true,
         stages: ['Hulling', 'Grading', 'Hand-pick'],
         maxMoisturePercent: '12.00',
+        packSizeKg: null,
         inputItemId: parchment?.id ?? null,
         outputItemId: green?.id ?? null,
       },
@@ -423,36 +500,70 @@ export class SeedService implements OnModuleInit {
         name: 'Natural process',
         inputForm: CoffeeForm.CHERRY,
         outputForm: CoffeeForm.GREEN,
+        operationType: ProcessOperationType.MILL,
         expectedYieldPercent: '18.00',
         requiresQc: true,
         stages: ['Drying', 'Hulling', 'Grading'],
         maxMoisturePercent: '11.50',
+        packSizeKg: null,
         inputItemId: cherry?.id ?? null,
         outputItemId: green?.id ?? null,
       },
       {
         code: 'ROAST-BATCH',
-        name: 'Roast batch',
+        name: 'Coffee roasting',
         inputForm: CoffeeForm.GREEN,
         outputForm: CoffeeForm.ROASTED,
-        expectedYieldPercent: '85.00',
+        operationType: ProcessOperationType.ROAST,
+        expectedYieldPercent: '82.00',
         requiresQc: true,
         stages: ['Charge', 'Development', 'Drop', 'Cool'],
         maxMoisturePercent: null,
+        packSizeKg: null,
         inputItemId: green?.id ?? null,
-        outputItemId: roast?.id ?? null,
+        outputItemId: roastedKg?.id ?? null,
+      },
+      {
+        code: 'FLOUR-MILL',
+        name: 'Coffee flour / grind',
+        inputForm: CoffeeForm.ROASTED,
+        outputForm: CoffeeForm.FLOUR,
+        operationType: ProcessOperationType.FLOUR,
+        expectedYieldPercent: '98.00',
+        requiresQc: false,
+        stages: ['Grind', 'Sift', 'Bag'],
+        maxMoisturePercent: null,
+        packSizeKg: null,
+        inputItemId: roastedKg?.id ?? null,
+        outputItemId: flour?.id ?? null,
+      },
+      {
+        code: 'PACK-1KG',
+        name: 'Package 1 kg',
+        inputForm: CoffeeForm.ROASTED,
+        outputForm: CoffeeForm.PACKAGED,
+        operationType: ProcessOperationType.PACK,
+        expectedYieldPercent: '100.00',
+        requiresQc: false,
+        stages: ['Weigh', 'Seal', 'Label'],
+        maxMoisturePercent: null,
+        packSizeKg: '1.000',
+        inputItemId: roastedKg?.id ?? null,
+        outputItemId: roast1kg?.id ?? null,
       },
       {
         code: 'PACK-250',
         name: 'Package 250g',
         inputForm: CoffeeForm.ROASTED,
         outputForm: CoffeeForm.PACKAGED,
+        operationType: ProcessOperationType.PACK,
         expectedYieldPercent: '100.00',
         requiresQc: false,
         stages: ['Weigh', 'Seal', 'Label'],
         maxMoisturePercent: null,
-        inputItemId: roast?.id ?? null,
-        outputItemId: roast?.id ?? null,
+        packSizeKg: '0.250',
+        inputItemId: roastedKg?.id ?? null,
+        outputItemId: roast250?.id ?? null,
       },
     ];
 
@@ -468,10 +579,20 @@ export class SeedService implements OnModuleInit {
             notes: 'Seeded Csolve process template',
           }),
         );
+      } else {
+        existing.operationType = t.operationType;
+        existing.packSizeKg = t.packSizeKg;
+        if (t.outputItemId) existing.outputItemId = t.outputItemId;
+        if (t.inputItemId) existing.inputItemId = t.inputItemId;
+        if (t.code === 'ROAST-BATCH') {
+          existing.name = t.name;
+          existing.expectedYieldPercent = t.expectedYieldPercent;
+        }
+        await this.processTemplateRepo.save(existing);
       }
     }
     this.logger.log(
-      'Process templates seeded (wet/dry/natural/roast/pack)',
+      'Process templates seeded (wet/dry/natural/roast/flour/pack)',
     );
   }
 

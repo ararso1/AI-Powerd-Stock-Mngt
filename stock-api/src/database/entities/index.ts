@@ -21,6 +21,7 @@ export { ExpenseCategory } from './expense-category.entity';
 export { Expense } from './expense.entity';
 export { Notification } from './notification.entity';
 export { StockAdjustment } from './stock-adjustment.entity';
+export { StockMovement } from './stock-movement.entity';
 export { Bom } from './bom.entity';
 export { BomLine } from './bom-line.entity';
 export { ProductionOrder } from './production-order.entity';
@@ -37,6 +38,11 @@ export { ExportContract } from './export-contract.entity';
 export { ExportAllocation } from './export-allocation.entity';
 export { AiInsight } from './ai-insight.entity';
 export { AiFeedback } from './ai-feedback.entity';
+export { SaleReturn } from './sale-return.entity';
+export { SaleReturnLine } from './sale-return-line.entity';
+export { MarketPrice } from './market-price.entity';
+export { MarketFxRate } from './market-fx-rate.entity';
+export { MarketGradeBasis } from './market-grade-basis.entity';
 
 import { Permission } from './permission.entity';
 import { Role } from './role.entity';
@@ -61,6 +67,7 @@ import { ExpenseCategory } from './expense-category.entity';
 import { Expense } from './expense.entity';
 import { Notification } from './notification.entity';
 import { StockAdjustment } from './stock-adjustment.entity';
+import { StockMovement } from './stock-movement.entity';
 import { Bom } from './bom.entity';
 import { BomLine } from './bom-line.entity';
 import { ProductionOrder } from './production-order.entity';
@@ -77,6 +84,11 @@ import { ExportContract } from './export-contract.entity';
 import { ExportAllocation } from './export-allocation.entity';
 import { AiInsight } from './ai-insight.entity';
 import { AiFeedback } from './ai-feedback.entity';
+import { SaleReturn } from './sale-return.entity';
+import { SaleReturnLine } from './sale-return-line.entity';
+import { MarketPrice } from './market-price.entity';
+import { MarketFxRate } from './market-fx-rate.entity';
+import { MarketGradeBasis } from './market-grade-basis.entity';
 
 export const entities = [
   Permission,
@@ -96,12 +108,15 @@ export const entities = [
   PurchaseLine,
   Sale,
   SaleLine,
+  SaleReturn,
+  SaleReturnLine,
   CustomerCredit,
   SupplierCredit,
   ExpenseCategory,
   Expense,
   Notification,
   StockAdjustment,
+  StockMovement,
   Bom,
   BomLine,
   ProductionOrder,
@@ -118,4 +133,7 @@ export const entities = [
   ExportAllocation,
   AiInsight,
   AiFeedback,
+  MarketPrice,
+  MarketFxRate,
+  MarketGradeBasis,
 ];

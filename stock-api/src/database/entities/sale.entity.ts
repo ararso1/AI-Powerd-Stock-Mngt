@@ -25,6 +25,9 @@ import { UuidBaseEntity } from './uuid-base.entity';
 
 @Entity('sales')
 export class Sale extends UuidBaseEntity {
+  @Column({ name: 'invoice_number', type: 'varchar', length: 40, nullable: true })
+  invoiceNumber: string | null;
+
   @Column({ name: 'customer_id', type: 'uuid', nullable: true })
   customerId: string | null;
 
@@ -69,6 +72,16 @@ export class Sale extends UuidBaseEntity {
 
   @Column({ type: 'decimal', precision: 14, scale: 2, default: 0 })
   total: string;
+
+  /** Amount collected at sale (cash/bank = total; credit starts at 0). */
+  @Column({
+    name: 'paid_amount',
+    type: 'decimal',
+    precision: 14,
+    scale: 2,
+    default: 0,
+  })
+  paidAmount: string;
 
   @Column({ type: 'text', nullable: true })
   notes: string | null;

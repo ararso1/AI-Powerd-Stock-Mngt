@@ -8,15 +8,15 @@ export default function InsightsPage() {
   return (
     <AppShell
       title="AI Insights"
-      subtitle="Stock-ops trends, forecasts, readiness & quality — confirm before acting"
+      subtitle="Stock trends, forecasts, and tips — confirm before acting"
       layout="default"
-      breadcrumbs={[{ label: "Insights" }, { label: "AI Insights" }]}
+      breadcrumbs={[{ label: "Overview" }, { label: "AI advice" }]}
     >
       <PermissionGate
         permissions={["ai.read", "insights.read"]}
         fallback={
           <p className="text-muted-foreground">
-            You do not have permission to view AI insights.
+            You do not have permission to view AI advice.
           </p>
         }
       >

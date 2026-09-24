@@ -33,20 +33,20 @@ import { Supplier } from '../database/entities/supplier.entity';
 import { SupplierCredit } from '../database/entities/supplier-credit.entity';
 import { CreditPaymentDto } from './dto/credit-payment.dto';
 import { NotificationsService } from '../notifications/notifications.service';
+import {
+  CUSTOMER_CREDIT_AGING_BUCKETS,
+  SUPPLIER_CREDIT_AGING_BUCKETS,
+  customerCreditAgingMeta,
+  creditAgingDays,
+  resolveAgingBucket,
+  type CreditAgingBucketDef,
+} from '../common/utils/credit-aging.util';
 
 export type CreditListTotals = {
   amount: string;
   paidAmount: string;
   balance: string;
 };
-
-const AGING_BUCKETS = [
-  { key: 'current', label: 'Current', min: Number.NEGATIVE_INFINITY, max: 0 },
-  { key: 'd1_30', label: '1–30 days', min: 1, max: 30 },
-  { key: 'd31_60', label: '31–60 days', min: 31, max: 60 },
-  { key: 'd61_90', label: '61–90 days', min: 61, max: 90 },
-  { key: 'd90_plus', label: '90+ days', min: 91, max: Number.POSITIVE_INFINITY },
-] as const;
 
 @Injectable()
 export class CreditsService implements OnModuleInit {
@@ -91,7 +91,7 @@ export class CreditsService implements OnModuleInit {
     return {
       ...page,
       totals,
-      data: (page.data as CustomerCredit[]).map((c) => this.withOverdueMeta(c)),
+      data: (page.data as CustomerCredit[]).map((c) => this.withCreditMeta(c)),
     };
   }
 
@@ -194,22 +194,17 @@ export class CreditsService implements OnModuleInit {
       }>();
 
     const outstanding = parseFloat(raw?.outstanding ?? '0');
-    const limit = supplier.creditLimit
-      ? parseFloat(supplier.creditLimit)
-      : null;
-
     return {
       supplierId,
       supplierName: supplier.name,
-      creditLimit: supplier.creditLimit,
+      creditLimit: null,
       invoiceTotal: parseFloat(raw?.invoiceTotal ?? '0').toFixed(2),
       paidTotal: parseFloat(raw?.paidTotal ?? '0').toFixed(2),
       outstanding: outstanding.toFixed(2),
       overdue: parseFloat(raw?.overdue ?? '0').toFixed(2),
       openCount: parseInt(raw?.openCount ?? '0', 10),
-      availableCredit:
-        limit == null ? null : Math.max(0, limit - outstanding).toFixed(2),
-      overLimit: limit != null && outstanding > limit,
+      availableCredit: null,
+      overLimit: false,
     };
   }
 
@@ -235,6 +230,132 @@ export class CreditsService implements OnModuleInit {
       this.ageCredits('supplier'),
     ]);
     return { currency: 'ETB', customers, suppliers };
+  }
+
+  /** Full credit ledger + aging for a single customer (profile hub). */
+  async customerCreditProfile(customerId: string) {
+    const summary = await this.customerAccountSummary(customerId);
+    const credits = await this.customerCreditRepo.find({
+      where: { customerId },
+      relations: { sale: true },
+      order: { createdAt: 'DESC' },
+    });
+
+    const openCredits = credits
+      .filter((c) => c.status !== CreditStatus.PAID)
+      .map((c) => this.withCreditMeta(c));
+
+    const agingBreakdown: Record<
+      string,
+      { key: string; label: string; risk: string; count: number; balance: number }
+    > = {};
+    for (const b of CUSTOMER_CREDIT_AGING_BUCKETS) {
+      agingBreakdown[b.key] = {
+        key: b.key,
+        label: b.label,
+        risk: b.risk,
+        count: 0,
+        balance: 0,
+      };
+    }
+    for (const c of openCredits) {
+      const key = (c as { agingKey?: string }).agingKey ?? 'd0_15';
+      if (agingBreakdown[key]) {
+        agingBreakdown[key].count += 1;
+        agingBreakdown[key].balance += parseFloat(c.balance);
+      }
+    }
+
+    const paymentLists = await Promise.all(
+      credits.map(async (c) => {
+        const payments = await this.listPayments(
+          'customer_credit_payment',
+          c.id,
+        );
+        return payments.map((p) => ({
+          ...p,
+          creditId: c.id,
+          saleId: c.saleId,
+        }));
+      }),
+    );
+    const payments = paymentLists
+      .flat()
+      .sort(
+        (a, b) =>
+          new Date(b.date).getTime() - new Date(a.date).getTime(),
+      );
+
+    const highlyCritical = openCredits.filter(
+      (c) => (c as { agingKey?: string }).agingKey === 'd60_plus',
+    );
+    const highRisk = openCredits.filter(
+      (c) => (c as { agingKey?: string }).agingKey === 'd31_60',
+    );
+
+    return {
+      ...summary,
+      credits: credits.map((c) => this.withCreditMeta(c)),
+      openCredits,
+      payments,
+      aging: {
+        totalOutstanding: summary.outstanding,
+        buckets: CUSTOMER_CREDIT_AGING_BUCKETS.map((b) => ({
+          key: b.key,
+          label: b.label,
+          risk: b.risk,
+          count: agingBreakdown[b.key].count,
+          balance: agingBreakdown[b.key].balance.toFixed(2),
+        })),
+      },
+      alerts: {
+        overdueCount: openCredits.filter((c) => c.isOverdue).length,
+        highlyCriticalCount: highlyCritical.length,
+        highlyCriticalBalance: highlyCritical
+          .reduce((s, c) => s + parseFloat(c.balance), 0)
+          .toFixed(2),
+        highRiskCount: highRisk.length,
+        highRiskBalance: highRisk
+          .reduce((s, c) => s + parseFloat(c.balance), 0)
+          .toFixed(2),
+      },
+    };
+  }
+
+  /** Open credits for a customer with aging + due meta (sales-linked). */
+  async findCustomerOpenCredits(customerId: string) {
+    const rows = await this.customerCreditRepo.find({
+      where: { customerId },
+      relations: { sale: true },
+      order: { createdAt: 'DESC' },
+    });
+    return rows.map((c) => this.withCreditMeta(c));
+  }
+
+  async highlyCriticalCustomerSummary() {
+    const rows = await this.customerCreditRepo.find({
+      where: {},
+      relations: { customer: true },
+    });
+    const today = new Date();
+    let balance = 0;
+    const customerIds = new Set<string>();
+    for (const row of rows) {
+      if (row.status === CreditStatus.PAID) continue;
+      const days = creditAgingDays(row.createdAt, today);
+      if (days < 61) continue;
+      balance += parseFloat(row.balance);
+      customerIds.add(row.customerId);
+    }
+    return {
+      customerCount: customerIds.size,
+      creditCount: rows.filter(
+        (r) =>
+          r.status !== CreditStatus.PAID &&
+          creditAgingDays(r.createdAt, today) >= 61,
+      ).length,
+      balance: balance.toFixed(2),
+    };
   }
 
   async overdueAccounts() {
@@ -432,9 +553,14 @@ export class CreditsService implements OnModuleInit {
     };
   }
 
-  private withOverdueMeta<T extends { status: CreditStatus; dueDate: string | null; balance: string }>(
-    credit: T,
-  ) {
+  private withOverdueMeta<
+    T extends {
+      status: CreditStatus;
+      dueDate: string | null;
+      balance: string;
+      createdAt?: Date | string;
+    },
+  >(credit: T) {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
     let daysOverdue: number | null = null;
@@ -451,6 +577,21 @@ export class CreditsService implements OnModuleInit {
       }
     }
     return { ...credit, isOverdue, daysOverdue };
+  }
+
+  /** Customer credits: due-date overdue + aging from original credit/sale date. */
+  private withCreditMeta(
+    credit: CustomerCredit & { sale?: Sale | null },
+  ) {
+    const base = this.withOverdueMeta(credit);
+    const origin = credit.createdAt;
+    const aging = customerCreditAgingMeta(origin);
+    return {
+      ...base,
+      ...aging,
+      saleId: credit.saleId,
+      saleDate: credit.sale?.createdAt ?? credit.createdAt,
+    };
   }
 
   private async listPayments(refType: string, refId: string) {
@@ -484,37 +625,50 @@ export class CreditsService implements OnModuleInit {
       .where(`${alias}.status != :paid`, { paid: CreditStatus.PAID })
       .getMany();
 
+    const bucketDefs: readonly CreditAgingBucketDef[] =
+      kind === 'customer'
+        ? CUSTOMER_CREDIT_AGING_BUCKETS
+        : SUPPLIER_CREDIT_AGING_BUCKETS;
+
     const buckets: Record<
       string,
-      { label: string; count: number; balance: number }
+      { label: string; risk?: string; count: number; balance: number }
     > = {};
-    for (const b of AGING_BUCKETS) {
-      buckets[b.key] = { label: b.label, count: 0, balance: 0 };
+    for (const b of bucketDefs) {
+      buckets[b.key] = {
+        label: b.label,
+        risk: b.risk,
+        count: 0,
+        balance: 0,
+      };
     }
 
     const today = new Date();
-    today.setHours(0, 0, 0, 0);
     let total = 0;
     for (const row of rows) {
       const bal = parseFloat(row.balance);
       total += bal;
-      const anchor = row.dueDate ? new Date(row.dueDate) : new Date(row.createdAt);
-      anchor.setHours(0, 0, 0, 0);
-      const days = Math.floor(
-        (today.getTime() - anchor.getTime()) / (24 * 60 * 60 * 1000),
-      );
-      const bucket =
-        AGING_BUCKETS.find((b) => days >= b.min && days <= b.max) ??
-        AGING_BUCKETS[AGING_BUCKETS.length - 1];
+      // Customer: age from original credit/sale date. Supplier: from due date (fallback created).
+      const days =
+        kind === 'customer'
+          ? creditAgingDays(row.createdAt, today)
+          : (() => {
+              const anchor = row.dueDate
+                ? new Date(row.dueDate)
+                : new Date(row.createdAt);
+              return creditAgingDays(anchor, today);
+            })();
+      const bucket = resolveAgingBucket(days, bucketDefs);
       buckets[bucket.key].count += 1;
       buckets[bucket.key].balance += bal;
     }
 
     return {
       totalOutstanding: total.toFixed(2),
-      buckets: AGING_BUCKETS.map((b) => ({
+      buckets: bucketDefs.map((b) => ({
         key: b.key,
         label: buckets[b.key].label,
+        risk: buckets[b.key].risk ?? null,
         count: buckets[b.key].count,
         balance: buckets[b.key].balance.toFixed(2),
       })),
@@ -572,7 +726,7 @@ export class CreditsService implements OnModuleInit {
         await saleRepo.save(sale);
       }
 
-      return this.withOverdueMeta(saved);
+      return this.withCreditMeta(saved);
     });
   }
 
@@ -633,44 +787,57 @@ export class CreditsService implements OnModuleInit {
     });
   }
 
-  /** Used by sales/purchases before posting a CREDIT document. */
-  async assertCustomerWithinLimit(customerId: string, additionalAmount: number) {
+  /** Used by sales before posting a CREDIT document. */
+  async assertCustomerWithinLimit(
+    customerId: string,
+    additionalAmount: number,
+    options?: { excludeCreditId?: string },
+  ) {
     const customer = await this.dataSource
       .getRepository(Customer)
       .findOne({ where: { id: customerId } });
-    if (!customer?.creditLimit) return;
+    if (!customer) throw new NotFoundException('Customer not found');
+
+    if (customer.creditLimit == null || customer.creditLimit === '') {
+      throw new BadRequestException(
+        'Customer has no credit limit configured. Set a credit limit before recording credit sales.',
+      );
+    }
+
     const limit = parseFloat(customer.creditLimit);
-    const raw = await this.customerCreditRepo
+    if (!(limit > 0)) {
+      throw new BadRequestException(
+        'Customer credit limit must be greater than zero to record credit sales.',
+      );
+    }
+
+    const qb = this.customerCreditRepo
       .createQueryBuilder('credit')
       .select('COALESCE(SUM(credit.balance::numeric), 0)', 'outstanding')
       .where('credit.customer_id = :customerId', { customerId })
-      .andWhere('credit.status != :paid', { paid: CreditStatus.PAID })
-      .getRawOne<{ outstanding: string }>();
+      .andWhere('credit.status != :paid', { paid: CreditStatus.PAID });
+
+    if (options?.excludeCreditId) {
+      qb.andWhere('credit.id != :excludeId', {
+        excludeId: options.excludeCreditId,
+      });
+    }
+
+    const raw = await qb.getRawOne<{ outstanding: string }>();
     const outstanding = parseFloat(raw?.outstanding ?? '0');
     if (outstanding + additionalAmount > limit + 1e-6) {
+      const available = Math.max(0, limit - outstanding);
       throw new BadRequestException(
-        `Credit limit exceeded for customer (limit Br ${limit.toFixed(2)}, open Br ${outstanding.toFixed(2)}, this sale Br ${additionalAmount.toFixed(2)})`,
+        `Credit limit reached for ${customer.name}. Limit Br ${limit.toFixed(2)}, outstanding Br ${outstanding.toFixed(2)}, available Br ${available.toFixed(2)}; this sale Br ${additionalAmount.toFixed(2)}.`,
       );
     }
   }
 
-  async assertSupplierWithinLimit(supplierId: string, additionalAmount: number) {
-    const supplier = await this.dataSource
-      .getRepository(Supplier)
-      .findOne({ where: { id: supplierId } });
-    if (!supplier?.creditLimit) return;
-    const limit = parseFloat(supplier.creditLimit);
-    const raw = await this.supplierCreditRepo
-      .createQueryBuilder('credit')
-      .select('COALESCE(SUM(credit.balance::numeric), 0)', 'outstanding')
-      .where('credit.supplier_id = :supplierId', { supplierId })
-      .andWhere('credit.status != :paid', { paid: CreditStatus.PAID })
-      .getRawOne<{ outstanding: string }>();
-    const outstanding = parseFloat(raw?.outstanding ?? '0');
-    if (outstanding + additionalAmount > limit + 1e-6) {
-      throw new BadRequestException(
-        `Payable credit limit exceeded for supplier (limit Br ${limit.toFixed(2)}, open Br ${outstanding.toFixed(2)}, this purchase Br ${additionalAmount.toFixed(2)})`,
-      );
-    }
+  async assertSupplierWithinLimit(
+    _supplierId: string,
+    _additionalAmount: number,
+  ) {
+    // Payable credit limits were removed from supplier profiles.
+    return;
   }
 }

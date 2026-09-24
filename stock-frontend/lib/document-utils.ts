@@ -15,6 +15,19 @@ export function creditHasPayments(credit?: LinkedCredit): boolean {
   return !Number.isNaN(paid) && paid > 0;
 }
 
+/** Lock structural edits when further credit payments exist (not the initial partial deposit). */
+export function purchaseNotesOnly(purchase?: {
+  hasCreditPayments?: boolean;
+  paymentMethod?: PaymentMethod;
+  credit?: LinkedCredit;
+  supplierCredit?: LinkedCredit;
+}): boolean {
+  if (!purchase) return false;
+  if (purchase.hasCreditPayments) return true;
+  if (purchase.paymentMethod === "PARTIAL") return false;
+  return creditHasPayments(purchase.credit ?? purchase.supplierCredit);
+}
+
 export function creditBalance(record: {
   balance?: string;
   amount: string;
@@ -29,5 +42,25 @@ export function creditBalance(record: {
 }
 
 export function needsBankAccount(method: PaymentMethod): boolean {
-  return method === "CASH" || method === "BANK";
+  return method === "CASH" || method === "BANK" || method === "PARTIAL";
+}
+
+export function createsPurchaseCredit(method: PaymentMethod): boolean {
+  return method === "CREDIT" || method === "PARTIAL";
+}
+
+export function paymentMethodLabel(method?: PaymentMethod | string | null): string {
+  if (!method) return "—";
+  switch (method) {
+    case "CASH":
+      return "Cash";
+    case "BANK":
+      return "Bank transfer";
+    case "CREDIT":
+      return "Credit";
+    case "PARTIAL":
+      return "Partially paid";
+    default:
+      return String(method).replace(/_/g, " ");
+  }
 }

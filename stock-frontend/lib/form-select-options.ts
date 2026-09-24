@@ -3,8 +3,9 @@ import type { SearchOption } from "@/components/shared/search-select";
 
 export const PAYMENT_METHOD_OPTIONS: SearchOption[] = [
   { value: "CASH", label: "Cash" },
-  { value: "BANK", label: "Bank" },
+  { value: "BANK", label: "Bank transfer" },
   { value: "CREDIT", label: "Credit" },
+  { value: "PARTIAL", label: "Partially paid" },
 ];
 
 export const COMMISSION_BASIS_OPTIONS: SearchOption[] = [

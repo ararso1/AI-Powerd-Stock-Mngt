@@ -28,10 +28,19 @@ export function QuickCustomerDialog({
   const [phone, setPhone] = useState("");
   const [email, setEmail] = useState("");
   const [address, setAddress] = useState("");
+  const [creditLimit, setCreditLimit] = useState("");
   const [saving, setSaving] = useState(false);
 
   function openDialog() {
     setOpen(true);
+  }
+
+  function reset() {
+    setName("");
+    setPhone("");
+    setEmail("");
+    setAddress("");
+    setCreditLimit("");
   }
 
   async function handleSubmit() {
@@ -41,6 +50,7 @@ export function QuickCustomerDialog({
     }
     setSaving(true);
     try {
+      const limit = creditLimit.trim();
       const customer = await api<Customer>("/customers", {
         method: "POST",
         body: {
@@ -48,14 +58,12 @@ export function QuickCustomerDialog({
           phone: phone || undefined,
           email: email || undefined,
           address: address || undefined,
+          creditLimit: limit !== "" ? Number(limit) : undefined,
         },
       });
       toast.success("Customer created");
       setOpen(false);
-      setName("");
-      setPhone("");
-      setEmail("");
-      setAddress("");
+      reset();
       onCreated(customer);
     } catch (err) {
       toast.error(errorMessage(err));
@@ -80,7 +88,11 @@ export function QuickCustomerDialog({
             <FrappeButtonSecondary type="button" onClick={() => setOpen(false)}>
               Cancel
             </FrappeButtonSecondary>
-            <FrappeButtonPrimary type="button" disabled={saving} onClick={handleSubmit}>
+            <FrappeButtonPrimary
+              type="button"
+              disabled={saving}
+              onClick={handleSubmit}
+            >
               Create
             </FrappeButtonPrimary>
           </>
@@ -113,6 +125,18 @@ export function QuickCustomerDialog({
               type="email"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
+            />
+          </div>
+          <div className="grid gap-2">
+            <Label htmlFor="customer-credit-limit">Credit limit (ETB)</Label>
+            <Input
+              id="customer-credit-limit"
+              type="number"
+              min={0}
+              step="0.01"
+              value={creditLimit}
+              onChange={(e) => setCreditLimit(e.target.value)}
+              placeholder="Required for credit sales"
             />
           </div>
           <div className="grid gap-2">

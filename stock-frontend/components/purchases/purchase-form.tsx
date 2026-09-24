@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { QuickSupplierDialog } from "@/components/suppliers/quick-supplier-dialog";
@@ -26,7 +26,12 @@ import {
 import { api } from "@/lib/api";
 import { apiList } from "@/lib/list-response";
 import { fetchInventoryForLocation } from "@/lib/inventory-fetch";
-import { creditHasPayments, needsBankAccount } from "@/lib/document-utils";
+import {
+  createsPurchaseCredit,
+  needsBankAccount,
+  purchaseNotesOnly,
+} from "@/lib/document-utils";
+import { formatMoney } from "@/lib/format";
 import {
   bankAccountSelectOptions,
   bankAccountsUrl,
@@ -40,7 +45,14 @@ import {
   onPaymentMethodChange,
   useAutoPaymentAccount,
 } from "@/hooks/use-payment-bank-account";
-import { buildItemOptionMap, itemOptionsFromMap, parseDocumentLines, productItemId, resolveItem, type DocumentLineBody } from "@/lib/inventory-items";
+import {
+  buildItemOptionMap,
+  itemOptionsFromMap,
+  parseDocumentLines,
+  productItemId,
+  resolveItem,
+  type DocumentLineBody,
+} from "@/lib/inventory-items";
 import { errorMessage } from "@/lib/format";
 import { PAYMENT_METHOD_OPTIONS } from "@/lib/form-select-options";
 import { fetchSuppliers, partySelectOptions } from "@/lib/party-fetch";
@@ -81,10 +93,17 @@ function linesFromPurchase(purchase: Purchase): LineRow[] {
     : [{ itemId: "", quantity: "1", unitPrice: "" }];
 }
 
+function lineTotal(row: LineRow): number {
+  const qty = parseFloat(row.quantity);
+  const rate = parseFloat(row.unitPrice);
+  if (Number.isNaN(qty) || Number.isNaN(rate)) return 0;
+  return qty * rate;
+}
+
 export function PurchaseForm({ purchase }: { purchase?: Purchase }) {
   const router = useRouter();
   const isEdit = !!purchase?.id;
-  const notesOnly = isEdit && creditHasPayments(purchase?.supplierCredit);
+  const notesOnly = isEdit && purchaseNotesOnly(purchase);
 
   const [supplierId, setSupplierId] = useState(purchase?.supplierId ?? "");
   const [locationId, setLocationId] = useState(purchase?.locationId ?? "");
@@ -94,8 +113,17 @@ export function PurchaseForm({ purchase }: { purchase?: Purchase }) {
   const [bankAccountId, setBankAccountId] = useState(
     purchase?.bankAccountId ?? ""
   );
+  const [amountPaid, setAmountPaid] = useState(() => {
+    if (purchase?.paymentMethod === "PARTIAL" && purchase.paidAmount) {
+      return String(Number(purchase.paidAmount));
+    }
+    return "";
+  });
   const [creditDueDate, setCreditDueDate] = useState(
-    purchase?.creditDueDate?.slice(0, 10) ?? ""
+    purchase?.creditDueDate?.slice(0, 10) ??
+      purchase?.credit?.dueDate?.slice(0, 10) ??
+      purchase?.supplierCredit?.dueDate?.slice(0, 10) ??
+      ""
   );
   const [notes, setNotes] = useState(purchase?.notes ?? "");
   const [lines, setLines] = useState<LineRow[]>(() =>
@@ -162,6 +190,22 @@ export function PurchaseForm({ purchase }: { purchase?: Purchase }) {
     purchase?.supplier
   );
 
+  const purchaseTotal = useMemo(
+    () => lines.reduce((sum, row) => sum + lineTotal(row), 0),
+    [lines]
+  );
+
+  const paidPreview = useMemo(() => {
+    if (paymentMethod === "CREDIT") return 0;
+    if (paymentMethod === "CASH" || paymentMethod === "BANK") {
+      return purchaseTotal;
+    }
+    const paid = parseFloat(amountPaid);
+    return Number.isNaN(paid) ? 0 : paid;
+  }, [paymentMethod, purchaseTotal, amountPaid]);
+
+  const creditPreview = Math.max(0, purchaseTotal - paidPreview);
+
   const dataLoading =
     (suppliers === null && suppliersLoading) ||
     (locations === null && locationsLoading) ||
@@ -203,6 +247,11 @@ export function PurchaseForm({ purchase }: { purchase?: Purchase }) {
     );
   }
 
+  function handlePaymentMethodChange(method: PaymentMethod) {
+    onPaymentMethodChange(method, setPaymentMethod, setBankAccountId);
+    if (method !== "PARTIAL") setAmountPaid("");
+  }
+
   function buildBody(documentLines: DocumentLineBody[]): Record<string, unknown> {
     const body: Record<string, unknown> = {
       supplierId,
@@ -218,7 +267,11 @@ export function PurchaseForm({ purchase }: { purchase?: Purchase }) {
         bankAccountId
       );
     }
-    if (paymentMethod === "CREDIT" && creditDueDate) {
+    if (paymentMethod === "PARTIAL") {
+      const paid = parseFloat(amountPaid);
+      body.amountPaid = paid;
+    }
+    if (createsPurchaseCredit(paymentMethod) && creditDueDate) {
       body.creditDueDate = creditDueDate;
     }
     return body;
@@ -239,6 +292,19 @@ export function PurchaseForm({ purchase }: { purchase?: Purchase }) {
     if (bankError) {
       toast.error(bankError);
       return;
+    }
+    if (paymentMethod === "PARTIAL") {
+      const paid = parseFloat(amountPaid);
+      if (Number.isNaN(paid) || paid <= 0) {
+        toast.error("Enter the amount paid now");
+        return;
+      }
+      if (!(paid < purchaseTotal)) {
+        toast.error(
+          "Partial payment must be less than the total (use Bank transfer for full payment)"
+        );
+        return;
+      }
     }
     let body: Record<string, unknown>;
     if (notesOnly) {
@@ -297,7 +363,7 @@ export function PurchaseForm({ purchase }: { purchase?: Purchase }) {
 
       {notesOnly ? (
         <div className="mb-4 rounded border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
-          Supplier credit has payments — only notes can be changed.
+          Supplier credit has additional payments — only notes can be changed.
         </div>
       ) : null}
 
@@ -348,11 +414,7 @@ export function PurchaseForm({ purchase }: { purchase?: Purchase }) {
               <SearchSelect
                 value={paymentMethod}
                 onValueChange={(v) =>
-                  onPaymentMethodChange(
-                    v as PaymentMethod,
-                    setPaymentMethod,
-                    setBankAccountId
-                  )
+                  handlePaymentMethodChange(v as PaymentMethod)
                 }
                 options={PAYMENT_METHOD_OPTIONS}
                 searchPlaceholder="Search payment method…"
@@ -385,7 +447,7 @@ export function PurchaseForm({ purchase }: { purchase?: Purchase }) {
                 }
                 disabled={notesOnly}
               />
-            ) : paymentMethod === "CREDIT" ? (
+            ) : createsPurchaseCredit(paymentMethod) ? (
               <FrappeField label="Credit due date">
                 <Input
                   type="date"
@@ -397,6 +459,34 @@ export function PurchaseForm({ purchase }: { purchase?: Purchase }) {
             ) : (
               <div className="hidden md:block" />
             )}
+            {paymentMethod === "PARTIAL" ? (
+              <>
+                <FrappeField
+                  label="Amount paid now"
+                  required={!notesOnly}
+                  hint="Remaining balance is recorded as supplier credit"
+                >
+                  <Input
+                    type="number"
+                    min="0.01"
+                    step="0.01"
+                    value={amountPaid}
+                    onChange={(e) => setAmountPaid(e.target.value)}
+                    placeholder="0.00"
+                    disabled={notesOnly}
+                    required={!notesOnly}
+                  />
+                </FrappeField>
+                <FrappeField label="Credit due date">
+                  <Input
+                    type="date"
+                    value={creditDueDate}
+                    onChange={(e) => setCreditDueDate(e.target.value)}
+                    disabled={notesOnly}
+                  />
+                </FrappeField>
+              </>
+            ) : null}
             <FrappeField label="Notes" fullWidth>
               <Input
                 value={notes}
@@ -499,6 +589,46 @@ export function PurchaseForm({ purchase }: { purchase?: Purchase }) {
             </FrappeGridTable>
           </FrappeSection>
         ) : null}
+
+        <FrappeSection title="Totals" description="Calculated from lines and payment method">
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            <div className="rounded border border-[var(--frappe-border)] p-3">
+              <p className="text-xs text-[var(--frappe-text-muted)]">
+                Total purchase
+              </p>
+              <p className="mt-1 text-lg font-semibold tabular-nums">
+                {formatMoney(purchaseTotal.toFixed(2))}
+              </p>
+            </div>
+            <div className="rounded border border-[var(--frappe-border)] p-3">
+              <p className="text-xs text-[var(--frappe-text-muted)]">
+                Amount paid
+              </p>
+              <p className="mt-1 text-lg font-semibold tabular-nums">
+                {formatMoney(paidPreview.toFixed(2))}
+              </p>
+            </div>
+            <div className="rounded border border-[var(--frappe-border)] p-3">
+              <p className="text-xs text-[var(--frappe-text-muted)]">
+                Credit / outstanding
+              </p>
+              <p className="mt-1 text-lg font-semibold tabular-nums">
+                {formatMoney(creditPreview.toFixed(2))}
+              </p>
+            </div>
+            <div className="rounded border border-[var(--frappe-border)] p-3">
+              <p className="text-xs text-[var(--frappe-text-muted)]">
+                Payment account
+              </p>
+              <p className="mt-1 text-sm font-medium">
+                {paymentMethod === "CREDIT"
+                  ? "Supplier credit"
+                  : banks?.find((b) => b.id === bankAccountId)?.name ??
+                    (needsBankAccount(paymentMethod) ? "Select account" : "—")}
+              </p>
+            </div>
+          </div>
+        </FrappeSection>
       </FrappeDocument>
     </form>
   );

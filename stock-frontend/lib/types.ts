@@ -8,7 +8,7 @@ export type LocationType =
   | "DRY_MILL"
   | "ROASTERY"
   | "EXPORT_STAGING";
-export type PaymentMethod = "CASH" | "BANK" | "CREDIT";
+export type PaymentMethod = "CASH" | "BANK" | "CREDIT" | "PARTIAL";
 export type BankAccountType = "CASH" | "BANK";
 export type BankTransactionType =
   | "SALE"
@@ -70,6 +70,7 @@ export interface InventoryListTotals {
 export interface PurchaseListTotals {
   subtotal: string;
   total: string;
+  paidAmount?: string;
 }
 
 export interface SaleListTotals {
@@ -176,25 +177,171 @@ export interface StockAdjustment {
   createdAt?: string;
 }
 
+export type SupplierType =
+  | "SUPPLIER"
+  | "FARMER"
+  | "COOPERATIVE"
+  | "COLLECTOR"
+  | "UNION"
+  | "TRADER"
+  | "PROCESSOR"
+  | "OTHER";
+
+export type SupplierDocumentKind =
+  | "ID"
+  | "AGREEMENT"
+  | "BUSINESS_LICENSE"
+  | "OTHER";
+
+export interface SupplierDocument {
+  id: string;
+  supplierId: string;
+  kind: SupplierDocumentKind;
+  title: string;
+  originalName: string;
+  mimeType: string;
+  sizeBytes: number;
+  uploadedById?: string | null;
+  createdAt: string;
+  downloadPath: string;
+}
+
+export interface SupplierBankAccountInfo {
+  id: string;
+  supplierId: string;
+  bankName: string;
+  accountHolderName: string;
+  accountNumber: string;
+  sortOrder?: number;
+}
+
 export interface Supplier {
   id: string;
   name: string;
-  phone?: string;
-  email?: string;
-  address?: string;
-  creditLimit?: string | null;
+  supplierType?: SupplierType;
+  contactPerson?: string | null;
+  phone?: string | null;
+  alternatePhone?: string | null;
+  email?: string | null;
+  address?: string | null;
+  region?: string | null;
+  zone?: string | null;
+  woreda?: string | null;
+  kebele?: string | null;
+  organizationName?: string | null;
+  tinNumber?: string | null;
+  licenseNumber?: string | null;
+  licenseExpiry?: string | null;
+  notes?: string | null;
   isActive?: boolean;
+  bankAccounts?: SupplierBankAccountInfo[];
+  documents?: SupplierDocument[];
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export type CustomerDocumentKind = "AGENT_AGREEMENT" | "OTHER";
+
+export interface CustomerDocument {
+  id: string;
+  customerId: string;
+  kind: CustomerDocumentKind;
+  title: string;
+  originalName: string;
+  mimeType: string;
+  sizeBytes: number;
+  uploadedById?: string | null;
+  createdAt: string;
+  downloadPath: string;
 }
 
 export interface Customer {
   id: string;
   name: string;
   customerType?: CustomerType;
-  phone?: string;
-  email?: string;
-  address?: string;
+  contactPerson?: string | null;
+  phone?: string | null;
+  alternatePhone?: string | null;
+  email?: string | null;
+  address?: string | null;
+  city?: string | null;
+  region?: string | null;
+  organizationName?: string | null;
+  tinNumber?: string | null;
+  notes?: string | null;
   creditLimit?: string | null;
   isActive?: boolean;
+  documents?: CustomerDocument[];
+  createdAt?: string;
+  updatedAt?: string;
+  credit?: CustomerCreditProfile;
+}
+
+export interface CustomerCreditAgingBucket {
+  key: string;
+  label: string;
+  risk?: string | null;
+  count: number;
+  balance: string;
+}
+
+export interface CustomerCreditLine {
+  id: string;
+  customerId: string;
+  saleId: string;
+  amount: string;
+  paidAmount: string;
+  balance: string;
+  status: string;
+  dueDate?: string | null;
+  createdAt?: string;
+  isOverdue?: boolean;
+  daysOverdue?: number | null;
+  agingDays?: number;
+  agingKey?: string;
+  agingLabel?: string;
+  agingRisk?: string;
+  sale?: { id: string; createdAt?: string; total?: string } | null;
+  saleDate?: string;
+}
+
+export interface CustomerCreditPayment {
+  id: string;
+  date: string;
+  amount: string;
+  direction?: string;
+  type?: string;
+  description?: string | null;
+  creditId?: string;
+  saleId?: string;
+  bankAccount?: { id: string; name: string } | null;
+}
+
+export interface CustomerCreditProfile {
+  customerId: string;
+  customerName: string;
+  creditLimit: string | null;
+  invoiceTotal: string;
+  paidTotal: string;
+  outstanding: string;
+  overdue: string;
+  openCount: number;
+  availableCredit: string | null;
+  overLimit: boolean;
+  credits?: CustomerCreditLine[];
+  openCredits?: CustomerCreditLine[];
+  payments?: CustomerCreditPayment[];
+  aging?: {
+    totalOutstanding: string;
+    buckets: CustomerCreditAgingBucket[];
+  };
+  alerts?: {
+    overdueCount: number;
+    highlyCriticalCount: number;
+    highlyCriticalBalance: string;
+    highRiskCount: number;
+    highRiskBalance: string;
+  };
 }
 
 export interface BankAccount {
@@ -290,6 +437,7 @@ export interface CreditPaymentHistoryItem {
 export interface CreditAgingBucket {
   key: string;
   label: string;
+  risk?: string | null;
   count: number;
   balance: string;
 }
@@ -436,6 +584,8 @@ export interface DashboardData {
       totalPurchases: string;
       localSalesValue: string;
       exportSalesValue: string;
+      localSalesVolumeKg?: string;
+      exportSalesVolumeKg?: string;
       salesVolumeKg: string;
       salesValue: string;
       chart: Array<{ label: string; value: number }>;
@@ -489,6 +639,111 @@ export interface DashboardData {
   }>;
 }
 
+export interface LocalDashboardData {
+  channel: "LOCAL";
+  currency?: Currency;
+  asOf?: string;
+  period?: { from?: string | null; to?: string | null };
+  totalInventoryValue: string;
+  stockValueByLocation: DashboardData["stockValueByLocation"];
+  showroomCount: number;
+  dailySales: string;
+  dailyPurchases: string;
+  profitAndLoss: DashboardData["profitAndLoss"];
+  financialOverview: DashboardData["financialOverview"];
+  pulse: {
+    intakeKgToday: string;
+    processWipKg: string;
+    processWipRuns: number;
+    roastOutputKgToday: string;
+    localSalesToday: string;
+    roastedStockKg: string;
+    openAlerts: number;
+    greenStockKg: string;
+  } | null;
+  traceability?: DashboardData["traceability"];
+  commercial: {
+    localRevenue: string;
+    customerCreditOutstanding: string;
+    supplierCreditOutstanding: string;
+    totalLiquidity: string;
+  } | null;
+  analytics: {
+    inventory: {
+      totalStockKg: string;
+      stockValue: string;
+      availableKg: string;
+      reservedKg: string;
+      lowStockItems: number;
+    };
+    trading: {
+      totalPurchases: string;
+      localSalesValue: string;
+      salesVolumeKg: string;
+      salesValue: string;
+      chart: Array<{ label: string; value: number }>;
+    };
+    quality: NonNullable<DashboardData["analytics"]>["quality"];
+    finance: NonNullable<DashboardData["analytics"]>["finance"];
+    production: NonNullable<DashboardData["analytics"]>["production"];
+  } | null;
+  recommendations?: DashboardData["recommendations"];
+  executiveInsights?: DashboardData["executiveInsights"];
+  links?: DashboardData["links"];
+}
+
+export interface ExportDashboardData {
+  channel: "EXPORT";
+  currency?: Currency;
+  asOf?: string;
+  period?: { from?: string | null; to?: string | null };
+  totalInventoryValue: string;
+  stockValueByLocation: DashboardData["stockValueByLocation"];
+  dailySales: string;
+  profitAndLoss: DashboardData["profitAndLoss"];
+  financialOverview: DashboardData["financialOverview"];
+  pulse: {
+    greenStockKg: string;
+    exportStagedKg: string;
+    openAlerts: number;
+    exportSalesToday: string;
+  } | null;
+  contracts?: DashboardData["contracts"];
+  pipeline?: {
+    byStatus: Record<
+      string,
+      { count: number; volumeKg: string; allocatedKg: string; shippedKg: string }
+    >;
+    chart: Array<{ label: string; value: number; kg: number }>;
+  };
+  commercial: {
+    exportRevenue: string;
+    customerCreditOutstanding: string;
+    totalLiquidity: string;
+    outstandingExportPayments: string;
+  } | null;
+  analytics: {
+    inventory: {
+      totalStockKg: string;
+      stockValue: string;
+      availableKg: string;
+      reservedKg: string;
+      exportStockKg: string;
+    };
+    trading: {
+      exportSalesValue: string;
+      salesVolumeKg: string;
+      salesValue: string;
+      chart: Array<{ label: string; value: number }>;
+    };
+    export: NonNullable<DashboardData["analytics"]>["export"];
+  } | null;
+  market?: DashboardData["market"];
+  recommendations?: DashboardData["recommendations"];
+  executiveInsights?: DashboardData["executiveInsights"];
+  links?: DashboardData["links"];
+}
+
 export interface ProfitLossItem {
   itemId: string;
   description: string;
@@ -528,6 +783,8 @@ export interface Purchase {
   total?: string;
   paidAmount?: string;
   outstandingAmount?: string;
+  /** True when additional supplier credit payments were posted after create. */
+  hasCreditPayments?: boolean;
   /** @deprecated Prefer `total` */
   totalAmount?: string;
   createdAt?: string;
@@ -977,7 +1234,13 @@ export type ProcessOperationType =
   | "PACK"
   | "OTHER";
 
-export type CustomerType = "RETAIL" | "WHOLESALE" | "CAFE" | "OTHER";
+export type CustomerType =
+  | "NORMAL"
+  | "AGENT"
+  | "RETAIL"
+  | "WHOLESALE"
+  | "CAFE"
+  | "OTHER";
 
 export type StockMovementDirection = "IN" | "OUT";
 

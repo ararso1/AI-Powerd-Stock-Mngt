@@ -7,10 +7,14 @@ import {
   FrappeFormGrid,
   FrappeSection,
   FrappeButtonLink,
+  FrappeButtonPrimary,
 } from "@/components/frappe";
 import { PurchaseDocumentActions } from "@/components/transactions/document-actions";
 import { formatMoney, formatDate, formatQty } from "@/lib/format";
-import { documentTotal } from "@/lib/document-utils";
+import {
+  documentTotal,
+  paymentMethodLabel,
+} from "@/lib/document-utils";
 import type { Purchase, PurchaseLine } from "@/lib/types";
 
 function DetailField({
@@ -54,8 +58,18 @@ function lineAmount(line: PurchaseLine) {
 
 export function PurchaseDetail({ purchase }: { purchase: Purchase }) {
   const lines = purchase.lines ?? [];
-  const paymentLabel = purchase.paymentMethod.replace("_", " ");
+  const paymentLabel = paymentMethodLabel(purchase.paymentMethod);
   const isVoided = purchase.status === "VOIDED";
+  const credit = purchase.credit ?? purchase.supplierCredit;
+  const dueDate =
+    purchase.creditDueDate ?? credit?.dueDate ?? null;
+  const hasCredit =
+    purchase.paymentMethod === "CREDIT" ||
+    purchase.paymentMethod === "PARTIAL";
+  const showsBank =
+    purchase.paymentMethod === "CASH" ||
+    purchase.paymentMethod === "BANK" ||
+    purchase.paymentMethod === "PARTIAL";
 
   return (
     <div className="mx-auto max-w-5xl space-y-4">
@@ -67,6 +81,11 @@ export function PurchaseDetail({ purchase }: { purchase: Purchase }) {
           ) : (
             <Badge variant="outline">{paymentLabel}</Badge>
           )}
+          {credit && credit.status !== "PAID" && !isVoided ? (
+            <FrappeButtonPrimary asChild>
+              <Link href="/credits">Pay outstanding</Link>
+            </FrappeButtonPrimary>
+          ) : null}
           <PurchaseDocumentActions
             purchaseId={purchase.id}
             status={purchase.status}
@@ -87,28 +106,33 @@ export function PurchaseDetail({ purchase }: { purchase: Purchase }) {
             <DetailField
               label="Supplier"
               value={purchase.supplier?.name ?? "—"}
-              href={purchase.supplierId ? `/suppliers` : undefined}
+              href={
+                purchase.supplierId
+                  ? `/suppliers/${purchase.supplierId}`
+                  : undefined
+              }
             />
             <DetailField
               label="Location"
               value={purchase.location?.name ?? "—"}
             />
             <DetailField label="Payment method" value={paymentLabel} />
-            {purchase.paymentMethod !== "CREDIT" ? (
+            {showsBank ? (
               <DetailField
-                label="Bank account"
+                label={
+                  purchase.paymentMethod === "CASH"
+                    ? "Cash till"
+                    : "Payment bank"
+                }
                 value={purchase.bankAccount?.name ?? "—"}
               />
-            ) : (
+            ) : null}
+            {hasCredit ? (
               <DetailField
                 label="Credit due date"
-                value={
-                  purchase.creditDueDate
-                    ? formatDate(purchase.creditDueDate)
-                    : "—"
-                }
+                value={dueDate ? formatDate(dueDate) : "—"}
               />
-            )}
+            ) : null}
             <DetailField
               label="Total amount"
               value={formatMoney(documentTotal(purchase))}
@@ -125,12 +149,15 @@ export function PurchaseDetail({ purchase }: { purchase: Purchase }) {
             <DetailField
               label="Outstanding"
               value={formatMoney(
-                purchase.outstandingAmount ??
-                  purchase.credit?.balance ??
-                  purchase.supplierCredit?.balance ??
-                  "0"
+                purchase.outstandingAmount ?? credit?.balance ?? "0"
               )}
             />
+            {credit ? (
+              <DetailField
+                label="Credit status"
+                value={credit.status ?? "—"}
+              />
+            ) : null}
             <DetailField
               label="Document ID"
               value={

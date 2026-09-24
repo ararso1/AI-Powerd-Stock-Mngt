@@ -4,9 +4,11 @@ import {
   IsArray,
   IsDateString,
   IsEnum,
+  IsNumber,
   IsOptional,
   IsString,
   IsUUID,
+  Min,
   ValidateNested,
 } from 'class-validator';
 import { PaymentMethod } from '../../common/enums';
@@ -28,6 +30,12 @@ export class UpdatePurchaseDto {
   @IsOptional()
   @IsUUID()
   bankAccountId?: string;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0.01)
+  amountPaid?: number;
 
   @IsOptional()
   @IsString()

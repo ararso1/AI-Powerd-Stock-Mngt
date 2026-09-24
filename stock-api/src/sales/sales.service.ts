@@ -441,6 +441,14 @@ export class SalesService {
         0,
       );
 
+      if (paymentMethod === PaymentMethod.CREDIT && customerId) {
+        await this.creditsService.assertCustomerWithinLimit(
+          customerId,
+          subtotal,
+          { excludeCreditId: sale.credit?.id },
+        );
+      }
+
       const oldLocationId = sale.locationId;
       const oldPaymentMethod = sale.paymentMethod;
       const oldBankAccountId = sale.bankAccountId;

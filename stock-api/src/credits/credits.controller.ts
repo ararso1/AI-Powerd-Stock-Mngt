@@ -33,6 +33,12 @@ export class CreditsController {
     return this.service.findSupplierCredits(query);
   }
 
+  @Get('customers/accounts/:customerId/full')
+  @RequirePermissions('credit.read')
+  customerAccountFull(@Param('customerId') customerId: string) {
+    return this.service.customerCreditProfile(customerId);
+  }
+
   @Get('customers/accounts/:customerId')
   @RequirePermissions('credit.read')
   customerAccount(@Param('customerId') customerId: string) {

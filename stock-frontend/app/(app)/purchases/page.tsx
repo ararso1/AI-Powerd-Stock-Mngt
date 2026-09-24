@@ -14,7 +14,7 @@ import { DateRangeFilter } from "@/components/shared/date-range-filter";
 import { ListSearchField } from "@/components/shared/list-search-field";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { formatMoney, formatDate } from "@/lib/format";
-import { documentTotal } from "@/lib/document-utils";
+import { documentTotal, paymentMethodLabel } from "@/lib/document-utils";
 import { buildPurchasesListPath } from "@/lib/list-query";
 import { usePaginatedList } from "@/hooks/use-paginated-list";
 import Link from "next/link";
@@ -33,9 +33,12 @@ type PurchaseRow = Pick<
   | "total"
   | "subtotal"
   | "totalAmount"
+  | "paidAmount"
+  | "outstandingAmount"
   | "createdAt"
   | "supplier"
   | "location"
+  | "bankAccount"
   | "status"
 >;
 
@@ -115,6 +118,14 @@ export default function PurchasesPage() {
               items={[
                 { label: "Subtotal", value: formatMoney(totals.subtotal) },
                 { label: "Total", value: formatMoney(totals.total) },
+                ...(totals.paidAmount != null
+                  ? [
+                      {
+                        label: "Paid",
+                        value: formatMoney(totals.paidAmount),
+                      },
+                    ]
+                  : []),
               ]}
             />
           ) : null}
@@ -173,7 +184,25 @@ export default function PurchasesPage() {
               {
                 key: "payment",
                 header: "Payment",
-                cell: (r) => r.paymentMethod,
+                cell: (r) => paymentMethodLabel(r.paymentMethod),
+              },
+              {
+                key: "paid",
+                header: "Paid",
+                className: "text-right",
+                cell: (r) =>
+                  formatMoney(
+                    r.paidAmount ??
+                      (r.paymentMethod === "CREDIT"
+                        ? "0"
+                        : documentTotal(r))
+                  ),
+              },
+              {
+                key: "outstanding",
+                header: "Outstanding",
+                className: "text-right",
+                cell: (r) => formatMoney(r.outstandingAmount ?? "0"),
               },
               {
                 key: "status",
@@ -187,7 +216,7 @@ export default function PurchasesPage() {
               },
               {
                 key: "total",
-                header: "Amount",
+                header: "Total",
                 className: "text-right",
                 cell: (r) => formatMoney(documentTotal(r)),
               },

@@ -25,4 +25,18 @@ export class DashboardController {
   overview(@Query() query: DashboardQueryDto) {
     return this.service.getOverview(query.from, query.to);
   }
+
+  /** Local roast / domestic market command center. */
+  @Get('local')
+  @RequirePermissions('insights.read', 'dashboard.read')
+  local(@Query() query: DashboardQueryDto) {
+    return this.service.getLocalOverview(query.from, query.to);
+  }
+
+  /** Export / green coffee command center. */
+  @Get('export')
+  @RequirePermissions('insights.read', 'dashboard.read')
+  exportOverview(@Query() query: DashboardQueryDto) {
+    return this.service.getExportOverview(query.from, query.to);
+  }
 }

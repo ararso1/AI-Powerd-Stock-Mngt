@@ -5,10 +5,17 @@ import { useState } from "react";
 import { FrappeButtonPrimary, FrappeButtonSecondary } from "@/components/frappe";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { api } from "@/lib/api";
 import { errorMessage } from "@/lib/format";
-import type { Supplier } from "@/lib/types";
+import { SUPPLIER_TYPE_OPTIONS } from "@/lib/suppliers";
+import type { Supplier, SupplierType } from "@/lib/types";
 import { QuickCreateTrigger } from "@/components/shared/quick-create-trigger";
 import {
   QuickCreateDialogShell,
@@ -26,13 +33,20 @@ export function QuickSupplierDialog({
 }) {
   const { open, setOpen, onOpenChange } = useQuickCreateDialog();
   const [name, setName] = useState("");
+  const [supplierType, setSupplierType] = useState<SupplierType>("SUPPLIER");
+  const [contactPerson, setContactPerson] = useState("");
   const [phone, setPhone] = useState("");
-  const [email, setEmail] = useState("");
-  const [address, setAddress] = useState("");
   const [saving, setSaving] = useState(false);
 
   function openDialog() {
     setOpen(true);
+  }
+
+  function reset() {
+    setName("");
+    setSupplierType("SUPPLIER");
+    setContactPerson("");
+    setPhone("");
   }
 
   async function handleSubmit() {
@@ -46,17 +60,14 @@ export function QuickSupplierDialog({
         method: "POST",
         body: {
           name: name.trim(),
-          phone: phone || undefined,
-          email: email || undefined,
-          address: address || undefined,
+          supplierType,
+          contactPerson: contactPerson.trim() || undefined,
+          phone: phone.trim() || undefined,
         },
       });
       toast.success("Supplier created");
       setOpen(false);
-      setName("");
-      setPhone("");
-      setEmail("");
-      setAddress("");
+      reset();
       onCreated(supplier);
     } catch (err) {
       toast.error(errorMessage(err));
@@ -109,6 +120,32 @@ export function QuickSupplierDialog({
             />
           </div>
           <div className="grid gap-2">
+            <Label>Type</Label>
+            <Select
+              value={supplierType}
+              onValueChange={(v) => setSupplierType(v as SupplierType)}
+            >
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {SUPPLIER_TYPE_OPTIONS.map((o) => (
+                  <SelectItem key={o.value} value={o.value}>
+                    {o.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="grid gap-2">
+            <Label htmlFor="supplier-contact">Contact person</Label>
+            <Input
+              id="supplier-contact"
+              value={contactPerson}
+              onChange={(e) => setContactPerson(e.target.value)}
+            />
+          </div>
+          <div className="grid gap-2">
             <Label htmlFor="supplier-phone">Phone</Label>
             <Input
               id="supplier-phone"
@@ -116,24 +153,9 @@ export function QuickSupplierDialog({
               onChange={(e) => setPhone(e.target.value)}
             />
           </div>
-          <div className="grid gap-2">
-            <Label htmlFor="supplier-email">Email</Label>
-            <Input
-              id="supplier-email"
-              type="email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-            />
-          </div>
-          <div className="grid gap-2">
-            <Label htmlFor="supplier-address">Address</Label>
-            <Textarea
-              id="supplier-address"
-              value={address}
-              onChange={(e) => setAddress(e.target.value)}
-              rows={2}
-            />
-          </div>
+          <p className="text-xs text-[var(--frappe-text-muted)]">
+            Add full profile details and documents from Suppliers after creating.
+          </p>
         </div>
       </QuickCreateDialogShell>
     </>

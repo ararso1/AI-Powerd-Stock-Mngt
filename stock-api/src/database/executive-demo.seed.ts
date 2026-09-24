@@ -164,7 +164,6 @@ export async function seedExecutiveDemo(
     phone?: string;
     email?: string;
     address?: string;
-    creditLimit?: string;
   }) => {
     let s = await supplierRepo.findOne({ where: { name: data.name } });
     if (!s) {
@@ -174,13 +173,9 @@ export async function seedExecutiveDemo(
           phone: data.phone ?? null,
           email: data.email ?? null,
           address: data.address ?? null,
-          creditLimit: data.creditLimit ?? null,
           isActive: true,
         }),
       );
-    } else if (data.creditLimit != null && !s.creditLimit) {
-      s.creditLimit = data.creditLimit;
-      s = await supplierRepo.save(s);
     }
     return s;
   };
@@ -191,7 +186,6 @@ export async function seedExecutiveDemo(
       phone: '+251911100001',
       email: 'aricha@coop.csolve.local',
       address: 'Aricha, Yirgacheffe',
-      creditLimit: '1000000.00',
     }),
     await ensureSupplier({
       name: 'Tigist Smallholder Group',

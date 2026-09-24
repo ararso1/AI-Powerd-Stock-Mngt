@@ -47,7 +47,7 @@ export function bankAccountTypeForPayment(
   method: PaymentMethod
 ): BankAccountType | null {
   if (method === "CASH") return "CASH";
-  if (method === "BANK") return "BANK";
+  if (method === "BANK" || method === "PARTIAL") return "BANK";
   return null;
 }
 
@@ -95,13 +95,14 @@ export function showsPaymentAccountPicker(
   method: PaymentMethod,
   accounts: BankAccount[] | null | undefined
 ): boolean {
-  if (method === "BANK") return true;
+  if (method === "BANK" || method === "PARTIAL") return true;
   if (method === "CASH") return (accounts?.length ?? 0) > 1;
   return false;
 }
 
 export function paymentAccountFieldLabel(method: PaymentMethod): string {
-  return method === "CASH" ? "Cash till" : "Bank account";
+  if (method === "CASH") return "Cash till";
+  return "Bank account";
 }
 
 export function buildBankAccountBody(

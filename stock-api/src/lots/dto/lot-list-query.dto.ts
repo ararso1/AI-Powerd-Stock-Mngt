@@ -8,6 +8,10 @@ export class LotListQueryDto extends DateRangeQueryDto {
   locationId?: string;
 
   @IsOptional()
+  @IsUUID()
+  itemId?: string;
+
+  @IsOptional()
   @IsEnum(CoffeeForm)
   form?: CoffeeForm;
 

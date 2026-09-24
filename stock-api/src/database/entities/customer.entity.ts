@@ -6,6 +6,7 @@ import {
   UpdateDateColumn,
 } from 'typeorm';
 import { CustomerType } from '../../common/enums';
+import { CustomerDocument } from './customer-document.entity';
 import { Sale } from './sale.entity';
 import { UuidBaseEntity } from './uuid-base.entity';
 
@@ -19,12 +20,23 @@ export class Customer extends UuidBaseEntity {
     type: 'enum',
     enum: CustomerType,
     enumName: 'customers_customer_type_enum',
-    default: CustomerType.RETAIL,
+    default: CustomerType.NORMAL,
   })
   customerType: CustomerType;
 
+  @Column({ name: 'contact_person', type: 'varchar', length: 120, nullable: true })
+  contactPerson: string | null;
+
   @Column({ type: 'varchar', length: 50, nullable: true })
   phone: string | null;
+
+  @Column({
+    name: 'alternate_phone',
+    type: 'varchar',
+    length: 50,
+    nullable: true,
+  })
+  alternatePhone: string | null;
 
   @Column({ type: 'varchar', length: 150, nullable: true })
   email: string | null;
@@ -32,10 +44,30 @@ export class Customer extends UuidBaseEntity {
   @Column({ type: 'text', nullable: true })
   address: string | null;
 
+  @Column({ type: 'varchar', length: 120, nullable: true })
+  city: string | null;
+
+  @Column({ type: 'varchar', length: 120, nullable: true })
+  region: string | null;
+
+  @Column({
+    name: 'organization_name',
+    type: 'varchar',
+    length: 200,
+    nullable: true,
+  })
+  organizationName: string | null;
+
+  @Column({ name: 'tin_number', type: 'varchar', length: 40, nullable: true })
+  tinNumber: string | null;
+
+  @Column({ type: 'text', nullable: true })
+  notes: string | null;
+
   @Column({ name: 'is_active', default: true })
   isActive: boolean;
 
-  /** Max open receivable (ETB). Null = no limit. */
+  /** Max open receivable (ETB). Null = no credit sales allowed until set. */
   @Column({
     name: 'credit_limit',
     type: 'decimal',
@@ -47,6 +79,9 @@ export class Customer extends UuidBaseEntity {
 
   @OneToMany(() => Sale, (sale) => sale.customer)
   sales: Sale[];
+
+  @OneToMany(() => CustomerDocument, (doc) => doc.customer)
+  documents: CustomerDocument[];
 
   @CreateDateColumn({ name: 'created_at' })
   createdAt: Date;

@@ -158,6 +158,14 @@ export class BanksService {
         'BANK payments must use a bank account (accountType BANK), not the Cash till',
       );
     }
+    if (
+      paymentMethod === PaymentMethod.PARTIAL &&
+      account.accountType !== BankAccountType.BANK
+    ) {
+      throw new BadRequestException(
+        'Partially paid purchases must use a bank account (accountType BANK)',
+      );
+    }
 
     return account;
   }

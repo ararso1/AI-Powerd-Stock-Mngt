@@ -41,7 +41,18 @@ import { buildListPath, type ListQueryParams } from "@/lib/list-query";
 import { errorMessage } from "@/lib/format";
 import { usePaginatedList } from "@/hooks/use-paginated-list";
 import { toast } from "sonner";
-import { PencilIcon, PlusIcon } from "lucide-react";
+import { PencilIcon, PlusIcon, Trash2Icon } from "lucide-react";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
 
 export interface MasterField {
   name: string;
@@ -62,6 +73,7 @@ export function MasterDataPage<
   columns,
   emptyDescription,
   supportsActive = false,
+  supportsDelete = false,
   listParams,
   filterExtras,
 }: {
@@ -73,6 +85,7 @@ export function MasterDataPage<
   columns: { key: string; header: string; cell: (row: T) => React.ReactNode }[];
   emptyDescription?: string;
   supportsActive?: boolean;
+  supportsDelete?: boolean;
   listParams?: ListQueryParams;
   filterExtras?: React.ReactNode;
 }) {
@@ -98,17 +111,27 @@ export function MasterDataPage<
     {
       key: "actions",
       header: "",
-      className: "w-20 text-right",
+      className: "w-24 text-right",
       cell: (row: T) => (
         <PermissionGate permission={writePermission}>
-          <EditDialog
-            title={title}
-            endpoint={endpoint}
-            fields={fields}
-            row={row}
-            supportsActive={supportsActive}
-            onSuccess={reload}
-          />
+          <div className="flex items-center justify-end gap-0.5">
+            <EditDialog
+              title={title}
+              endpoint={endpoint}
+              fields={fields}
+              row={row}
+              supportsActive={supportsActive}
+              onSuccess={reload}
+            />
+            {supportsDelete ? (
+              <DeleteButton
+                title={title}
+                endpoint={endpoint}
+                row={row}
+                onSuccess={reload}
+              />
+            ) : null}
+          </div>
         </PermissionGate>
       ),
     },
@@ -278,6 +301,70 @@ function rowToValues<T extends { id: string; isActive?: boolean }>(
   }
   if ("isActive" in row) values.isActive = row.isActive !== false;
   return values;
+}
+
+function DeleteButton<T extends { id: string; name: string; isActive?: boolean }>({
+  title,
+  endpoint,
+  row,
+  onSuccess,
+}: {
+  title: string;
+  endpoint: string;
+  row: T;
+  onSuccess: () => void;
+}) {
+  const [deleting, setDeleting] = useState(false);
+  const singular = title.endsWith("s") ? title.slice(0, -1) : title;
+
+  async function handleDelete() {
+    setDeleting(true);
+    try {
+      await api(`${endpoint}/${row.id}`, { method: "DELETE" });
+      toast.success(`${row.name} deactivated`);
+      onSuccess();
+    } catch (err) {
+      toast.error(errorMessage(err));
+    } finally {
+      setDeleting(false);
+    }
+  }
+
+  return (
+    <AlertDialog>
+      <AlertDialogTrigger asChild>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          className="size-8 text-destructive"
+          disabled={deleting || row.isActive === false}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <Trash2Icon className="size-4" />
+          <span className="sr-only">Delete</span>
+        </Button>
+      </AlertDialogTrigger>
+      <AlertDialogContent onClick={(e) => e.stopPropagation()}>
+        <AlertDialogHeader>
+          <AlertDialogTitle>Delete {singular.toLowerCase()}?</AlertDialogTitle>
+          <AlertDialogDescription>
+            “{row.name}” will be marked inactive and hidden from the default
+            list. You can show it again with Include inactive.
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel>Cancel</AlertDialogCancel>
+          <AlertDialogAction
+            disabled={deleting}
+            onClick={() => void handleDelete()}
+          >
+            {deleting ? "Deleting…" : "Delete"}
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+  );
 }
 
 function CreateDialog({

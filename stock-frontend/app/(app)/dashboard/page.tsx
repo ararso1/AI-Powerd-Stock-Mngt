@@ -8,7 +8,7 @@ export default function DashboardPage() {
   return (
     <AppShell
       title="Dashboard"
-      subtitle="AI insights + analytical KPIs across inventory, trading, quality, finance, production, and export"
+      subtitle="Local roast, export contracts, and import — channel-specific KPIs and analytics"
       layout="default"
       breadcrumbs={[{ label: "Overview" }, { label: "Dashboard" }]}
     >

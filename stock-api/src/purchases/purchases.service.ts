@@ -4,12 +4,13 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
-import { DataSource, Repository } from 'typeorm';
+import { DataSource, EntityManager, Repository } from 'typeorm';
 import {
   BankTransactionType,
   CreditStatus,
   DocumentStatus,
   PaymentMethod,
+  StockMovementSourceType,
 } from '../common/enums';
 import {
   applyDateRangeToQb,
@@ -20,6 +21,7 @@ import {
 import { PurchaseListQueryDto } from './dto/purchase-list-query.dto';
 import { BankLedgerService } from '../banks/bank-ledger.service';
 import { BanksService } from '../banks/banks.service';
+import { BankTransaction } from '../database/entities/bank-transaction.entity';
 import { PurchaseLine } from '../database/entities/purchase-line.entity';
 import { Purchase } from '../database/entities/purchase.entity';
 import { SupplierCredit } from '../database/entities/supplier-credit.entity';
@@ -52,6 +54,10 @@ export class PurchasesService {
           sql: 'COALESCE(SUM(purchase.subtotal::numeric), 0)',
         },
         { key: 'total', sql: 'COALESCE(SUM(purchase.total::numeric), 0)' },
+        {
+          key: 'paidAmount',
+          sql: 'COALESCE(SUM(purchase.paid_amount::numeric), 0)',
+        },
       ]),
       paginatedQueryBuilder(
         filteredQb
@@ -61,13 +67,18 @@ export class PurchasesService {
           .leftJoinAndSelect('purchase.lines', 'lines')
           .leftJoinAndSelect('lines.item', 'item')
           .leftJoinAndSelect('purchase.credit', 'credit')
+          .leftJoinAndSelect('purchase.bankAccount', 'bankAccount')
           .orderBy('purchase.created_at', 'DESC'),
         query.page,
         query.limit,
       ),
     ]);
 
-    return { ...page, totals };
+    return {
+      ...page,
+      data: page.data.map((p) => this.serializeListRow(p)),
+      totals,
+    };
   }
 
   private buildPurchaseFilterQb(query: PurchaseListQueryDto) {
@@ -118,17 +129,48 @@ export class PurchasesService {
       },
     });
     if (!purchase) throw new NotFoundException('Purchase not found');
+    const hasCreditPayments = purchase.credit
+      ? await this.hasSubsequentCreditPayments(purchase.credit.id)
+      : false;
+    return this.serialize(purchase, hasCreditPayments);
+  }
+
+  private serializeListRow(purchase: Purchase) {
     const total = parseFloat(purchase.total);
     const paid = parseFloat(purchase.paidAmount ?? '0');
-    const creditBalance = purchase.credit
-      ? parseFloat(purchase.credit.balance)
-      : Math.max(0, total - paid);
-    const outstanding =
-      purchase.paymentMethod === PaymentMethod.CREDIT ? creditBalance : 0;
+    const outstanding = this.outstandingFor(purchase, total, paid);
     return {
       ...purchase,
       outstandingAmount: outstanding.toFixed(2),
+      creditDueDate: purchase.credit?.dueDate ?? null,
+      supplierCredit: purchase.credit ?? null,
     };
+  }
+
+  private serialize(purchase: Purchase, hasCreditPayments: boolean) {
+    const total = parseFloat(purchase.total);
+    const paid = parseFloat(purchase.paidAmount ?? '0');
+    const outstanding = this.outstandingFor(purchase, total, paid);
+    return {
+      ...purchase,
+      outstandingAmount: outstanding.toFixed(2),
+      creditDueDate: purchase.credit?.dueDate ?? null,
+      supplierCredit: purchase.credit ?? null,
+      hasCreditPayments,
+    };
+  }
+
+  private outstandingFor(purchase: Purchase, total: number, paid: number) {
+    if (
+      purchase.paymentMethod === PaymentMethod.CREDIT ||
+      purchase.paymentMethod === PaymentMethod.PARTIAL
+    ) {
+      if (purchase.credit) {
+        return parseFloat(purchase.credit.balance);
+      }
+      return Math.max(0, total - paid);
+    }
+    return 0;
   }
 
   private isNotesOnlyUpdate(dto: UpdatePurchaseDto): boolean {
@@ -150,13 +192,85 @@ export class PurchasesService {
     }));
   }
 
+  /** Cash, bank transfer, or partial deposit — posts a bank ledger outflow. */
   private paysViaBank(method: PaymentMethod): boolean {
-    return method === PaymentMethod.BANK || method === PaymentMethod.CASH;
+    return (
+      method === PaymentMethod.BANK ||
+      method === PaymentMethod.CASH ||
+      method === PaymentMethod.PARTIAL
+    );
+  }
+
+  private createsSupplierCredit(method: PaymentMethod): boolean {
+    return (
+      method === PaymentMethod.CREDIT || method === PaymentMethod.PARTIAL
+    );
+  }
+
+  private resolveAmountPaid(
+    method: PaymentMethod,
+    total: number,
+    amountPaid?: number,
+  ): number {
+    if (method === PaymentMethod.CREDIT) return 0;
+    if (method === PaymentMethod.CASH || method === PaymentMethod.BANK) {
+      return total;
+    }
+    if (method === PaymentMethod.PARTIAL) {
+      if (amountPaid === undefined || amountPaid === null) {
+        throw new BadRequestException(
+          'amountPaid is required for partially paid purchases',
+        );
+      }
+      if (!(amountPaid > 0) || !(amountPaid < total)) {
+        throw new BadRequestException(
+          'amountPaid must be greater than 0 and less than the purchase total',
+        );
+      }
+      return amountPaid;
+    }
+    return total;
+  }
+
+  private async hasSubsequentCreditPayments(
+    creditId: string,
+    manager?: EntityManager,
+  ): Promise<boolean> {
+    const repo = manager
+      ? manager.getRepository(BankTransaction)
+      : this.dataSource.getRepository(BankTransaction);
+    const count = await repo.count({
+      where: { refType: 'supplier_credit_payment', refId: creditId },
+    });
+    return count > 0;
+  }
+
+  private assertBankAccountRequired(
+    method: PaymentMethod,
+    bankAccountId: string | null | undefined,
+  ) {
+    if (this.paysViaBank(method) && !bankAccountId) {
+      throw new BadRequestException(
+        method === PaymentMethod.CASH
+          ? 'bankAccountId (cash till) required for CASH payments'
+          : 'bankAccountId required for bank transfer and partially paid purchases',
+      );
+    }
+  }
+
+  private stockMeta(purchaseId: string, userId?: string) {
+    return {
+      sourceType: StockMovementSourceType.PURCHASE,
+      referenceType: 'purchase',
+      referenceId: purchaseId,
+      createdById: userId ?? null,
+    };
   }
 
   async update(id: string, dto: UpdatePurchaseDto, userId?: string) {
     if (this.isNotesOnlyUpdate(dto)) {
-      const purchase = await this.findOne(id);
+      const purchase = await this.purchaseRepo.findOne({ where: { id } });
+      if (!purchase) throw new NotFoundException('Purchase not found');
       if (purchase.status === DocumentStatus.VOIDED) {
         throw new BadRequestException('Cannot update a voided purchase');
       }
@@ -185,8 +299,11 @@ export class PurchasesService {
       }
 
       if (purchase.credit) {
-        const paid = parseFloat(purchase.credit.paidAmount);
-        if (paid > 0) {
+        const locked = await this.hasSubsequentCreditPayments(
+          purchase.credit.id,
+          manager,
+        );
+        if (locked) {
           throw new BadRequestException(
             'Cannot change purchase after supplier credit payments; only notes may be updated',
           );
@@ -208,11 +325,7 @@ export class PurchasesService {
           : (purchase.credit?.dueDate ?? undefined);
       const lines = this.resolveLines(purchase, dto);
 
-      if (this.paysViaBank(paymentMethod) && !bankAccountId) {
-        throw new BadRequestException(
-          'bankAccountId required for BANK and CASH payments',
-        );
-      }
+      this.assertBankAccountRequired(paymentMethod, bankAccountId);
       if (this.paysViaBank(paymentMethod) && bankAccountId) {
         await this.banksService.assertPaymentAccount(
           paymentMethod,
@@ -225,6 +338,15 @@ export class PurchasesService {
         (sum, l) => sum + l.quantity * l.unitPrice,
         0,
       );
+      const amountPaid = this.resolveAmountPaid(
+        paymentMethod,
+        subtotal,
+        dto.amountPaid !== undefined
+          ? dto.amountPaid
+          : paymentMethod === PaymentMethod.PARTIAL
+            ? parseFloat(purchase.paidAmount)
+            : undefined,
+      );
 
       const oldLocationId = purchase.locationId;
       const oldPaymentMethod = purchase.paymentMethod;
@@ -236,6 +358,10 @@ export class PurchasesService {
             locationId: oldLocationId,
             itemId: line.itemId,
             quantityDelta: -parseFloat(line.quantity),
+            meta: {
+              ...this.stockMeta(purchase.id, userId),
+              notes: 'Purchase adjustment (reverse)',
+            },
           },
           manager,
         );
@@ -263,6 +389,7 @@ export class PurchasesService {
       purchase.bankAccountId = bankAccountId ?? null;
       purchase.subtotal = subtotal.toFixed(2);
       purchase.total = subtotal.toFixed(2);
+      purchase.paidAmount = amountPaid.toFixed(2);
       purchase.notes = notes;
       purchase.lines = lines.map((l) => {
         const lineTotal = l.quantity * l.unitPrice;
@@ -283,19 +410,23 @@ export class PurchasesService {
             itemId: line.itemId,
             quantityDelta: line.quantity,
             purchasePrice: line.unitPrice,
+            meta: this.stockMeta(purchase.id, userId),
           },
           manager,
         );
       }
 
-      if (this.paysViaBank(paymentMethod) && bankAccountId) {
+      if (this.paysViaBank(paymentMethod) && bankAccountId && amountPaid > 0) {
         await this.bankLedger.recordTransaction(
           {
             bankAccountId,
             type: BankTransactionType.PURCHASE,
-            amount: subtotal,
+            amount: amountPaid,
             direction: 'out',
-            description: `Purchase ${purchase.id}`,
+            description:
+              paymentMethod === PaymentMethod.PARTIAL
+                ? `Purchase ${purchase.id} (partial payment)`
+                : `Purchase ${purchase.id}`,
             refType: 'purchase',
             refId: purchase.id,
             createdById: userId,
@@ -304,15 +435,21 @@ export class PurchasesService {
         );
       }
 
-      if (paymentMethod === PaymentMethod.CREDIT) {
+      if (this.createsSupplierCredit(paymentMethod)) {
+        const balance = Math.max(0, subtotal - amountPaid);
         await creditRepo.save(
           creditRepo.create({
             supplierId,
             purchaseId: purchase.id,
             amount: subtotal.toFixed(2),
-            paidAmount: '0',
-            balance: subtotal.toFixed(2),
-            status: CreditStatus.OPEN,
+            paidAmount: amountPaid.toFixed(2),
+            balance: balance.toFixed(2),
+            status:
+              balance <= 0
+                ? CreditStatus.PAID
+                : amountPaid > 0
+                  ? CreditStatus.PARTIAL
+                  : CreditStatus.OPEN,
             dueDate: creditDueDate ?? null,
           }),
         );
@@ -337,10 +474,13 @@ export class PurchasesService {
       }
 
       if (purchase.credit) {
-        const paid = parseFloat(purchase.credit.paidAmount);
-        if (paid > 0) {
+        const locked = await this.hasSubsequentCreditPayments(
+          purchase.credit.id,
+          manager,
+        );
+        if (locked) {
           throw new BadRequestException(
-            'Cannot void purchase with supplier credit payments applied',
+            'Cannot void purchase with additional supplier credit payments applied',
           );
         }
         await creditRepo.remove(purchase.credit);
@@ -352,15 +492,16 @@ export class PurchasesService {
             locationId: purchase.locationId,
             itemId: line.itemId,
             quantityDelta: -parseFloat(line.quantity),
+            meta: {
+              ...this.stockMeta(purchase.id, userId),
+              notes: 'Purchase void',
+            },
           },
           manager,
         );
       }
 
-      const needsBank =
-        purchase.paymentMethod === PaymentMethod.BANK ||
-        purchase.paymentMethod === PaymentMethod.CASH;
-      if (needsBank && purchase.bankAccountId) {
+      if (this.paysViaBank(purchase.paymentMethod) && purchase.bankAccountId) {
         await this.bankLedger.reverseByReference(
           'purchase',
           purchase.id,
@@ -379,29 +520,30 @@ export class PurchasesService {
   }
 
   async create(dto: CreatePurchaseDto, userId?: string) {
-    const needsBank =
-      dto.paymentMethod === PaymentMethod.BANK ||
-      dto.paymentMethod === PaymentMethod.CASH;
-    if (needsBank && !dto.bankAccountId) {
-      throw new BadRequestException(
-        'bankAccountId required for BANK and CASH payments',
-      );
-    }
+    this.assertBankAccountRequired(dto.paymentMethod, dto.bankAccountId);
 
     const subtotal = dto.lines.reduce(
       (sum, l) => sum + l.quantity * l.unitPrice,
       0,
     );
+    const amountPaid = this.resolveAmountPaid(
+      dto.paymentMethod,
+      subtotal,
+      dto.amountPaid,
+    );
 
-    if (dto.paymentMethod === PaymentMethod.CREDIT) {
-      await this.creditsService.assertSupplierWithinLimit(
-        dto.supplierId,
-        subtotal,
-      );
+    if (this.createsSupplierCredit(dto.paymentMethod)) {
+      const creditPortion = subtotal - amountPaid;
+      if (creditPortion > 0) {
+        await this.creditsService.assertSupplierWithinLimit(
+          dto.supplierId,
+          creditPortion,
+        );
+      }
     }
 
     const purchaseId = await this.dataSource.transaction(async (manager) => {
-      if (needsBank && dto.bankAccountId) {
+      if (this.paysViaBank(dto.paymentMethod) && dto.bankAccountId) {
         await this.banksService.assertPaymentAccount(
           dto.paymentMethod,
           dto.bankAccountId,
@@ -430,10 +572,7 @@ export class PurchasesService {
           bankAccountId: dto.bankAccountId ?? null,
           subtotal: subtotal.toFixed(2),
           total: subtotal.toFixed(2),
-          paidAmount:
-            dto.paymentMethod === PaymentMethod.CREDIT
-              ? '0.00'
-              : subtotal.toFixed(2),
+          paidAmount: amountPaid.toFixed(2),
           notes: dto.notes ?? null,
           status: DocumentStatus.ACTIVE,
           createdById: userId ?? null,
@@ -448,19 +587,27 @@ export class PurchasesService {
             itemId: line.itemId,
             quantityDelta: line.quantity,
             purchasePrice: line.unitPrice,
+            meta: this.stockMeta(purchase.id, userId),
           },
           manager,
         );
       }
 
-      if (needsBank && dto.bankAccountId) {
+      if (
+        this.paysViaBank(dto.paymentMethod) &&
+        dto.bankAccountId &&
+        amountPaid > 0
+      ) {
         await this.bankLedger.recordTransaction(
           {
             bankAccountId: dto.bankAccountId,
             type: BankTransactionType.PURCHASE,
-            amount: subtotal,
+            amount: amountPaid,
             direction: 'out',
-            description: `Purchase ${purchase.id}`,
+            description:
+              dto.paymentMethod === PaymentMethod.PARTIAL
+                ? `Purchase ${purchase.id} (partial payment)`
+                : `Purchase ${purchase.id}`,
             refType: 'purchase',
             refId: purchase.id,
             createdById: userId,
@@ -469,15 +616,21 @@ export class PurchasesService {
         );
       }
 
-      if (dto.paymentMethod === PaymentMethod.CREDIT) {
+      if (this.createsSupplierCredit(dto.paymentMethod)) {
+        const balance = Math.max(0, subtotal - amountPaid);
         await creditRepo.save(
           creditRepo.create({
             supplierId: dto.supplierId,
             purchaseId: purchase.id,
             amount: subtotal.toFixed(2),
-            paidAmount: '0',
-            balance: subtotal.toFixed(2),
-            status: CreditStatus.OPEN,
+            paidAmount: amountPaid.toFixed(2),
+            balance: balance.toFixed(2),
+            status:
+              balance <= 0
+                ? CreditStatus.PAID
+                : amountPaid > 0
+                  ? CreditStatus.PARTIAL
+                  : CreditStatus.OPEN,
             dueDate: dto.creditDueDate ?? null,
           }),
         );

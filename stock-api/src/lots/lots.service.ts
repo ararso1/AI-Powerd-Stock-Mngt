@@ -66,6 +66,9 @@ export class LotsService {
         locationId: query.locationId,
       });
     }
+    if (query.itemId) {
+      qb.andWhere('lot.item_id = :itemId', { itemId: query.itemId });
+    }
     if (query.form) {
       qb.andWhere('lot.form = :form', { form: query.form });
     }
@@ -136,6 +139,7 @@ export class LotsService {
           variety: dto.variety ?? null,
           processMethod: dto.processMethod ?? null,
           region: dto.region ?? null,
+          zone: dto.zone ?? null,
           woreda: dto.woreda ?? null,
           kebele: dto.kebele ?? null,
           moisturePercent:

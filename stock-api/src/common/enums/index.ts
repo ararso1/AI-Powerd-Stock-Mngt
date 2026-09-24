@@ -30,9 +30,37 @@ export enum ProcessOperationType {
 
 /** Domestic customer segment. */
 export enum CustomerType {
+  NORMAL = 'NORMAL',
+  AGENT = 'AGENT',
   RETAIL = 'RETAIL',
   WHOLESALE = 'WHOLESALE',
   CAFE = 'CAFE',
+  OTHER = 'OTHER',
+}
+
+/** Uploaded customer document category. */
+export enum CustomerDocumentKind {
+  AGENT_AGREEMENT = 'AGENT_AGREEMENT',
+  OTHER = 'OTHER',
+}
+
+/** Coffee procurement supplier classification. */
+export enum SupplierType {
+  SUPPLIER = 'SUPPLIER',
+  FARMER = 'FARMER',
+  COOPERATIVE = 'COOPERATIVE',
+  COLLECTOR = 'COLLECTOR',
+  UNION = 'UNION',
+  TRADER = 'TRADER',
+  PROCESSOR = 'PROCESSOR',
+  OTHER = 'OTHER',
+}
+
+/** Uploaded supplier document category. */
+export enum SupplierDocumentKind {
+  ID = 'ID',
+  AGREEMENT = 'AGREEMENT',
+  BUSINESS_LICENSE = 'BUSINESS_LICENSE',
   OTHER = 'OTHER',
 }
 
@@ -123,6 +151,8 @@ export enum PaymentMethod {
   CASH = 'CASH',
   BANK = 'BANK',
   CREDIT = 'CREDIT',
+  /** Deposit now via bank; remainder tracked as supplier credit. */
+  PARTIAL = 'PARTIAL',
 }
 
 /** Ledger account: physical cash till vs real bank account. */

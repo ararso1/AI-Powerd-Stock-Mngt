@@ -460,7 +460,16 @@ function AgingPanel({
           <tbody>
             {side.buckets.map((b) => (
               <tr key={b.key}>
-                <td>{b.label}</td>
+                <td>
+                  <div>
+                    <p>{b.label}</p>
+                    {"risk" in b && b.risk ? (
+                      <p className="text-xs text-[var(--frappe-text-muted)]">
+                        {String(b.risk)}
+                      </p>
+                    ) : null}
+                  </div>
+                </td>
                 <td className="text-right tabular-nums">{b.count}</td>
                 <td className="text-right tabular-nums">
                   {formatMoney(b.balance)}

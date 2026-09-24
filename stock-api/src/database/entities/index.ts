@@ -8,11 +8,15 @@ export { StockLevel } from './stock-level.entity';
 export { StockTransfer } from './stock-transfer.entity';
 export { StockTransferLine } from './stock-transfer-line.entity';
 export { Supplier } from './supplier.entity';
+export { SupplierDocument } from './supplier-document.entity';
+export { SupplierBankAccount } from './supplier-bank-account.entity';
 export { Customer } from './customer.entity';
+export { CustomerDocument } from './customer-document.entity';
 export { BankAccount } from './bank-account.entity';
 export { BankTransaction } from './bank-transaction.entity';
 export { Purchase } from './purchase.entity';
 export { PurchaseLine } from './purchase-line.entity';
+export { PurchaseQualityResult } from './purchase-quality-result.entity';
 export { Sale } from './sale.entity';
 export { SaleLine } from './sale-line.entity';
 export { CustomerCredit } from './customer-credit.entity';
@@ -54,11 +58,15 @@ import { StockLevel } from './stock-level.entity';
 import { StockTransfer } from './stock-transfer.entity';
 import { StockTransferLine } from './stock-transfer-line.entity';
 import { Supplier } from './supplier.entity';
+import { SupplierDocument } from './supplier-document.entity';
+import { SupplierBankAccount } from './supplier-bank-account.entity';
 import { Customer } from './customer.entity';
+import { CustomerDocument } from './customer-document.entity';
 import { BankAccount } from './bank-account.entity';
 import { BankTransaction } from './bank-transaction.entity';
 import { Purchase } from './purchase.entity';
 import { PurchaseLine } from './purchase-line.entity';
+import { PurchaseQualityResult } from './purchase-quality-result.entity';
 import { Sale } from './sale.entity';
 import { SaleLine } from './sale-line.entity';
 import { CustomerCredit } from './customer-credit.entity';
@@ -101,11 +109,15 @@ export const entities = [
   StockTransfer,
   StockTransferLine,
   Supplier,
+  SupplierDocument,
+  SupplierBankAccount,
   Customer,
+  CustomerDocument,
   BankAccount,
   BankTransaction,
   Purchase,
   PurchaseLine,
+  PurchaseQualityResult,
   Sale,
   SaleLine,
   SaleReturn,

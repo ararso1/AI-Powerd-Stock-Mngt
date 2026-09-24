@@ -129,3 +129,46 @@ export async function api<T>(
   if (!text) return undefined as T;
   return JSON.parse(text) as T;
 }
+
+/** Authenticated binary download (PDFs/images). Returns blob + filename hint. */
+export async function apiBlob(
+  path: string,
+  init: Omit<ApiRequestInit, "body"> = {}
+): Promise<{ blob: Blob; filename: string | null }> {
+  const { auth = true, headers: initHeaders, ...rest } = init;
+  const headers = new Headers(initHeaders);
+
+  if (auth) {
+    const token = getAccessToken();
+    if (token) headers.set("Authorization", `Bearer ${token}`);
+  }
+
+  const url = path.startsWith("http") ? path : `${API_BASE}${path}`;
+  let res = await fetch(url, { ...rest, headers });
+
+  if (res.status === 401 && auth) {
+    const newToken = await refreshAccessToken();
+    if (newToken) {
+      headers.set("Authorization", `Bearer ${newToken}`);
+      res = await fetch(url, { ...rest, headers });
+    }
+  }
+
+  if (!res.ok) {
+    let message = res.statusText;
+    try {
+      const data = (await res.json()) as ApiError;
+      message = parseErrorMessage(data);
+    } catch {
+      /* ignore */
+    }
+    throw new Error(message);
+  }
+
+  const disposition = res.headers.get("Content-Disposition");
+  let filename: string | null = null;
+  const match = disposition?.match(/filename="?([^"]+)"?/i);
+  if (match?.[1]) filename = match[1];
+
+  return { blob: await res.blob(), filename };
+}

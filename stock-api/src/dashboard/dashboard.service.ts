@@ -3,7 +3,6 @@ import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
 import { In, Repository } from 'typeorm';
 import { getAppCurrency } from '../common/utils/currency.util';
-import { parseDateRange } from '../common/dto/date-range.dto';
 import { applyDateRangeToQb } from '../common/utils/query.util';
 import {
   CoffeeForm,
@@ -82,12 +81,326 @@ export class DashboardService {
     private readonly notificationRepo: Repository<Notification>,
   ) {}
 
+  /**
+   * Local roast / domestic market dashboard.
+   * Intake → process → roast → local sales, quality, production, domestic finance.
+   */
+  async getLocalOverview(from?: string, to?: string) {
+    const overview = await this.getOverview(from, to);
+    const fromIso = overview.period?.from ?? from ?? undefined;
+    const toIso = overview.period?.to ?? to ?? undefined;
+    const localPnl = await this.computeProfitSummary(
+      fromIso ?? undefined,
+      toIso ?? undefined,
+      SaleChannel.LOCAL,
+    );
+
+    const roastedStock = await this.lotRepo
+      .createQueryBuilder('lot')
+      .select('COALESCE(SUM(lot.quantity::numeric), 0)', 'kg')
+      .where('lot.form IN (:...forms)', {
+        forms: [CoffeeForm.ROASTED, CoffeeForm.PACKAGED, CoffeeForm.FLOUR],
+      })
+      .andWhere('lot.status = :status', { status: LotStatus.ACTIVE })
+      .getRawOne<{ kg: string }>();
+
+    const localCodes = new Set([
+      'SHRINKAGE',
+      'MOISTURE_RISK',
+      'LOT_LINK',
+    ]);
+    const recommendations = (overview.recommendations ?? []).filter((r) =>
+      localCodes.has(r.code),
+    );
+    const executiveInsights = (overview.executiveInsights ?? []).filter(
+      (c) =>
+        c.category === 'Stock' ||
+        c.category === 'Credit' ||
+        c.category === 'Quality' ||
+        c.href.includes('/sales') ||
+        c.href.includes('/collections') ||
+        c.href.includes('/process') ||
+        c.href.includes('/credits') ||
+        c.href.includes('/inventory') ||
+        c.href.includes('/lots'),
+    ).filter((c) => c.category !== 'Export' && c.id !== 'exec-profit-mix');
+
+    // Prefer a local-channel profit insight when we have local margin.
+    const localGross = parseFloat(localPnl.grossProfit);
+    if (localGross !== 0) {
+      executiveInsights.unshift({
+        id: 'local-profit',
+        tone: localGross >= 0 ? 'profit' : 'warn',
+        category: 'Profit',
+        title: `Local channel gross profit is ${localGross.toLocaleString()} ETB for the period.`,
+        detail: `Revenue ${localPnl.revenue} · COGS ${localPnl.costOfGoodsSold}`,
+        href: '/sales?channel=LOCAL',
+      });
+    }
+
+    const analytics = overview.analytics;
+    return {
+      channel: 'LOCAL' as const,
+      currency: overview.currency,
+      asOf: overview.asOf,
+      period: overview.period,
+      totalInventoryValue: overview.totalInventoryValue,
+      stockValueByLocation: overview.stockValueByLocation,
+      showroomCount: overview.showroomCount,
+      dailySales: overview.pulse?.localSalesToday ?? overview.dailySales,
+      dailyPurchases: overview.dailyPurchases,
+      profitAndLoss: localPnl,
+      financialOverview: overview.financialOverview,
+      pulse: overview.pulse
+        ? {
+            intakeKgToday: overview.pulse.intakeKgToday,
+            processWipKg: overview.pulse.processWipKg,
+            processWipRuns: overview.pulse.processWipRuns,
+            roastOutputKgToday: overview.pulse.roastOutputKgToday,
+            localSalesToday: overview.pulse.localSalesToday,
+            roastedStockKg: parseFloat(roastedStock?.kg ?? '0').toFixed(3),
+            openAlerts: overview.pulse.openAlerts,
+            greenStockKg: overview.pulse.greenStockKg,
+          }
+        : null,
+      traceability: overview.traceability,
+      commercial: overview.commercial
+        ? {
+            localRevenue: overview.commercial.localRevenue,
+            customerCreditOutstanding:
+              overview.commercial.customerCreditOutstanding,
+            supplierCreditOutstanding:
+              overview.commercial.supplierCreditOutstanding,
+            totalLiquidity: overview.commercial.totalLiquidity,
+          }
+        : null,
+      analytics: analytics
+        ? {
+            inventory: {
+              totalStockKg: analytics.inventory.totalStockKg,
+              stockValue: analytics.inventory.stockValue,
+              availableKg: analytics.inventory.availableKg,
+              reservedKg: analytics.inventory.reservedKg,
+              lowStockItems: analytics.inventory.lowStockItems,
+            },
+            trading: {
+              totalPurchases: analytics.trading.totalPurchases,
+              localSalesValue: analytics.trading.localSalesValue,
+              salesVolumeKg: analytics.trading.localSalesVolumeKg,
+              salesValue: analytics.trading.localSalesValue,
+              chart: [
+                {
+                  label: 'Local sales',
+                  value: Number(analytics.trading.localSalesValue),
+                },
+                {
+                  label: 'Purchases',
+                  value: Number(analytics.trading.totalPurchases),
+                },
+              ],
+            },
+            quality: analytics.quality,
+            finance: analytics.finance,
+            production: analytics.production,
+          }
+        : null,
+      recommendations: recommendations.slice(0, 12),
+      executiveInsights: executiveInsights.slice(0, 6),
+      links: {
+        collectionsToday: overview.links?.collectionsToday,
+        processWip: overview.links?.processWip,
+        greenLots: overview.links?.greenLots,
+        qcHoldLots: overview.links?.qcHoldLots,
+        localSales: overview.links?.localSales,
+        unlinkedInventory: overview.links?.unlinkedInventory,
+        notifications: overview.links?.notifications,
+        reports: overview.links?.reports,
+        profitLoss: overview.links?.profitLoss,
+        insights: overview.links?.insights,
+        credits: overview.links?.credits,
+      },
+    };
+  }
+
+  /**
+   * Export / green coffee dashboard.
+   * Green stock → contracts → allocate/stage/ship → market & FX.
+   */
+  async getExportOverview(from?: string, to?: string) {
+    const overview = await this.getOverview(from, to);
+    const fromIso = overview.period?.from ?? from ?? undefined;
+    const toIso = overview.period?.to ?? to ?? undefined;
+    const exportPnl = await this.computeProfitSummary(
+      fromIso ?? undefined,
+      toIso ?? undefined,
+      SaleChannel.EXPORT,
+    );
+    const pipeline = await this.buildExportPipeline();
+
+    const exportCodes = new Set([
+      'SHIP_WINDOW',
+      'MISSING_DOCS',
+      'ALLOCATE_TO_CONTRACT',
+      'MOISTURE_RISK',
+    ]);
+    const recommendations = (overview.recommendations ?? []).filter((r) =>
+      exportCodes.has(r.code),
+    );
+    const executiveInsights = (overview.executiveInsights ?? []).filter(
+      (c) =>
+        c.category === 'Export' ||
+        c.category === 'Profit' ||
+        c.category === 'Stock' ||
+        c.href.includes('/exports') ||
+        c.href.includes('/market'),
+    );
+
+    const exportGross = parseFloat(exportPnl.grossProfit);
+    if (exportGross !== 0) {
+      executiveInsights.unshift({
+        id: 'export-profit',
+        tone: exportGross >= 0 ? 'profit' : 'warn',
+        category: 'Profit',
+        title: `Export channel gross profit is ${exportGross.toLocaleString()} ETB for the period.`,
+        detail: `Revenue ${exportPnl.revenue} · COGS ${exportPnl.costOfGoodsSold}`,
+        href: '/exports',
+      });
+    }
+
+    const analytics = overview.analytics;
+    const exportSalesQb = this.saleRepo
+      .createQueryBuilder('s')
+      .select('COALESCE(SUM(s.total::numeric), 0)', 'total')
+      .where('s.status = :status', { status: DocumentStatus.ACTIVE })
+      .andWhere('s.channel = :channel', { channel: SaleChannel.EXPORT });
+    applyDateRangeToQb(exportSalesQb, 's.created_at', fromIso, toIso);
+    const exportSalesPeriod = await exportSalesQb.getRawOne<{ total: string }>();
+
+    return {
+      channel: 'EXPORT' as const,
+      currency: overview.currency,
+      asOf: overview.asOf,
+      period: overview.period,
+      totalInventoryValue: overview.totalInventoryValue,
+      stockValueByLocation: overview.stockValueByLocation,
+      dailySales: parseFloat(exportSalesPeriod?.total ?? '0').toFixed(2),
+      profitAndLoss: exportPnl,
+      financialOverview: overview.financialOverview,
+      pulse: overview.pulse
+        ? {
+            greenStockKg: overview.pulse.greenStockKg,
+            exportStagedKg: overview.pulse.exportStagedKg,
+            openAlerts: overview.pulse.openAlerts,
+            exportSalesToday: parseFloat(
+              exportSalesPeriod?.total ?? '0',
+            ).toFixed(2),
+          }
+        : null,
+      contracts: overview.contracts,
+      pipeline,
+      commercial: overview.commercial
+        ? {
+            exportRevenue: overview.commercial.exportRevenue,
+            customerCreditOutstanding:
+              overview.commercial.customerCreditOutstanding,
+            totalLiquidity: overview.commercial.totalLiquidity,
+            outstandingExportPayments:
+              analytics?.export.outstandingExportPayments ?? '0.00',
+          }
+        : null,
+      analytics: analytics
+        ? {
+            inventory: {
+              totalStockKg: analytics.inventory.totalStockKg,
+              stockValue: analytics.inventory.stockValue,
+              availableKg: analytics.inventory.availableKg,
+              reservedKg: analytics.inventory.reservedKg,
+              exportStockKg: analytics.inventory.exportStockKg,
+            },
+            trading: {
+              exportSalesValue: analytics.trading.exportSalesValue,
+              salesVolumeKg: analytics.trading.exportSalesVolumeKg,
+              salesValue: analytics.trading.exportSalesValue,
+              chart: [
+                {
+                  label: 'Export sales',
+                  value: Number(analytics.trading.exportSalesValue),
+                },
+                {
+                  label: 'Shipped value',
+                  value: Number(analytics.export.exportValue),
+                },
+              ],
+            },
+            export: analytics.export,
+          }
+        : null,
+      market: overview.market,
+      recommendations: recommendations.slice(0, 12),
+      executiveInsights: executiveInsights.slice(0, 6),
+      links: {
+        greenLots: overview.links?.greenLots,
+        exportStaged: overview.links?.exportStaged,
+        openContracts: overview.links?.openContracts,
+        notifications: overview.links?.notifications,
+        reports: overview.links?.reports,
+        profitLoss: overview.links?.profitLoss,
+        insights: overview.links?.insights,
+        credits: overview.links?.credits,
+        marketPrices: overview.links?.marketPrices,
+      },
+    };
+  }
+
+  private async buildExportPipeline() {
+    const rows = await this.exportRepo
+      .createQueryBuilder('c')
+      .select('c.status', 'status')
+      .addSelect('COUNT(*)', 'count')
+      .addSelect('COALESCE(SUM(c.volume_kg::numeric), 0)', 'volumeKg')
+      .addSelect('COALESCE(SUM(c.allocated_kg::numeric), 0)', 'allocatedKg')
+      .addSelect('COALESCE(SUM(c.shipped_kg::numeric), 0)', 'shippedKg')
+      .groupBy('c.status')
+      .getRawMany<{
+        status: string;
+        count: string;
+        volumeKg: string;
+        allocatedKg: string;
+        shippedKg: string;
+      }>();
+
+    const byStatus: Record<
+      string,
+      { count: number; volumeKg: string; allocatedKg: string; shippedKg: string }
+    > = {};
+    for (const r of rows) {
+      byStatus[r.status] = {
+        count: parseInt(r.count, 10),
+        volumeKg: parseFloat(r.volumeKg).toFixed(3),
+        allocatedKg: parseFloat(r.allocatedKg).toFixed(3),
+        shippedKg: parseFloat(r.shippedKg).toFixed(3),
+      };
+    }
+
+    const chart = [
+      ExportContractStatus.DRAFT,
+      ExportContractStatus.ALLOCATED,
+      ExportContractStatus.STAGED,
+      ExportContractStatus.SHIPPED,
+      ExportContractStatus.DELIVERED,
+      ExportContractStatus.CLOSED,
+    ].map((status) => ({
+      label: status,
+      value: byStatus[status]?.count ?? 0,
+      kg: Number(byStatus[status]?.volumeKg ?? 0),
+    }));
+
+    return { byStatus, chart };
+  }
+
   async getOverview(from?: string, to?: string) {
-    const period = parseDateRange(from, to);
     const today = new Date();
     today.setHours(0, 0, 0, 0);
-    const tomorrow = new Date(today);
-    tomorrow.setDate(tomorrow.getDate() + 1);
     const todayStr = today.toISOString().slice(0, 10);
 
     const stocks = await this.stockRepo.find({
@@ -122,27 +435,18 @@ export class DashboardService {
     const dailySalesQb = this.saleRepo
       .createQueryBuilder('s')
       .select('COALESCE(SUM(s.total::numeric), 0)', 'total')
-      .where('s.created_at >= :start AND s.created_at < :end', {
-        start: today,
-        end: tomorrow,
-      })
-      .andWhere('s.status = :status', { status: DocumentStatus.ACTIVE });
+      .where('s.status = :status', { status: DocumentStatus.ACTIVE });
+    applyDateRangeToQb(dailySalesQb, 's.created_at', from, to);
     const dailySales = await dailySalesQb.getRawOne<{ total: string }>();
 
-    const dailyPurchases = await this.purchaseRepo
+    const dailyPurchasesQb = this.purchaseRepo
       .createQueryBuilder('p')
       .select('COALESCE(SUM(p.total::numeric), 0)', 'total')
-      .where('p.created_at >= :start AND p.created_at < :end', {
-        start: today,
-        end: tomorrow,
-      })
-      .andWhere('p.status = :status', { status: DocumentStatus.ACTIVE })
-      .getRawOne<{ total: string }>();
+      .where('p.status = :status', { status: DocumentStatus.ACTIVE });
+    applyDateRangeToQb(dailyPurchasesQb, 'p.created_at', from, to);
+    const dailyPurchases = await dailyPurchasesQb.getRawOne<{ total: string }>();
 
-    const profitAndLoss = await this.computeProfitSummary(
-      period.start?.toISOString().slice(0, 10),
-      period.end?.toISOString().slice(0, 10),
-    );
+    const profitAndLoss = await this.computeProfitSummary(from, to);
 
     const bankAccounts = await this.bankRepo.find({
       where: { isActive: true },
@@ -155,6 +459,9 @@ export class DashboardService {
       where: { type: LocationType.SHOWROOM, isActive: true },
     });
 
+    const fromIso = from;
+    const toIso = to;
+
     const [
       pulse,
       commercial,
@@ -163,12 +470,8 @@ export class DashboardService {
       shrinkage,
       highMoisture,
     ] = await Promise.all([
-      this.buildPulse(today, tomorrow, todayStr),
-      this.buildCommercial(
-        period.start?.toISOString().slice(0, 10),
-        period.end?.toISOString().slice(0, 10),
-        liquidityTotals.totalLiquidity,
-      ),
+      this.buildPulse(fromIso, toIso),
+      this.buildCommercial(fromIso, toIso, liquidityTotals.totalLiquidity),
       this.buildContracts(today),
       this.lotRepo
         .createQueryBuilder('lot')
@@ -176,12 +479,18 @@ export class DashboardService {
         .addSelect('COALESCE(SUM(lot.quantity::numeric), 0)', 'kg')
         .where('lot.status = :status', { status: LotStatus.HOLD })
         .getRawOne<{ count: string; kg: string }>(),
-      this.processRunRepo.find({
-        where: { status: ProcessRunStatus.COMPLETED },
-        relations: { template: true },
-        order: { completedAt: 'DESC' },
-        take: 40,
-      }),
+      (async () => {
+        const qb = this.processRunRepo
+          .createQueryBuilder('run')
+          .leftJoinAndSelect('run.template', 'template')
+          .where('run.status = :status', {
+            status: ProcessRunStatus.COMPLETED,
+          })
+          .orderBy('run.completed_at', 'DESC')
+          .take(40);
+        applyDateRangeToQb(qb, 'run.completed_at', fromIso, toIso);
+        return qb.getMany();
+      })(),
       this.lotRepo.find({
         where: {
           status: LotStatus.ACTIVE,
@@ -223,8 +532,6 @@ export class DashboardService {
       pulse,
     });
 
-    const fromIso = period.start?.toISOString().slice(0, 10);
-    const toIso = period.end?.toISOString().slice(0, 10);
     const [analytics, executiveInsights, market] = await Promise.all([
       this.buildAnalytics(stocks, fromIso, toIso, todayStr),
       this.buildExecutiveInsights(fromIso, toIso, todayStr, profitAndLoss),
@@ -237,6 +544,16 @@ export class DashboardService {
         return null;
       }),
     ]);
+
+    const collectionsLink =
+      fromIso || toIso
+        ? `/collections?${[
+            fromIso ? `from=${fromIso}` : null,
+            toIso ? `to=${toIso}` : null,
+          ]
+            .filter(Boolean)
+            .join('&')}`
+        : '/collections';
 
     return {
       currency: getAppCurrency(this.config),
@@ -288,7 +605,7 @@ export class DashboardService {
       executiveInsights,
       market,
       links: {
-        collectionsToday: `/collections?from=${todayStr}`,
+        collectionsToday: collectionsLink,
         processWip: '/process-runs?status=IN_PROGRESS',
         greenLots: '/lots?form=GREEN&status=ACTIVE',
         qcHoldLots: '/lots?status=HOLD',
@@ -306,16 +623,13 @@ export class DashboardService {
     };
   }
 
-  private async buildPulse(today: Date, tomorrow: Date, todayStr: string) {
-    const intake = await this.collectionRepo
+  private async buildPulse(from?: string, to?: string) {
+    const intakeQb = this.collectionRepo
       .createQueryBuilder('c')
       .select('COALESCE(SUM(c.weight_kg::numeric), 0)', 'kg')
-      .where('c.created_at >= :start AND c.created_at < :end', {
-        start: today,
-        end: tomorrow,
-      })
-      .andWhere('c.status = :status', { status: DocumentStatus.ACTIVE })
-      .getRawOne<{ kg: string }>();
+      .where('c.status = :status', { status: DocumentStatus.ACTIVE });
+    applyDateRangeToQb(intakeQb, 'c.created_at', from, to);
+    const intake = await intakeQb.getRawOne<{ kg: string }>();
 
     const wipStatuses = [
       ProcessRunStatus.IN_PROGRESS,
@@ -336,25 +650,22 @@ export class DashboardService {
       .andWhere('lot.status = :status', { status: LotStatus.ACTIVE })
       .getRawOne<{ kg: string }>();
 
-    const roastToday = await this.lotRepo
+    const roastQb = this.lotRepo
       .createQueryBuilder('lot')
       .select('COALESCE(SUM(lot.quantity::numeric), 0)', 'kg')
       .where('lot.form IN (:...forms)', {
         forms: [CoffeeForm.ROASTED, CoffeeForm.PACKAGED],
-      })
-      .andWhere('lot.roast_date = :today', { today: todayStr })
-      .getRawOne<{ kg: string }>();
+      });
+    applyDateRangeToQb(roastQb, 'lot.roast_date', from, to);
+    const roastOutput = await roastQb.getRawOne<{ kg: string }>();
 
-    const localSales = await this.saleRepo
+    const localSalesQb = this.saleRepo
       .createQueryBuilder('s')
       .select('COALESCE(SUM(s.total::numeric), 0)', 'total')
-      .where('s.created_at >= :start AND s.created_at < :end', {
-        start: today,
-        end: tomorrow,
-      })
-      .andWhere('s.status = :status', { status: DocumentStatus.ACTIVE })
-      .andWhere('s.channel = :channel', { channel: SaleChannel.LOCAL })
-      .getRawOne<{ total: string }>();
+      .where('s.status = :status', { status: DocumentStatus.ACTIVE })
+      .andWhere('s.channel = :channel', { channel: SaleChannel.LOCAL });
+    applyDateRangeToQb(localSalesQb, 's.created_at', from, to);
+    const localSales = await localSalesQb.getRawOne<{ total: string }>();
 
     const staged = await this.exportRepo
       .createQueryBuilder('c')
@@ -371,7 +682,7 @@ export class DashboardService {
       processWipKg: parseFloat(wip?.kg ?? '0').toFixed(3),
       processWipRuns: parseInt(wip?.runs ?? '0', 10),
       greenStockKg: parseFloat(green?.kg ?? '0').toFixed(3),
-      roastOutputKgToday: parseFloat(roastToday?.kg ?? '0').toFixed(3),
+      roastOutputKgToday: parseFloat(roastOutput?.kg ?? '0').toFixed(3),
       localSalesToday: parseFloat(localSales?.total ?? '0').toFixed(2),
       exportStagedKg: parseFloat(staged?.kg ?? '0').toFixed(3),
       openAlerts,
@@ -605,11 +916,18 @@ export class DashboardService {
       .slice(0, 12);
   }
 
-  private async computeProfitSummary(from?: string, to?: string) {
+  private async computeProfitSummary(
+    from?: string,
+    to?: string,
+    channel?: SaleChannel,
+  ) {
     const saleLinesQb = this.saleLineRepo
       .createQueryBuilder('line')
       .innerJoin('line.sale', 'sale')
       .andWhere('sale.status = :status', { status: DocumentStatus.ACTIVE });
+    if (channel) {
+      saleLinesQb.andWhere('sale.channel = :channel', { channel });
+    }
     applyDateRangeToQb(saleLinesQb, 'sale.created_at', from, to);
     const lines = await saleLinesQb.getMany();
 
@@ -620,13 +938,14 @@ export class DashboardService {
       cost += parseFloat(line.quantity) * parseFloat(line.purchaseCost);
     }
 
-    const expenseQb = this.expenseRepo.createQueryBuilder('expense');
-    applyDateRangeToQb(expenseQb, 'expense.expense_date', from, to);
-    const expenses = await expenseQb.getMany();
-    const totalExpenses = expenses.reduce(
-      (sum, e) => sum + parseFloat(e.amount),
-      0,
-    );
+    // Expenses are company-wide; only attribute them on the combined overview.
+    let totalExpenses = 0;
+    if (!channel) {
+      const expenseQb = this.expenseRepo.createQueryBuilder('expense');
+      applyDateRangeToQb(expenseQb, 'expense.expense_date', from, to);
+      const expenses = await expenseQb.getMany();
+      totalExpenses = expenses.reduce((sum, e) => sum + parseFloat(e.amount), 0);
+    }
 
     const grossProfit = revenue - cost;
     const netProfit = grossProfit - totalExpenses;
@@ -896,6 +1215,8 @@ export class DashboardService {
         totalPurchases: parseFloat(purchases?.total ?? '0').toFixed(2),
         localSalesValue: localSalesValue.toFixed(2),
         exportSalesValue: exportSalesValue.toFixed(2),
+        localSalesVolumeKg: localSalesVolume.toFixed(3),
+        exportSalesVolumeKg: exportSalesVolume.toFixed(3),
         salesVolumeKg: salesVolume.toFixed(3),
         salesValue: salesValue.toFixed(2),
         chart: [
@@ -1048,7 +1369,30 @@ export class DashboardService {
         category: 'Credit',
         title: `${overdueCustomers} customer${overdueCustomers === 1 ? '' : 's'} have overdue balances totaling ${overdueTotal.toLocaleString()} ETB.`,
         detail: 'Open Credits desk to prioritize collections',
-        href: '/credits',
+        href: '/credits?overdue=1',
+      });
+    }
+
+    // Highly critical: outstanding customer credit aged 60+ days from sale/credit date
+    const criticalRows = await this.customerCreditRepo
+      .createQueryBuilder('c')
+      .where('c.status != :paid', { paid: CreditStatus.PAID })
+      .andWhere('c.balance::numeric > 0')
+      .andWhere(`c.created_at::date <= (CURRENT_DATE - INTERVAL '61 days')`)
+      .getMany();
+    if (criticalRows.length > 0) {
+      const critBalance = criticalRows.reduce(
+        (s, r) => s + parseFloat(r.balance),
+        0,
+      );
+      const critCustomers = new Set(criticalRows.map((r) => r.customerId)).size;
+      cards.push({
+        id: 'exec-credit-highly-critical',
+        tone: 'critical',
+        category: 'Credit',
+        title: `${critCustomers} customer${critCustomers === 1 ? '' : 's'} have highly critical credit (60+ days) totaling ${critBalance.toLocaleString()} ETB.`,
+        detail: 'Review customer profiles and chase collections immediately',
+        href: '/customers',
       });
     }
 

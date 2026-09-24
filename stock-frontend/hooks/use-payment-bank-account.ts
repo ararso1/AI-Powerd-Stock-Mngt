@@ -48,12 +48,14 @@ export function bankAccountValidationError(
   if (resolvedId) return null;
   if (method === "CASH") {
     if ((accounts?.length ?? 0) === 0) {
-      return 'No cash till found. Create a CASH account under Bank.';
+      return "No cash till found. Create a CASH account under Bank.";
     }
     return "Select a cash till";
   }
   if ((accounts?.length ?? 0) === 0) {
     return "Create a BANK account under Bank settings.";
   }
-  return "Select a bank account for the transfer";
+  return method === "PARTIAL"
+    ? "Select the bank used for the partial payment"
+    : "Select a bank account for the transfer";
 }

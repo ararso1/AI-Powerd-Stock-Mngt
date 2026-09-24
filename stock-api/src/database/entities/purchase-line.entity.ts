@@ -1,5 +1,6 @@
 import { Column, Entity, JoinColumn, ManyToOne } from 'typeorm';
 import { Item } from './item.entity';
+import { Lot } from './lot.entity';
 import { Purchase } from './purchase.entity';
 import { UuidBaseEntity } from './uuid-base.entity';
 
@@ -10,6 +11,10 @@ export class PurchaseLine extends UuidBaseEntity {
 
   @Column({ name: 'item_id' })
   itemId: string;
+
+  /** Coffee lot receiving this line (required for COF-* items). */
+  @Column({ name: 'lot_id', type: 'uuid', nullable: true })
+  lotId: string | null;
 
   @Column({ type: 'decimal', precision: 14, scale: 3 })
   quantity: string;
@@ -29,4 +34,8 @@ export class PurchaseLine extends UuidBaseEntity {
   @ManyToOne(() => Item, { eager: true })
   @JoinColumn({ name: 'item_id' })
   item: Item;
+
+  @ManyToOne(() => Lot, { nullable: true, eager: true })
+  @JoinColumn({ name: 'lot_id' })
+  lot: Lot | null;
 }

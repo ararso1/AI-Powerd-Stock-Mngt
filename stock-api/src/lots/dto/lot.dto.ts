@@ -78,6 +78,11 @@ export class CreateLotDto {
   @IsOptional()
   @IsString()
   @MaxLength(120)
+  zone?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
   woreda?: string;
 
   @IsOptional()

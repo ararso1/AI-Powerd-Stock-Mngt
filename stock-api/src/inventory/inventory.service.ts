@@ -328,6 +328,18 @@ export class InventoryService {
         sourceType: query.sourceType,
       });
     }
+    if (query.purchaseType) {
+      qb.andWhere('m.reference_type = :purchaseRef', {
+        purchaseRef: 'purchase',
+      }).andWhere(
+        `EXISTS (
+          SELECT 1 FROM purchases p
+          WHERE p.id = m.reference_id
+            AND p.purchase_type = :purchaseType
+        )`,
+        { purchaseType: query.purchaseType },
+      );
+    }
     applyIlikeSearch(qb, query.search, [
       'm.reference',
       'm.batch_code',

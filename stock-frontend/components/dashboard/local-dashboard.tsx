@@ -172,7 +172,7 @@ export function LocalDashboard({ data }: { data: LocalDashboardData }) {
                   <KpiTile
                     label="Purchases"
                     value={formatMoney(analytics.trading.totalPurchases)}
-                    href="/purchases"
+                    href={links.localPurchases ?? "/purchases?purchaseType=LOCAL"}
                   />
                   <KpiTile
                     label="Local sales"

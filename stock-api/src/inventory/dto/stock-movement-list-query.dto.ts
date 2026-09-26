@@ -1,5 +1,6 @@
 import { IsEnum, IsOptional, IsString, IsUUID } from 'class-validator';
 import {
+  PurchaseType,
   StockMovementDirection,
   StockMovementSourceType,
 } from '../../common/enums';
@@ -25,6 +26,11 @@ export class StockMovementListQueryDto extends DateRangeQueryDto {
   @IsOptional()
   @IsEnum(StockMovementSourceType)
   sourceType?: StockMovementSourceType;
+
+  /** When set with PURCHASE movements, filters by linked purchase type. */
+  @IsOptional()
+  @IsEnum(PurchaseType)
+  purchaseType?: PurchaseType;
 
   @IsOptional()
   @IsString()

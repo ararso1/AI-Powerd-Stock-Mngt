@@ -259,6 +259,12 @@ export enum SaleChannel {
   EXPORT = 'EXPORT',
 }
 
+/** Purchase intended for local market stock vs export-bound stock. */
+export enum PurchaseType {
+  LOCAL = 'LOCAL',
+  EXPORT = 'EXPORT',
+}
+
 /** Export contract / shipment lifecycle. */
 export enum ExportContractStatus {
   DRAFT = 'DRAFT',

@@ -8,6 +8,7 @@ import type {
   LotStatus,
   PaymentMethod,
   ProductionOrderStatus,
+  PurchaseType,
   SaleChannel,
   StockAdjustmentDirection,
   StockAdjustmentReason,
@@ -52,6 +53,7 @@ export type PurchasesListQueryParams = GenericListQueryParams & {
   supplierId?: string;
   locationId?: string;
   paymentMethod?: PaymentMethod;
+  purchaseType?: PurchaseType;
 };
 
 export type SalesListQueryParams = GenericListQueryParams & {
@@ -144,6 +146,7 @@ export type ReportsSalesQueryParams = ReportsDateQueryParams & {
 export type ReportsPurchasesQueryParams = ReportsDateQueryParams & {
   locationId?: string;
   supplierId?: string;
+  purchaseType?: PurchaseType;
 };
 
 export type ReportsExpensesQueryParams = ReportsDateQueryParams & {
@@ -157,6 +160,7 @@ export type ReportsSalesByItemQueryParams = ReportsDateQueryParams & {
 export type ReportsPurchasesByItemQueryParams = ReportsDateQueryParams & {
   locationId?: string;
   supplierId?: string;
+  purchaseType?: PurchaseType;
 };
 
 export type ReportsCustomerActivityQueryParams = ReportsDateQueryParams & {

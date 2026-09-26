@@ -1,12 +1,17 @@
 "use client";
 
-import { useState } from "react";
-import type { Lot } from "@/lib/types";
+import { useEffect, useState } from "react";
+import type { CoffeeForm, Lot } from "@/lib/types";
 import { api } from "@/lib/api";
 import { errorMessage } from "@/lib/format";
 import { COFFEE_FORM_OPTIONS } from "@/lib/lots";
 import { useLocations } from "@/hooks/use-locations";
-import { QuickCreateDialogShell } from "@/components/shared/quick-create-dialog-shell";
+import { QuickCreateTrigger } from "@/components/shared/quick-create-trigger";
+import {
+  QuickCreateDialogShell,
+  useQuickCreateDialog,
+  bindQuickCreateTrigger,
+} from "@/components/shared/quick-create-dialog-shell";
 import { FrappeButtonPrimary, FrappeButtonSecondary } from "@/components/frappe";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -23,17 +28,31 @@ import { toast } from "sonner";
 
 const NONE = "__none__";
 
-export function CreateLotDialog({ onSuccess }: { onSuccess: () => void }) {
-  const [open, setOpen] = useState(false);
-  const [saving, setSaving] = useState(false);
+export function QuickLotDialog({
+  onCreated,
+  defaultLocationId,
+  defaultItemId,
+  trigger,
+  disabled,
+}: {
+  onCreated: (lot: Lot) => void;
+  defaultLocationId?: string;
+  defaultItemId?: string;
+  trigger?: React.ReactNode;
+  disabled?: boolean;
+}) {
+  const { open, setOpen, onOpenChange } = useQuickCreateDialog();
   const { data: locations } = useLocations();
+  const [saving, setSaving] = useState(false);
   const [code, setCode] = useState("");
-  const [form, setForm] = useState("GREEN");
+  const [form, setForm] = useState<CoffeeForm | string>("GREEN");
   const [grade, setGrade] = useState("G1");
   const [cropYear, setCropYear] = useState("2025/26");
   const [quantity, setQuantity] = useState("100");
   const [locationId, setLocationId] = useState(NONE);
   const [region, setRegion] = useState("");
+  const [zone, setZone] = useState("");
+  const [woreda, setWoreda] = useState("");
   const [processMethod, setProcessMethod] = useState("Washed");
   const [moisture, setMoisture] = useState("11.5");
   const [notes, setNotes] = useState("");
@@ -44,11 +63,25 @@ export function CreateLotDialog({ onSuccess }: { onSuccess: () => void }) {
     setGrade("G1");
     setCropYear("2025/26");
     setQuantity("100");
-    setLocationId(NONE);
+    setLocationId(defaultLocationId || NONE);
     setRegion("");
+    setZone("");
+    setWoreda("");
     setProcessMethod("Washed");
     setMoisture("11.5");
     setNotes("");
+  }
+
+  useEffect(() => {
+    if (open) {
+      setLocationId(defaultLocationId || NONE);
+    }
+  }, [open, defaultLocationId]);
+
+  function openDialog() {
+    if (disabled) return;
+    reset();
+    setOpen(true);
   }
 
   async function handleSubmit() {
@@ -59,7 +92,7 @@ export function CreateLotDialog({ onSuccess }: { onSuccess: () => void }) {
     }
     setSaving(true);
     try {
-      await api<Lot>("/lots", {
+      const lot = await api<Lot>("/lots", {
         method: "POST",
         body: {
           code: code.trim() || undefined,
@@ -68,7 +101,10 @@ export function CreateLotDialog({ onSuccess }: { onSuccess: () => void }) {
           cropYear: cropYear.trim() || undefined,
           quantity: qty,
           locationId: locationId === NONE ? undefined : locationId,
+          itemId: defaultItemId || undefined,
           region: region.trim() || undefined,
+          zone: zone.trim() || undefined,
+          woreda: woreda.trim() || undefined,
           processMethod: processMethod.trim() || undefined,
           moisturePercent: moisture ? parseFloat(moisture) : undefined,
           notes: notes.trim() || undefined,
@@ -77,7 +113,7 @@ export function CreateLotDialog({ onSuccess }: { onSuccess: () => void }) {
       toast.success("Lot created");
       setOpen(false);
       reset();
-      onSuccess();
+      onCreated(lot);
     } catch (err) {
       toast.error(errorMessage(err));
     } finally {
@@ -87,13 +123,18 @@ export function CreateLotDialog({ onSuccess }: { onSuccess: () => void }) {
 
   return (
     <>
-      <FrappeButtonPrimary type="button" onClick={() => setOpen(true)}>
-        <PlusIcon className="size-3.5" />
-        New lot
-      </FrappeButtonPrimary>
+      {bindQuickCreateTrigger(
+        trigger,
+        openDialog,
+        <QuickCreateTrigger
+          label="Create New Lot"
+          onClick={openDialog}
+          disabled={disabled}
+        />
+      )}
       <QuickCreateDialogShell
         open={open}
-        onOpenChange={setOpen}
+        onOpenChange={onOpenChange}
         title="Create coffee lot"
         footer={
           <>
@@ -113,7 +154,8 @@ export function CreateLotDialog({ onSuccess }: { onSuccess: () => void }) {
         <div className="grid max-h-[70vh] gap-3 overflow-y-auto p-4 sm:grid-cols-2">
           <div className="grid gap-1.5 sm:col-span-2">
             <p className="text-xs text-[var(--csolve-text-muted)]">
-              Opens a new lot and records a CREATED timeline event.
+              Opens a new lot at your receiving warehouse. Origin fields are the
+              coffee source, not the warehouse.
             </p>
           </div>
           <div className="grid gap-1.5">
@@ -161,7 +203,7 @@ export function CreateLotDialog({ onSuccess }: { onSuccess: () => void }) {
             />
           </div>
           <div className="grid gap-1.5">
-            <Label>Location</Label>
+            <Label>Warehouse / location</Label>
             <Select value={locationId} onValueChange={setLocationId}>
               <SelectTrigger>
                 <SelectValue placeholder="Select location" />
@@ -177,12 +219,20 @@ export function CreateLotDialog({ onSuccess }: { onSuccess: () => void }) {
             </Select>
           </div>
           <div className="grid gap-1.5">
-            <Label>Region</Label>
+            <Label>Region (origin)</Label>
             <Input
               value={region}
               onChange={(e) => setRegion(e.target.value)}
               placeholder="e.g. Yirgacheffe"
             />
+          </div>
+          <div className="grid gap-1.5">
+            <Label>Zone</Label>
+            <Input value={zone} onChange={(e) => setZone(e.target.value)} />
+          </div>
+          <div className="grid gap-1.5">
+            <Label>Woreda</Label>
+            <Input value={woreda} onChange={(e) => setWoreda(e.target.value)} />
           </div>
           <div className="grid gap-1.5">
             <Label>Process</Label>
@@ -212,5 +262,20 @@ export function CreateLotDialog({ onSuccess }: { onSuccess: () => void }) {
         </div>
       </QuickCreateDialogShell>
     </>
+  );
+}
+
+/** Full-page lots list trigger (primary button). */
+export function CreateLotDialog({ onSuccess }: { onSuccess: () => void }) {
+  return (
+    <QuickLotDialog
+      onCreated={() => onSuccess()}
+      trigger={
+        <FrappeButtonPrimary type="button">
+          <PlusIcon className="size-3.5" />
+          New lot
+        </FrappeButtonPrimary>
+      }
+    />
   );
 }

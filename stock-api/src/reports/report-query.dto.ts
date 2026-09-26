@@ -1,4 +1,5 @@
-import { IsDateString, IsOptional, IsUUID } from 'class-validator';
+import { IsDateString, IsEnum, IsOptional, IsUUID } from 'class-validator';
+import { PurchaseType } from '../common/enums';
 
 export class ReportQueryDto {
   @IsOptional()
@@ -28,4 +29,9 @@ export class ReportQueryDto {
   @IsOptional()
   @IsUUID()
   soldByUserId?: string;
+
+  /** Filter purchase reports by local market vs export. */
+  @IsOptional()
+  @IsEnum(PurchaseType)
+  purchaseType?: PurchaseType;
 }

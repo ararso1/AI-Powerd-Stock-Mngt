@@ -9,7 +9,10 @@ import {
   BankTransactionType,
   CreditStatus,
   DocumentStatus,
+  LotEventType,
+  LotStatus,
   PaymentMethod,
+  PurchaseType,
   StockMovementSourceType,
 } from '../common/enums';
 import {
@@ -22,6 +25,9 @@ import { PurchaseListQueryDto } from './dto/purchase-list-query.dto';
 import { BankLedgerService } from '../banks/bank-ledger.service';
 import { BanksService } from '../banks/banks.service';
 import { BankTransaction } from '../database/entities/bank-transaction.entity';
+import { Item } from '../database/entities/item.entity';
+import { Lot } from '../database/entities/lot.entity';
+import { LotEvent } from '../database/entities/lot-event.entity';
 import { PurchaseLine } from '../database/entities/purchase-line.entity';
 import { Purchase } from '../database/entities/purchase.entity';
 import { SupplierCredit } from '../database/entities/supplier-credit.entity';
@@ -30,6 +36,7 @@ import { NotificationsService } from '../notifications/notifications.service';
 import { CreatePurchaseDto, PurchaseLineDto } from './dto/purchase.dto';
 import { UpdatePurchaseDto } from './dto/update-purchase.dto';
 import { CreditsService } from '../credits/credits.service';
+import { PurchaseQualityService } from './purchase-quality.service';
 
 @Injectable()
 export class PurchasesService {
@@ -43,6 +50,7 @@ export class PurchasesService {
     private readonly banksService: BanksService,
     private readonly notifications: NotificationsService,
     private readonly creditsService: CreditsService,
+    private readonly qualityService: PurchaseQualityService,
   ) {}
 
   async findAll(query: PurchaseListQueryDto) {
@@ -66,6 +74,7 @@ export class PurchasesService {
           .leftJoinAndSelect('purchase.location', 'location')
           .leftJoinAndSelect('purchase.lines', 'lines')
           .leftJoinAndSelect('lines.item', 'item')
+          .leftJoinAndSelect('lines.lot', 'lot')
           .leftJoinAndSelect('purchase.credit', 'credit')
           .leftJoinAndSelect('purchase.bankAccount', 'bankAccount')
           .orderBy('purchase.created_at', 'DESC'),
@@ -105,6 +114,11 @@ export class PurchasesService {
         paymentMethod: query.paymentMethod,
       });
     }
+    if (query.purchaseType) {
+      qb.andWhere('purchase.purchase_type = :purchaseType', {
+        purchaseType: query.purchaseType,
+      });
+    }
     applyRelatedIlikeSearch(qb, query.search, ['purchase.notes'], {
       table: 'suppliers',
       alias: 'supplier_filter',
@@ -123,16 +137,19 @@ export class PurchasesService {
       relations: {
         supplier: true,
         location: true,
-        lines: { item: true },
+        lines: { item: true, lot: true },
         credit: true,
         bankAccount: true,
       },
     });
     if (!purchase) throw new NotFoundException('Purchase not found');
-    const hasCreditPayments = purchase.credit
-      ? await this.hasSubsequentCreditPayments(purchase.credit.id)
-      : false;
-    return this.serialize(purchase, hasCreditPayments);
+    const [hasCreditPayments, qualityResults] = await Promise.all([
+      purchase.credit
+        ? this.hasSubsequentCreditPayments(purchase.credit.id)
+        : Promise.resolve(false),
+      this.qualityService.listForPurchase(id),
+    ]);
+    return this.serialize(purchase, hasCreditPayments, qualityResults);
   }
 
   private serializeListRow(purchase: Purchase) {
@@ -147,12 +164,24 @@ export class PurchasesService {
     };
   }
 
-  private serialize(purchase: Purchase, hasCreditPayments: boolean) {
+  private serialize(
+    purchase: Purchase,
+    hasCreditPayments: boolean,
+    qualityResults: ReturnType<PurchaseQualityService['serialize']>[] = [],
+  ) {
     const total = parseFloat(purchase.total);
     const paid = parseFloat(purchase.paidAmount ?? '0');
     const outstanding = this.outstandingFor(purchase, total, paid);
+    const qualityByLine = new Map(
+      qualityResults.map((q) => [q.purchaseLineId, q]),
+    );
     return {
       ...purchase,
+      lines: (purchase.lines ?? []).map((line) => ({
+        ...line,
+        quality: qualityByLine.get(line.id) ?? null,
+      })),
+      qualityResults,
       outstandingAmount: outstanding.toFixed(2),
       creditDueDate: purchase.credit?.dueDate ?? null,
       supplierCredit: purchase.credit ?? null,
@@ -187,9 +216,186 @@ export class PurchasesService {
     if (dto.lines) return dto.lines;
     return purchase.lines.map((l) => ({
       itemId: l.itemId,
+      lotId: l.lotId ?? undefined,
       quantity: parseFloat(l.quantity),
       unitPrice: parseFloat(l.unitPrice),
     }));
+  }
+
+  private async validatePurchaseLines(
+    lines: PurchaseLineDto[],
+    manager: EntityManager,
+  ) {
+    const itemRepo = manager.getRepository(Item);
+    const lotRepo = manager.getRepository(Lot);
+
+    for (const line of lines) {
+      const item = await itemRepo.findOne({ where: { id: line.itemId } });
+      if (!item) {
+        throw new BadRequestException(`Item not found: ${line.itemId}`);
+      }
+      const isCoffee = this.stockService.isCoffeeItem(item);
+      if (isCoffee && !line.lotId) {
+        throw new BadRequestException(
+          `Coffee item ${item.sku ?? item.description} requires lotId on purchase line`,
+        );
+      }
+      if (line.lotId) {
+        const lot = await lotRepo.findOne({ where: { id: line.lotId } });
+        if (!lot) throw new BadRequestException('Lot not found');
+        if (lot.status !== LotStatus.ACTIVE) {
+          throw new BadRequestException(`Lot ${lot.code} is not active`);
+        }
+        if (lot.itemId && lot.itemId !== line.itemId) {
+          throw new BadRequestException(
+            `Lot ${lot.code} does not match purchase line item`,
+          );
+        }
+        if (line.quality && !isCoffee) {
+          throw new BadRequestException(
+            'ECTA quality results are only allowed on coffee purchase lines with a lot',
+          );
+        }
+      } else if (line.quality) {
+        throw new BadRequestException(
+          'ECTA quality results require a coffee lot on the purchase line',
+        );
+      }
+    }
+  }
+
+  private toPurchaseLines(lines: PurchaseLineDto[]): PurchaseLine[] {
+    return lines.map((l) => {
+      const lineTotal = l.quantity * l.unitPrice;
+      return Object.assign(new PurchaseLine(), {
+        itemId: l.itemId,
+        lotId: l.lotId ?? null,
+        quantity: l.quantity.toFixed(3),
+        unitPrice: l.unitPrice.toFixed(2),
+        lineTotal: lineTotal.toFixed(2),
+      });
+    });
+  }
+
+  /** Receive stock onto lines (lot-scoped for coffee) and sync lot qty / events. */
+  private async applyReceiveLines(
+    manager: EntityManager,
+    purchaseId: string,
+    locationId: string,
+    lines: PurchaseLineDto[],
+    savedLines: PurchaseLine[],
+    userId?: string,
+    purchaseType: PurchaseType = PurchaseType.LOCAL,
+  ) {
+    const lotRepo = manager.getRepository(Lot);
+    const eventRepo = manager.getRepository(LotEvent);
+
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      const savedLine = savedLines[i];
+      const lotId = line.lotId ?? null;
+
+      await this.stockService.adjust(
+        {
+          locationId,
+          itemId: line.itemId,
+          quantityDelta: line.quantity,
+          purchasePrice: line.unitPrice,
+          lotId,
+          meta: this.stockMeta(purchaseId, userId, purchaseType),
+        },
+        manager,
+      );
+
+      if (lotId) {
+        const lot = await lotRepo.findOne({ where: { id: lotId } });
+        if (lot) {
+          lot.quantity = (
+            parseFloat(lot.quantity) + line.quantity
+          ).toFixed(3);
+          if (lot.locationId !== locationId) {
+            lot.locationId = locationId;
+          }
+          if (!lot.itemId) {
+            lot.itemId = line.itemId;
+          }
+          await lotRepo.save(lot);
+          await eventRepo.save(
+            eventRepo.create({
+              lotId,
+              eventType: LotEventType.COLLECTED,
+              quantity: line.quantity.toFixed(3),
+              toLocationId: locationId,
+              notes: `Purchase ${purchaseId.slice(0, 8)} (${purchaseType})`,
+              createdById: userId ?? null,
+              metadata: {
+                purchaseId,
+                purchaseLineId: savedLine?.id ?? null,
+                purchaseType,
+              },
+            }),
+          );
+        }
+      }
+
+      if (savedLine) {
+        await this.qualityService.saveInlineQuality(
+          manager,
+          purchaseId,
+          savedLine,
+          line.quality,
+          userId,
+        );
+      }
+    }
+  }
+
+  /** Reverse previously received purchase stock (used by update/void). */
+  private async reverseReceiveLines(
+    manager: EntityManager,
+    purchase: Purchase,
+    userId: string | undefined,
+    reason: string,
+  ) {
+    const lotRepo = manager.getRepository(Lot);
+    const eventRepo = manager.getRepository(LotEvent);
+
+    for (const line of purchase.lines) {
+      const qty = parseFloat(line.quantity);
+      const lotId = line.lotId ?? null;
+      await this.stockService.adjust(
+        {
+          locationId: purchase.locationId,
+          itemId: line.itemId,
+          quantityDelta: -qty,
+          lotId,
+          meta: {
+            ...this.stockMeta(purchase.id, userId, purchase.purchaseType),
+            notes: reason,
+          },
+        },
+        manager,
+      );
+
+      if (lotId) {
+        const lot = await lotRepo.findOne({ where: { id: lotId } });
+        if (lot) {
+          lot.quantity = Math.max(0, parseFloat(lot.quantity) - qty).toFixed(3);
+          await lotRepo.save(lot);
+          await eventRepo.save(
+            eventRepo.create({
+              lotId,
+              eventType: LotEventType.ADJUSTED,
+              quantity: qty.toFixed(3),
+              fromLocationId: purchase.locationId,
+              notes: reason,
+              createdById: userId ?? null,
+              metadata: { purchaseId: purchase.id, purchaseLineId: line.id },
+            }),
+          );
+        }
+      }
+    }
   }
 
   /** Cash, bank transfer, or partial deposit — posts a bank ledger outflow. */
@@ -258,11 +464,18 @@ export class PurchasesService {
     }
   }
 
-  private stockMeta(purchaseId: string, userId?: string) {
+  private stockMeta(
+    purchaseId: string,
+    userId?: string,
+    purchaseType?: PurchaseType,
+  ) {
+    const market = purchaseType ?? PurchaseType.LOCAL;
     return {
       sourceType: StockMovementSourceType.PURCHASE,
       referenceType: 'purchase',
       referenceId: purchaseId,
+      reference: `purchaseType:${market}`,
+      notes: `Purchase type ${market === PurchaseType.EXPORT ? 'Export' : 'Local market'}`,
       createdById: userId ?? null,
     };
   }
@@ -312,6 +525,7 @@ export class PurchasesService {
 
       const supplierId = dto.supplierId ?? purchase.supplierId;
       const locationId = dto.locationId ?? purchase.locationId;
+      const purchaseType = dto.purchaseType ?? purchase.purchaseType;
       const paymentMethod = dto.paymentMethod ?? purchase.paymentMethod;
       const bankAccountId =
         dto.bankAccountId !== undefined
@@ -324,6 +538,7 @@ export class PurchasesService {
           ? dto.creditDueDate
           : (purchase.credit?.dueDate ?? undefined);
       const lines = this.resolveLines(purchase, dto);
+      await this.validatePurchaseLines(lines, manager);
 
       this.assertBankAccountRequired(paymentMethod, bankAccountId);
       if (this.paysViaBank(paymentMethod) && bankAccountId) {
@@ -348,24 +563,15 @@ export class PurchasesService {
             : undefined,
       );
 
-      const oldLocationId = purchase.locationId;
       const oldPaymentMethod = purchase.paymentMethod;
       const oldBankAccountId = purchase.bankAccountId;
 
-      for (const line of purchase.lines) {
-        await this.stockService.adjust(
-          {
-            locationId: oldLocationId,
-            itemId: line.itemId,
-            quantityDelta: -parseFloat(line.quantity),
-            meta: {
-              ...this.stockMeta(purchase.id, userId),
-              notes: 'Purchase adjustment (reverse)',
-            },
-          },
-          manager,
-        );
-      }
+      await this.reverseReceiveLines(
+        manager,
+        purchase,
+        userId,
+        'Purchase adjustment (reverse)',
+      );
 
       if (this.paysViaBank(oldPaymentMethod) && oldBankAccountId) {
         await this.bankLedger.reverseByReference(
@@ -385,36 +591,26 @@ export class PurchasesService {
 
       purchase.supplierId = supplierId;
       purchase.locationId = locationId;
+      purchase.purchaseType = purchaseType;
       purchase.paymentMethod = paymentMethod;
       purchase.bankAccountId = bankAccountId ?? null;
       purchase.subtotal = subtotal.toFixed(2);
       purchase.total = subtotal.toFixed(2);
       purchase.paidAmount = amountPaid.toFixed(2);
       purchase.notes = notes;
-      purchase.lines = lines.map((l) => {
-        const lineTotal = l.quantity * l.unitPrice;
-        return Object.assign(new PurchaseLine(), {
-          itemId: l.itemId,
-          quantity: l.quantity.toFixed(3),
-          unitPrice: l.unitPrice.toFixed(2),
-          lineTotal: lineTotal.toFixed(2),
-        });
-      });
+      purchase.lines = this.toPurchaseLines(lines);
 
-      await purchaseRepo.save(purchase);
+      const saved = await purchaseRepo.save(purchase);
 
-      for (const line of lines) {
-        await this.stockService.adjust(
-          {
-            locationId,
-            itemId: line.itemId,
-            quantityDelta: line.quantity,
-            purchasePrice: line.unitPrice,
-            meta: this.stockMeta(purchase.id, userId),
-          },
-          manager,
-        );
-      }
+      await this.applyReceiveLines(
+        manager,
+        saved.id,
+        locationId,
+        lines,
+        saved.lines ?? purchase.lines,
+        userId,
+        purchaseType,
+      );
 
       if (this.paysViaBank(paymentMethod) && bankAccountId && amountPaid > 0) {
         await this.bankLedger.recordTransaction(
@@ -486,20 +682,12 @@ export class PurchasesService {
         await creditRepo.remove(purchase.credit);
       }
 
-      for (const line of purchase.lines) {
-        await this.stockService.adjust(
-          {
-            locationId: purchase.locationId,
-            itemId: line.itemId,
-            quantityDelta: -parseFloat(line.quantity),
-            meta: {
-              ...this.stockMeta(purchase.id, userId),
-              notes: 'Purchase void',
-            },
-          },
-          manager,
-        );
-      }
+      await this.reverseReceiveLines(
+        manager,
+        purchase,
+        userId,
+        'Purchase void',
+      );
 
       if (this.paysViaBank(purchase.paymentMethod) && purchase.bankAccountId) {
         await this.bankLedger.reverseByReference(
@@ -554,20 +742,14 @@ export class PurchasesService {
       const purchaseRepo = manager.getRepository(Purchase);
       const creditRepo = manager.getRepository(SupplierCredit);
 
-      const lines = dto.lines.map((l) => {
-        const lineTotal = l.quantity * l.unitPrice;
-        return Object.assign(new PurchaseLine(), {
-          itemId: l.itemId,
-          quantity: l.quantity.toFixed(3),
-          unitPrice: l.unitPrice.toFixed(2),
-          lineTotal: lineTotal.toFixed(2),
-        });
-      });
+      await this.validatePurchaseLines(dto.lines, manager);
+      const lineEntities = this.toPurchaseLines(dto.lines);
 
       const purchase = await purchaseRepo.save(
         purchaseRepo.create({
           supplierId: dto.supplierId,
           locationId: dto.locationId,
+          purchaseType: dto.purchaseType ?? PurchaseType.LOCAL,
           paymentMethod: dto.paymentMethod,
           bankAccountId: dto.bankAccountId ?? null,
           subtotal: subtotal.toFixed(2),
@@ -576,22 +758,19 @@ export class PurchasesService {
           notes: dto.notes ?? null,
           status: DocumentStatus.ACTIVE,
           createdById: userId ?? null,
-          lines,
+          lines: lineEntities,
         }),
       );
 
-      for (const line of dto.lines) {
-        await this.stockService.adjust(
-          {
-            locationId: dto.locationId,
-            itemId: line.itemId,
-            quantityDelta: line.quantity,
-            purchasePrice: line.unitPrice,
-            meta: this.stockMeta(purchase.id, userId),
-          },
-          manager,
-        );
-      }
+      await this.applyReceiveLines(
+        manager,
+        purchase.id,
+        dto.locationId,
+        dto.lines,
+        purchase.lines ?? lineEntities,
+        userId,
+        purchase.purchaseType,
+      );
 
       if (
         this.paysViaBank(dto.paymentMethod) &&

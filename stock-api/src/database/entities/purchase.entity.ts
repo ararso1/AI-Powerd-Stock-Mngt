@@ -8,7 +8,7 @@ import {
   OneToOne,
   UpdateDateColumn,
 } from 'typeorm';
-import { DocumentStatus, PaymentMethod } from '../../common/enums';
+import { DocumentStatus, PaymentMethod, PurchaseType } from '../../common/enums';
 import { BankAccount } from './bank-account.entity';
 import { Location } from './location.entity';
 import { PurchaseLine } from './purchase-line.entity';
@@ -24,6 +24,16 @@ export class Purchase extends UuidBaseEntity {
 
   @Column({ name: 'location_id' })
   locationId: string;
+
+  /** Local market vs export-bound procurement. */
+  @Column({
+    name: 'purchase_type',
+    type: 'enum',
+    enum: PurchaseType,
+    enumName: 'purchases_purchase_type_enum',
+    default: PurchaseType.LOCAL,
+  })
+  purchaseType: PurchaseType;
 
   @Column({ type: 'enum', enum: PaymentMethod })
   paymentMethod: PaymentMethod;

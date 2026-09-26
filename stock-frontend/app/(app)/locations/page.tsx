@@ -26,7 +26,7 @@ export default function LocationsPage() {
       endpoint="/locations"
       readPermission="locations.read"
       writePermission="locations.write"
-      emptyDescription="Create warehouse and showroom locations."
+      emptyDescription="Create warehouses for your business (receiving sites), not coffee origin."
       listParams={{
         type: type === ALL_TYPES ? undefined : (type as LocationType),
         includeInactive: includeInactive || undefined,

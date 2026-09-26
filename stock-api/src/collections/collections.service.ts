@@ -16,6 +16,7 @@ import {
   LotStatus,
   PaymentMethod,
   ReceivingDisposition,
+  PurchaseType,
 } from '../common/enums';
 import {
   applyDateRangeToQb,
@@ -459,9 +460,10 @@ export class CollectionsService {
       let purchase: Purchase | null = null;
       if (payWeight > 0) {
         purchase = await purchaseRepo.save(
-          purchaseRepo.create({
+            purchaseRepo.create({
             supplierId: dto.supplierId,
             locationId: dto.locationId,
+            purchaseType: PurchaseType.LOCAL,
             paymentMethod: dto.paymentMethod,
             bankAccountId: dto.bankAccountId ?? null,
             subtotal: total.toFixed(2),
@@ -472,6 +474,7 @@ export class CollectionsService {
             lines: [
               Object.assign(new PurchaseLine(), {
                 itemId: item.id,
+                lotId: primaryLot.id,
                 quantity: payWeight.toFixed(3),
                 unitPrice: dto.pricePerKg.toFixed(2),
                 lineTotal: total.toFixed(2),

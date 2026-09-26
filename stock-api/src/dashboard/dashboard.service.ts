@@ -12,6 +12,7 @@ import {
   LocationType,
   LotStatus,
   ProcessRunStatus,
+  PurchaseType,
   SaleChannel,
 } from '../common/enums';
 import { BanksService } from '../banks/banks.service';
@@ -610,6 +611,8 @@ export class DashboardService {
         greenLots: '/lots?form=GREEN&status=ACTIVE',
         qcHoldLots: '/lots?status=HOLD',
         localSales: '/sales?channel=LOCAL',
+        localPurchases: '/purchases?purchaseType=LOCAL',
+        exportPurchases: '/purchases?purchaseType=EXPORT',
         exportStaged: '/exports?status=STAGED',
         openContracts: '/exports',
         unlinkedInventory: '/inventory',
@@ -996,7 +999,10 @@ export class DashboardService {
     const purchasesQb = this.purchaseRepo
       .createQueryBuilder('p')
       .select('COALESCE(SUM(p.total::numeric), 0)', 'total')
-      .where('p.status = :status', { status: DocumentStatus.ACTIVE });
+      .where('p.status = :status', { status: DocumentStatus.ACTIVE })
+      .andWhere('p.purchase_type = :purchaseType', {
+        purchaseType: PurchaseType.LOCAL,
+      });
     applyDateRangeToQb(purchasesQb, 'p.created_at', from, to);
     const purchases = await purchasesQb.getRawOne<{ total: string }>();
 

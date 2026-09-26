@@ -95,6 +95,11 @@ export class ReportsService {
         supplierId: query.supplierId,
       });
     }
+    if (query.purchaseType) {
+      qb.andWhere('purchase.purchase_type = :purchaseType', {
+        purchaseType: query.purchaseType,
+      });
+    }
     applyDateRangeToQb(qb, 'purchase.created_at', query.from, query.to);
     return qb;
   }
@@ -246,6 +251,14 @@ export class ReportsService {
         total: string;
       }>();
 
+    const byPurchaseType = await this.purchaseBaseQb(query)
+      .select('purchase.purchase_type', 'purchaseType')
+      .addSelect('COUNT(purchase.id)', 'count')
+      .addSelect('COALESCE(SUM(purchase.total::numeric), 0)', 'total')
+      .groupBy('purchase.purchase_type')
+      .orderBy('total', 'DESC')
+      .getRawMany<{ purchaseType: string; count: string; total: string }>();
+
     return {
       currency: this.currency(),
       period: this.period(query.from, query.to),
@@ -262,6 +275,11 @@ export class ReportsService {
       byLocation: byLocation.map((row) => ({
         locationId: row.locationId,
         locationName: row.locationName,
+        count: parseInt(row.count, 10),
+        total: parseFloat(row.total).toFixed(2),
+      })),
+      byPurchaseType: byPurchaseType.map((row) => ({
+        purchaseType: row.purchaseType,
         count: parseInt(row.count, 10),
         total: parseFloat(row.total).toFixed(2),
       })),
@@ -386,6 +404,11 @@ export class ReportsService {
     if (query.supplierId) {
       qb.andWhere('purchase.supplier_id = :supplierId', {
         supplierId: query.supplierId,
+      });
+    }
+    if (query.purchaseType) {
+      qb.andWhere('purchase.purchase_type = :purchaseType', {
+        purchaseType: query.purchaseType,
       });
     }
     applyDateRangeToQb(qb, 'purchase.created_at', query.from, query.to);

@@ -126,11 +126,15 @@ export default function ReportsPage() {
     useState("");
   const [purchasesReportSupplierId, setPurchasesReportSupplierId] =
     useState("");
+  const [purchasesReportPurchaseType, setPurchasesReportPurchaseType] =
+    useState("");
   const [expensesCategoryId, setExpensesCategoryId] = useState("");
   const [salesByItemLocationId, setSalesByItemLocationId] = useState("");
   const [purchasesByItemLocationId, setPurchasesByItemLocationId] =
     useState("");
   const [purchasesByItemSupplierId, setPurchasesByItemSupplierId] =
+    useState("");
+  const [purchasesByItemPurchaseType, setPurchasesByItemPurchaseType] =
     useState("");
   const [customerActivityCustomerId, setCustomerActivityCustomerId] =
     useState("");
@@ -205,12 +209,20 @@ export default function ReportsPage() {
           ...filters,
           locationId: purchasesReportLocationId || undefined,
           supplierId: purchasesReportSupplierId || undefined,
+          purchaseType:
+            (purchasesReportPurchaseType as "LOCAL" | "EXPORT") || undefined,
         })
       ).then((res) => {
         applyCurrencyFromResponse(res);
         return res;
       }),
-    [from, to, purchasesReportLocationId, purchasesReportSupplierId]
+    [
+      from,
+      to,
+      purchasesReportLocationId,
+      purchasesReportSupplierId,
+      purchasesReportPurchaseType,
+    ]
   );
   const { data: expensesReport, loading: expensesReportLoading } = useFetch(
     () =>
@@ -246,12 +258,20 @@ export default function ReportsPage() {
             ...filters,
             locationId: purchasesByItemLocationId || undefined,
             supplierId: purchasesByItemSupplierId || undefined,
+            purchaseType:
+              (purchasesByItemPurchaseType as "LOCAL" | "EXPORT") || undefined,
           })
         ).then((res) => {
           if (!Array.isArray(res)) applyCurrencyFromResponse(res);
           return res;
         }),
-      [from, to, purchasesByItemLocationId, purchasesByItemSupplierId]
+      [
+        from,
+        to,
+        purchasesByItemLocationId,
+        purchasesByItemSupplierId,
+        purchasesByItemPurchaseType,
+      ]
     );
   const { data: inventoryAgingReport, loading: agingLoading } = useFetch(
     () =>
@@ -407,6 +427,14 @@ export default function ReportsPage() {
       (purchasesReport?.byPaymentMethod ?? []).map((r, i) => ({
         ...r,
         id: `${r.paymentMethod}-${i}`,
+      })),
+    [purchasesReport]
+  );
+  const purchasesTypeRows = useMemo(
+    () =>
+      (purchasesReport?.byPurchaseType ?? []).map((r, i) => ({
+        ...r,
+        id: `${r.purchaseType}-${i}`,
       })),
     [purchasesReport]
   );
@@ -596,6 +624,16 @@ export default function ReportsPage() {
                         placeholder="All suppliers"
                         searchPlaceholder="Search supplier…"
                       />
+                      <ReportEntityFilter
+                        label="Purchase type"
+                        value={purchasesReportPurchaseType}
+                        onValueChange={setPurchasesReportPurchaseType}
+                        options={[
+                          { value: "LOCAL", label: "Local market" },
+                          { value: "EXPORT", label: "Export" },
+                        ]}
+                        placeholder="All types"
+                      />
                     </>
                   }
                   columns={[
@@ -618,6 +656,43 @@ export default function ReportsPage() {
                     },
                   ]}
                 />
+                <div className="mt-4">
+                  <ReportPaginatedTable
+                    rows={purchasesTypeRows}
+                    emptyTitle="No purchase type breakdown"
+                    search={getTabSearch("purchases-type")}
+                    onSearchChange={(value) =>
+                      setTabSearchValue("purchases-type", value)
+                    }
+                    searchPlaceholder="Search purchase type…"
+                    searchKeys={["purchaseType"]}
+                    disabled={purchasesReportLoading}
+                    columns={[
+                      {
+                        key: "type",
+                        header: "Purchase type",
+                        cell: (r) =>
+                          r.purchaseType === "EXPORT"
+                            ? "Export"
+                            : r.purchaseType === "LOCAL"
+                              ? "Local market"
+                              : r.purchaseType,
+                      },
+                      {
+                        key: "count",
+                        header: "Count",
+                        className: "text-right",
+                        cell: (r) => r.count,
+                      },
+                      {
+                        key: "total",
+                        header: "Total",
+                        className: "text-right",
+                        cell: (r) => formatMoney(r.total),
+                      },
+                    ]}
+                  />
+                </div>
               </>
             ) : null}
           </TabsContent>
@@ -812,6 +887,16 @@ export default function ReportsPage() {
                         options={supplierOptions}
                         placeholder="All suppliers"
                         searchPlaceholder="Search supplier…"
+                      />
+                      <ReportEntityFilter
+                        label="Purchase type"
+                        value={purchasesByItemPurchaseType}
+                        onValueChange={setPurchasesByItemPurchaseType}
+                        options={[
+                          { value: "LOCAL", label: "Local market" },
+                          { value: "EXPORT", label: "Export" },
+                        ]}
+                        placeholder="All types"
                       />
                     </>
                   }

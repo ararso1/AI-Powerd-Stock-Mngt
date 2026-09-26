@@ -24,7 +24,7 @@ import { Purchase } from '../database/entities/purchase.entity';
 import {
   PurchaseLineQualityDto,
   UpsertPurchaseQualityDto,
-} from './dto/purchase.dto';
+} from './dto/purchase-quality.dto';
 
 const UPLOAD_ROOT = path.join(process.cwd(), 'uploads', 'purchases', 'quality');
 const ALLOWED_MIME = new Set([
@@ -53,6 +53,8 @@ export class PurchaseQualityService {
     private readonly purchaseRepo: Repository<Purchase>,
     @InjectRepository(Lot)
     private readonly lotRepo: Repository<Lot>,
+    @InjectRepository(LotEvent)
+    private readonly lotEventRepo: Repository<LotEvent>,
   ) {}
 
   async listForPurchase(purchaseId: string) {
@@ -214,7 +216,12 @@ export class PurchaseQualityService {
     if (dto.defectLevel !== undefined) {
       row.defectLevel = dto.defectLevel?.trim() || null;
     }
-    if (dto.passed !== undefined) row.passed = dto.passed ?? null;
+    if (dto.passed !== undefined) {
+      const raw = dto.passed as unknown;
+      if (raw === 'true' || raw === true) row.passed = true;
+      else if (raw === 'false' || raw === false) row.passed = false;
+      else row.passed = null;
+    }
     if (dto.notes !== undefined) row.notes = dto.notes?.trim() || null;
   }
 
@@ -222,12 +229,10 @@ export class PurchaseQualityService {
     row: PurchaseQualityResult,
     manager?: EntityManager,
   ) {
-    const lotRepo = manager
-      ? manager.getRepository(Lot)
-      : this.lotRepo;
+    const lotRepo = manager ? manager.getRepository(Lot) : this.lotRepo;
     const eventRepo = manager
       ? manager.getRepository(LotEvent)
-      : null;
+      : this.lotEventRepo;
     const lot = await lotRepo.findOne({ where: { id: row.lotId } });
     if (!lot) return;
 
@@ -243,23 +248,21 @@ export class PurchaseQualityService {
     lot.inspectedAt = new Date();
     await lotRepo.save(lot);
 
-    if (eventRepo) {
-      await eventRepo.save(
-        eventRepo.create({
-          lotId: lot.id,
-          eventType: LotEventType.SAMPLE_TESTED,
-          quantity: null,
-          notes: `ECTA / purchase quality recorded (${row.labName})`,
-          createdById: row.recordedById,
-          metadata: {
-            purchaseId: row.purchaseId,
-            purchaseLineId: row.purchaseLineId,
-            qualityResultId: row.id,
-            passed: row.passed,
-          },
-        }),
-      );
-    }
+    await eventRepo.save(
+      eventRepo.create({
+        lotId: lot.id,
+        eventType: LotEventType.SAMPLE_TESTED,
+        quantity: null,
+        notes: `ECTA / purchase quality recorded (${row.labName})`,
+        createdById: row.recordedById,
+        metadata: {
+          purchaseId: row.purchaseId,
+          purchaseLineId: row.purchaseLineId,
+          qualityResultId: row.id,
+          passed: row.passed,
+        },
+      }),
+    );
   }
 
   private async ensurePurchase(id: string) {

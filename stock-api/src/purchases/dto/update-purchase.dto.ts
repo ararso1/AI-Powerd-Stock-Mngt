@@ -11,7 +11,7 @@ import {
   Min,
   ValidateNested,
 } from 'class-validator';
-import { PaymentMethod } from '../../common/enums';
+import { PaymentMethod, PurchaseType } from '../../common/enums';
 import { PurchaseLineDto } from './purchase.dto';
 
 export class UpdatePurchaseDto {
@@ -22,6 +22,10 @@ export class UpdatePurchaseDto {
   @IsOptional()
   @IsUUID()
   locationId?: string;
+
+  @IsOptional()
+  @IsEnum(PurchaseType)
+  purchaseType?: PurchaseType;
 
   @IsOptional()
   @IsEnum(PaymentMethod)

@@ -20,6 +20,7 @@ import { Badge } from "@/components/ui/badge";
 import { buildListPath } from "@/lib/list-query";
 import { formatDate, formatQty } from "@/lib/format";
 import type {
+  PurchaseType,
   StockMovement,
   StockMovementDirection,
   StockMovementSourceType,
@@ -56,6 +57,7 @@ export function InventoryMovementsPanel() {
   const [sourceType, setSourceType] = useState<StockMovementSourceType | "">(
     ""
   );
+  const [purchaseType, setPurchaseType] = useState<PurchaseType | "">("");
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
   const debouncedSearch = useDebouncedValue(search);
@@ -70,13 +72,14 @@ export function InventoryMovementsPanel() {
             locationId: locationId === ALL ? undefined : locationId,
             direction: direction || undefined,
             sourceType: sourceType || undefined,
+            purchaseType: purchaseType || undefined,
             from: from || undefined,
             to: to || undefined,
           },
           page,
           limit,
         }),
-      [debouncedSearch, locationId, direction, sourceType, from, to]
+      [debouncedSearch, locationId, direction, sourceType, purchaseType, from, to]
     );
 
   return (
@@ -145,6 +148,26 @@ export function InventoryMovementsPanel() {
                   {o.label}
                 </SelectItem>
               ))}
+            </SelectContent>
+          </Select>
+        </div>
+        <div className="grid gap-2">
+          <Label className="text-sm text-[var(--frappe-text-muted)]">
+            Purchase type
+          </Label>
+          <Select
+            value={purchaseType || ALL}
+            onValueChange={(v) =>
+              setPurchaseType(v === ALL ? "" : (v as PurchaseType))
+            }
+          >
+            <SelectTrigger className="w-[160px]">
+              <SelectValue placeholder="All types" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value={ALL}>All types</SelectItem>
+              <SelectItem value="LOCAL">Local market</SelectItem>
+              <SelectItem value="EXPORT">Export</SelectItem>
             </SelectContent>
           </Select>
         </div>

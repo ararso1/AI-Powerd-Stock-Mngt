@@ -16,20 +16,30 @@ import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { formatMoney, formatDate } from "@/lib/format";
 import { documentTotal, paymentMethodLabel } from "@/lib/document-utils";
 import { buildPurchasesListPath } from "@/lib/list-query";
+import { purchaseTypeLabel } from "@/lib/purchases";
 import { usePaginatedList } from "@/hooks/use-paginated-list";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import { Badge } from "@/components/ui/badge";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { PlusIcon } from "lucide-react";
 
-import type { Purchase, PurchaseListTotals } from "@/lib/types";
+import type { Purchase, PurchaseListTotals, PurchaseType } from "@/lib/types";
 import { ListPageTotals } from "@/components/shared/list-page-totals";
 
 type PurchaseRow = Pick<
   Purchase,
   | "id"
   | "paymentMethod"
+  | "purchaseType"
   | "total"
   | "subtotal"
   | "totalAmount"
@@ -42,9 +52,17 @@ type PurchaseRow = Pick<
   | "status"
 >;
 
+const ALL = "__all__";
+
 export default function PurchasesPage() {
+  const searchParams = useSearchParams();
+  const initialPurchaseType =
+    (searchParams.get("purchaseType") as PurchaseType | null) ?? "";
   const [search, setSearch] = useState("");
   const [includeVoided, setIncludeVoided] = useState(false);
+  const [purchaseType, setPurchaseType] = useState<PurchaseType | "">(
+    initialPurchaseType
+  );
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
   const debouncedSearch = useDebouncedValue(search);
@@ -58,12 +76,13 @@ export default function PurchasesPage() {
           from: from || undefined,
           to: to || undefined,
           includeVoided,
+          purchaseType: purchaseType || undefined,
           search: debouncedSearch || undefined,
         },
         page,
         limit
       ),
-    [from, to, includeVoided, debouncedSearch]
+    [from, to, includeVoided, purchaseType, debouncedSearch]
   );
 
   return (
@@ -95,6 +114,26 @@ export default function PurchasesPage() {
             onFromChange={setFrom}
             onToChange={setTo}
           />
+          <div className="grid gap-2">
+            <Label className="text-sm text-[var(--frappe-text-muted)]">
+              Purchase type
+            </Label>
+            <Select
+              value={purchaseType || ALL}
+              onValueChange={(v) =>
+                setPurchaseType(v === ALL ? "" : (v as PurchaseType))
+              }
+            >
+              <SelectTrigger className="w-[180px]">
+                <SelectValue placeholder="All types" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value={ALL}>All types</SelectItem>
+                <SelectItem value="LOCAL">Local market</SelectItem>
+                <SelectItem value="EXPORT">Export</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
           <div className="flex items-center gap-2">
             <Switch
               id="purchase-include-voided"
@@ -180,6 +219,11 @@ export default function PurchasesPage() {
                 key: "location",
                 header: "Location",
                 cell: (r) => r.location?.name ?? "—",
+              },
+              {
+                key: "purchaseType",
+                header: "Type",
+                cell: (r) => purchaseTypeLabel(r.purchaseType),
               },
               {
                 key: "payment",

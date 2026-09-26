@@ -551,6 +551,8 @@ export interface DashboardData {
     greenLots?: string;
     qcHoldLots?: string;
     localSales?: string;
+    localPurchases?: string;
+    exportPurchases?: string;
     exportStaged?: string;
     openContracts?: string;
     unlinkedInventory?: string;
@@ -760,20 +762,52 @@ export interface Permission {
   description?: string;
 }
 
+/** ECTA / lab quality result attached to a coffee purchase line. */
+export interface PurchaseQualityResult {
+  id: string;
+  purchaseId: string;
+  purchaseLineId: string;
+  lotId: string;
+  labName?: string | null;
+  testedAt?: string | null;
+  certificateNumber?: string | null;
+  grade?: string | null;
+  moisturePercent?: string | number | null;
+  screenSize?: string | null;
+  cuppingScore?: string | number | null;
+  defectCount?: number | null;
+  defectLevel?: string | null;
+  passed?: boolean | null;
+  notes?: string | null;
+  documentOriginalName?: string | null;
+  documentMimeType?: string | null;
+  documentSizeBytes?: number | null;
+  hasDocument?: boolean;
+  downloadPath?: string | null;
+  recordedById?: string | null;
+  createdAt?: string;
+  updatedAt?: string;
+  lot?: Pick<Lot, "id" | "code" | "grade"> | null;
+}
+
 export interface PurchaseLine {
   id?: string;
   itemId: string;
+  lotId?: string | null;
   quantity: string;
   unitPrice: string;
   lineTotal?: string;
   amount?: string;
   item?: Item;
+  lot?: Lot | null;
+  quality?: PurchaseQualityResult | null;
 }
 
 export interface Purchase {
   id: string;
   supplierId?: string;
   locationId?: string;
+  purchaseType?: PurchaseType;
   paymentMethod: PaymentMethod;
   bankAccountId?: string;
   notes?: string;
@@ -795,6 +829,7 @@ export interface Purchase {
   credit?: LinkedCredit;
   supplierCredit?: LinkedCredit;
   lines?: PurchaseLine[];
+  qualityResults?: PurchaseQualityResult[];
 }
 
 export interface SaleLine {
@@ -816,6 +851,9 @@ export interface SaleUserRef {
 }
 
 export type SaleChannel = "LOCAL" | "EXPORT";
+
+/** Purchase intended for local market vs export-bound stock. */
+export type PurchaseType = "LOCAL" | "EXPORT";
 
 export interface Sale {
   id: string;
@@ -915,9 +953,10 @@ export interface ReportSales {
 export interface ReportPurchases {
   currency?: Currency;
   period?: ReportPeriod;
-  totals: { count: number; total: string };
+  totals: { count: number; total: string; subtotal?: string };
   byPaymentMethod: ReportPaymentMethodRow[];
   byLocation: ReportLocationBreakdownRow[];
+  byPurchaseType?: { purchaseType: string; count: number; total: string }[];
 }
 
 export interface ReportExpenseCategoryRow {

@@ -32,10 +32,10 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { api } from "@/lib/api";
+import { api, apiBlob } from "@/lib/api";
 import { errorMessage, formatDate, formatQty } from "@/lib/format";
 import { coffeeFormLabel, lotQcPhaseLabel, lotStatusLabel, LOT_QC_PHASE_OPTIONS } from "@/lib/lots";
-import type { Lot, LotEvent, LotQcPhase } from "@/lib/types";
+import type { Lot, LotEvent, LotQcPhase, PurchaseQualityResult } from "@/lib/types";
 import { useFetch } from "@/hooks/use-fetch";
 import { toast } from "sonner";
 
@@ -94,6 +94,14 @@ export default function LotDetailPage() {
           : Promise.reject(new Error("Invalid lot id")),
       [id]
     );
+
+  const { data: ectaResults, loading: ectaLoading } = useFetch(
+    () =>
+      id
+        ? api<PurchaseQualityResult[]>(`/lots/${id}/quality`)
+        : Promise.reject(new Error("Invalid lot id")),
+    [id]
+  );
 
   async function handleSplit() {
     const qty = parseFloat(splitQty);
@@ -207,10 +215,20 @@ export default function LotDetailPage() {
                     label="Process"
                     value={lot.processMethod ?? "—"}
                   />
-                  <DetailField label="Region" value={lot.region ?? "—"} />
-                  <DetailField label="Zone" value={lot.zone ?? "—"} />
-                  <DetailField label="Woreda" value={lot.woreda ?? "—"} />
-                  <DetailField label="Kebele" value={lot.kebele ?? "—"} />
+                  <DetailField
+                    label="Warehouse / business location"
+                    value={lot.location?.name ?? "—"}
+                  />
+                  <DetailField
+                    label="Origin (region)"
+                    value={lot.region ?? "—"}
+                  />
+                  <DetailField label="Zone (origin)" value={lot.zone ?? "—"} />
+                  <DetailField
+                    label="Woreda (origin)"
+                    value={lot.woreda ?? "—"}
+                  />
+                  <DetailField label="Kebele (origin)" value={lot.kebele ?? "—"} />
                   <DetailField
                     label="Moisture %"
                     value={lot.moisturePercent ?? "—"}
@@ -260,10 +278,6 @@ export default function LotDetailPage() {
                     </>
                   ) : null}
                   <DetailField
-                    label="Location"
-                    value={lot.location?.name ?? "—"}
-                  />
-                  <DetailField
                     label="Catalog item"
                     value={lot.item?.description ?? "—"}
                   />
@@ -287,7 +301,140 @@ export default function LotDetailPage() {
                     value={formatDate(lot.createdAt)}
                   />
                   <DetailField label="Notes" value={lot.notes ?? "—"} />
+                  <DetailField
+                    label="ECTA certificate"
+                    value={lot.ectaCertificateNumber ?? "—"}
+                  />
+                  <DetailField
+                    label="ECTA grade"
+                    value={lot.ectaGrade ?? "—"}
+                  />
+                  <DetailField
+                    label="ECTA document"
+                    value={
+                      lot.ectaDocumentOriginalName ? (
+                        <button
+                          type="button"
+                          className="text-[var(--frappe-primary)] hover:underline"
+                          onClick={() => {
+                            void apiBlob(`/lots/${lot.id}/ecta-document`)
+                              .then((blob) => {
+                                const url = URL.createObjectURL(blob);
+                                window.open(url, "_blank");
+                                setTimeout(() => URL.revokeObjectURL(url), 60_000);
+                              })
+                              .catch((err) => toast.error(errorMessage(err)));
+                          }}
+                        >
+                          {lot.ectaDocumentOriginalName}
+                        </button>
+                      ) : (
+                        "—"
+                      )
+                    }
+                  />
                 </FrappeFormGrid>
+              </FrappeSection>
+
+              <FrappeSection
+                title="ECTA purchase quality"
+                description="Ethiopian Coffee and Tea Authority results linked from purchases for this lot"
+              >
+                {ectaLoading ? (
+                  <PageLoading />
+                ) : !ectaResults?.length ? (
+                  <p className="text-sm text-[var(--frappe-text-muted)]">
+                    No ECTA results yet. Record them on a coffee purchase that
+                    uses this lot.
+                  </p>
+                ) : (
+                  <div className="overflow-x-auto">
+                    <table className="frappe-list-table">
+                      <thead>
+                        <tr>
+                          <th>Purchase</th>
+                          <th>Lab / cert</th>
+                          <th>Results</th>
+                          <th>Document</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {ectaResults.map((q) => (
+                          <tr key={q.id}>
+                            <td>
+                              <Link
+                                href={`/purchases/${q.purchaseId}`}
+                                className="font-medium text-[var(--frappe-primary)] hover:underline"
+                              >
+                                {q.purchaseId.slice(0, 8)}…
+                              </Link>
+                              {q.testedAt ? (
+                                <p className="text-xs text-[var(--frappe-text-muted)]">
+                                  Tested {formatDate(q.testedAt)}
+                                </p>
+                              ) : null}
+                            </td>
+                            <td>
+                              <p className="text-sm">{q.labName ?? "ECTA"}</p>
+                              {q.certificateNumber ? (
+                                <p className="text-xs text-[var(--frappe-text-muted)]">
+                                  #{q.certificateNumber}
+                                </p>
+                              ) : null}
+                            </td>
+                            <td className="text-sm">
+                              {[
+                                q.grade ? `Grade ${q.grade}` : null,
+                                q.moisturePercent != null &&
+                                q.moisturePercent !== ""
+                                  ? `Moisture ${q.moisturePercent}%`
+                                  : null,
+                                q.cuppingScore != null && q.cuppingScore !== ""
+                                  ? `Cup ${q.cuppingScore}`
+                                  : null,
+                                q.passed != null
+                                  ? q.passed
+                                    ? "Passed"
+                                    : "Failed"
+                                  : null,
+                              ]
+                                .filter(Boolean)
+                                .join(" · ") || "—"}
+                            </td>
+                            <td>
+                              {q.hasDocument && q.downloadPath ? (
+                                <button
+                                  type="button"
+                                  className="text-sm text-[var(--frappe-primary)] hover:underline"
+                                  onClick={() => {
+                                    void apiBlob(q.downloadPath!)
+                                      .then((blob) => {
+                                        const url = URL.createObjectURL(blob);
+                                        window.open(url, "_blank");
+                                        setTimeout(
+                                          () => URL.revokeObjectURL(url),
+                                          60_000
+                                        );
+                                      })
+                                      .catch((err) =>
+                                        toast.error(errorMessage(err))
+                                      );
+                                  }}
+                                >
+                                  View document
+                                </button>
+                              ) : (
+                                <span className="text-xs text-[var(--frappe-text-muted)]">
+                                  Manual entry
+                                </span>
+                              )}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
               </FrappeSection>
 
               <FrappeSection

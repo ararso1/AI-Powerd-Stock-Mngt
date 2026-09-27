@@ -1,7 +1,9 @@
 import { Type } from 'class-transformer';
 import {
+  IsDateString,
   IsEnum,
   IsIn,
+  IsInt,
   IsNumber,
   IsOptional,
   IsString,
@@ -41,6 +43,17 @@ export class CreateLotDto {
   @IsOptional()
   @IsUUID()
   itemId?: string;
+
+  /** Create a catalog product with the lot (no stock row). Used for bought-in green coffee. */
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  itemDescription?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(80)
+  itemSku?: string;
 
   @IsOptional()
   @IsUUID()
@@ -95,6 +108,29 @@ export class CreateLotDto {
   @IsNumber()
   @Min(0)
   moisturePercent?: number;
+
+  /** Warehouse cupping / screen results taken on receipt. */
+  @IsOptional()
+  @IsString()
+  @MaxLength(40)
+  screenSize?: string;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0)
+  cuppingScore?: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0)
+  defectCount?: number;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(40)
+  defectLevel?: string;
 
   @Type(() => Number)
   @IsNumber()
@@ -163,6 +199,28 @@ export class UpdateLotDto {
   @IsNumber()
   @Min(0)
   moisturePercent?: number | null;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(40)
+  screenSize?: string | null;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0)
+  cuppingScore?: number | null;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  defectCount?: number | null;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(40)
+  defectLevel?: string | null;
 
   @IsOptional()
   @IsString()
@@ -267,6 +325,39 @@ export class AdvanceLotQcDto {
   @IsString()
   @MaxLength(120)
   rejectAction?: string;
+
+  @IsOptional()
+  @IsString()
+  notes?: string;
+}
+
+/** ECTA laboratory result attached to a green-bean lot. File is optional. */
+export class SaveLotEctaDto {
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  certificateNumber?: string;
+
+  @IsOptional()
+  @IsDateString()
+  testedAt?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(80)
+  grade?: string;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0)
+  moisturePercent?: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0)
+  cuppingScore?: number;
 
   @IsOptional()
   @IsString()

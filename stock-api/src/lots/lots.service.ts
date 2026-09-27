@@ -2,8 +2,12 @@ import {
   BadRequestException,
   Injectable,
   NotFoundException,
+  StreamableFile,
 } from '@nestjs/common';
 import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
+import { createReadStream, existsSync, mkdirSync, writeFileSync } from 'fs';
+import * as path from 'path';
+import { randomUUID } from 'crypto';
 import { DataSource, Repository } from 'typeorm';
 import {
   applyDateRangeToQb,
@@ -117,9 +121,13 @@ export class LotsService {
     });
   }
 
+  async suggestNextCode() {
+    return { code: await this.nextLotCode() };
+  }
+
   async create(dto: CreateLotDto, userId?: string) {
     if (dto.locationId) await this.assertLocation(dto.locationId);
-    if (dto.itemId) await this.assertItem(dto.itemId);
+    const itemId = await this.resolveCatalogItem(dto);
 
     const code = dto.code?.trim() || (await this.nextLotCode());
     await this.assertCodeUnique(code);
@@ -131,7 +139,7 @@ export class LotsService {
       const lot = await lotRepo.save(
         lotRepo.create({
           code,
-          itemId: dto.itemId ?? null,
+          itemId,
           locationId: dto.locationId ?? null,
           form: dto.form ?? CoffeeForm.GREEN,
           grade: dto.grade ?? null,
@@ -146,6 +154,13 @@ export class LotsService {
             dto.moisturePercent !== undefined
               ? dto.moisturePercent.toFixed(2)
               : null,
+          screenSize: dto.screenSize?.trim() || null,
+          cuppingScore:
+            dto.cuppingScore !== undefined
+              ? dto.cuppingScore.toFixed(2)
+              : null,
+          defectCount: dto.defectCount ?? null,
+          defectLevel: dto.defectLevel?.trim() || null,
           quantity: dto.quantity.toFixed(3),
           status: LotStatus.ACTIVE,
           notes: dto.notes ?? null,
@@ -195,6 +210,17 @@ export class LotsService {
         dto.moisturePercent === null
           ? null
           : Number(dto.moisturePercent).toFixed(2);
+    }
+    if (dto.screenSize !== undefined) {
+      lot.screenSize = dto.screenSize?.trim() || null;
+    }
+    if (dto.cuppingScore !== undefined) {
+      lot.cuppingScore =
+        dto.cuppingScore === null ? null : Number(dto.cuppingScore).toFixed(2);
+    }
+    if (dto.defectCount !== undefined) lot.defectCount = dto.defectCount;
+    if (dto.defectLevel !== undefined) {
+      lot.defectLevel = dto.defectLevel?.trim() || null;
     }
     if (dto.notes !== undefined) lot.notes = dto.notes;
 
@@ -502,6 +528,118 @@ export class LotsService {
     );
 
     return this.findOne(id);
+  }
+
+  /**
+   * Store an ECTA certificate and/or manual lab scores on the lot.
+   * Warehouse cupping scores stay on the lot's own grade/moisture fields.
+   */
+  async saveEcta(
+    id: string,
+    dto: {
+      certificateNumber?: string;
+      testedAt?: string;
+      grade?: string;
+      moisturePercent?: number;
+      cuppingScore?: number;
+      notes?: string;
+    },
+    file?: {
+      originalname: string;
+      mimetype: string;
+      size: number;
+      buffer: Buffer;
+    },
+  ) {
+    const lot = await this.findOne(id);
+    if (dto.certificateNumber !== undefined) {
+      lot.ectaCertificateNumber = dto.certificateNumber.trim() || null;
+    }
+    if (dto.testedAt !== undefined) lot.ectaTestedAt = dto.testedAt || null;
+    if (dto.grade !== undefined) lot.ectaGrade = dto.grade.trim() || null;
+    if (dto.moisturePercent !== undefined) {
+      lot.ectaMoisturePercent = Number(dto.moisturePercent).toFixed(2);
+    }
+    if (dto.cuppingScore !== undefined) {
+      lot.ectaCuppingScore = Number(dto.cuppingScore).toFixed(2);
+    }
+    if (dto.notes !== undefined) lot.ectaNotes = dto.notes.trim() || null;
+
+    if (file) {
+      const allowed = new Set([
+        'image/jpeg',
+        'image/png',
+        'image/webp',
+        'application/pdf',
+      ]);
+      if (!allowed.has(file.mimetype)) {
+        throw new BadRequestException('ECTA document must be a PDF or image');
+      }
+      if (file.size > 10 * 1024 * 1024) {
+        throw new BadRequestException('ECTA document must be 10MB or smaller');
+      }
+      const ext = path.extname(file.originalname || '').toLowerCase();
+      const safeExt = /^\.(pdf|jpe?g|png|webp)$/.test(ext)
+        ? ext
+        : file.mimetype === 'application/pdf'
+          ? '.pdf'
+          : '.bin';
+      const storageKey = `${id}/${randomUUID()}${safeExt}`;
+      const dir = path.join(process.cwd(), 'uploads', 'lots', 'ecta', id);
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(
+        path.join(process.cwd(), 'uploads', 'lots', 'ecta', storageKey),
+        file.buffer,
+      );
+      lot.ectaDocumentStorageKey = storageKey;
+      lot.ectaDocumentOriginalName = file.originalname.slice(0, 255);
+      lot.ectaDocumentMimeType = file.mimetype;
+    }
+
+    await this.lotRepo.save(lot);
+    return this.findOne(id);
+  }
+
+  async downloadEctaDocument(id: string) {
+    const lot = await this.findOne(id);
+    if (!lot.ectaDocumentStorageKey) {
+      throw new NotFoundException('ECTA document not found');
+    }
+    const abs = path.join(
+      process.cwd(),
+      'uploads',
+      'lots',
+      'ecta',
+      lot.ectaDocumentStorageKey,
+    );
+    if (!existsSync(abs)) throw new NotFoundException('File missing on disk');
+    return {
+      file: new StreamableFile(createReadStream(abs)),
+      mimeType: lot.ectaDocumentMimeType ?? 'application/octet-stream',
+      originalName: lot.ectaDocumentOriginalName ?? 'ecta-result.pdf',
+    };
+  }
+
+  private async resolveCatalogItem(dto: CreateLotDto): Promise<string | null> {
+    if (dto.itemId) {
+      await this.assertItem(dto.itemId);
+      return dto.itemId;
+    }
+    const description = dto.itemDescription?.trim();
+    if (!description) return null;
+    const sku = dto.itemSku?.trim() || null;
+    if (sku) {
+      const existing = await this.itemRepo.findOne({ where: { sku } });
+      if (existing) return existing.id;
+    }
+    const created = await this.itemRepo.save(
+      this.itemRepo.create({
+        description,
+        sku,
+        unit: 'kg',
+      }),
+    );
+    return created.id;
   }
 
   private async nextLotCode(prefix = 'LOT'): Promise<string> {

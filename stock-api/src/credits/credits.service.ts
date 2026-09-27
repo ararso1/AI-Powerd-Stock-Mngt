@@ -7,6 +7,8 @@ import {
 import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
 import {
   DataSource,
+  EntityManager,
+  Not,
   ObjectLiteral,
   Repository,
   SelectQueryBuilder,
@@ -36,8 +38,11 @@ import { NotificationsService } from '../notifications/notifications.service';
 import {
   CUSTOMER_CREDIT_AGING_BUCKETS,
   SUPPLIER_CREDIT_AGING_BUCKETS,
+  customerCreditAgingFromDays,
   customerCreditAgingMeta,
   creditAgingDays,
+  repaymentLimitIncreasePercent,
+  repaymentPerformanceScore,
   resolveAgingBucket,
   type CreditAgingBucketDef,
 } from '../common/utils/credit-aging.util';
@@ -149,6 +154,7 @@ export class CreditsService implements OnModuleInit {
     const limit = customer.creditLimit
       ? parseFloat(customer.creditLimit)
       : null;
+    const standing = await this.customerRepaymentStanding(customer);
 
     return {
       customerId,
@@ -157,11 +163,13 @@ export class CreditsService implements OnModuleInit {
       invoiceTotal: parseFloat(raw?.invoiceTotal ?? '0').toFixed(2),
       paidTotal: parseFloat(raw?.paidTotal ?? '0').toFixed(2),
       outstanding: outstanding.toFixed(2),
+      usedCredit: outstanding.toFixed(2),
       overdue: parseFloat(raw?.overdue ?? '0').toFixed(2),
       openCount: parseInt(raw?.openCount ?? '0', 10),
       availableCredit:
         limit == null ? null : Math.max(0, limit - outstanding).toFixed(2),
       overLimit: limit != null && outstanding > limit,
+      ...standing,
     };
   }
 
@@ -690,6 +698,7 @@ export class CreditsService implements OnModuleInit {
       if (dto.amount > balance) {
         throw new BadRequestException('Payment exceeds balance');
       }
+      const wasUnpaid = credit.status !== CreditStatus.PAID;
 
       await this.bankLedger.recordTransaction(
         {
@@ -724,6 +733,10 @@ export class CreditsService implements OnModuleInit {
       if (sale) {
         sale.paidAmount = credit.paidAmount;
         await saleRepo.save(sale);
+      }
+
+      if (wasUnpaid && saved.status === CreditStatus.PAID) {
+        await this.settleRepaymentPerformance(manager, saved);
       }
 
       return this.withCreditMeta(saved);
@@ -785,6 +798,120 @@ export class CreditsService implements OnModuleInit {
 
       return this.withOverdueMeta(saved);
     });
+  }
+
+  private async customerRepaymentStanding(customer: Customer) {
+    const baseRaw = customer.creditLimitBase ?? customer.creditLimit;
+    const base = baseRaw != null && baseRaw !== '' ? parseFloat(baseRaw) : null;
+    const openCredits = await this.customerCreditRepo.find({
+      where: {
+        customerId: customer.id,
+        status: Not(CreditStatus.PAID),
+      },
+    });
+    let worst: ReturnType<typeof customerCreditAgingFromDays> | null = null;
+    for (const row of openCredits) {
+      const meta = customerCreditAgingMeta(row.createdAt);
+      if (!worst || meta.agingDays > worst.agingDays) worst = meta;
+    }
+    const paidCredits = await this.customerCreditRepo.find({
+      where: { customerId: customer.id, status: CreditStatus.PAID },
+    });
+    const scores = paidCredits.map((row) =>
+      repaymentPerformanceScore(
+        row.repaidInDays ??
+          creditAgingDays(row.createdAt, row.updatedAt ?? new Date()),
+      ),
+    );
+    const creditScore = scores.length
+      ? Math.round(scores.reduce((sum, n) => sum + n, 0) / scores.length)
+      : null;
+    const pct = worst ? repaymentLimitIncreasePercent(worst.agingDays) : 0;
+    const eligibleAmount =
+      worst && base != null && base > 0 ? (base * pct) / 100 : null;
+
+    return {
+      initialCreditLimit: base != null ? base.toFixed(2) : null,
+      agingStatus: worst?.agingRisk ?? 'Clear',
+      agingLabel: worst?.agingLabel ?? null,
+      agingDays: worst?.agingDays ?? null,
+      creditScore,
+      eligibleIncreasePercent: worst ? pct : null,
+      eligibleIncrease:
+        eligibleAmount != null ? eligibleAmount.toFixed(2) : null,
+      normalIncrease:
+        base != null && base > 0 ? ((base * 10) / 100).toFixed(2) : null,
+      attentionIncrease:
+        base != null && base > 0 ? ((base * 5) / 100).toFixed(2) : null,
+      lastLimitIncrease: customer.lastLimitIncrease,
+      lastLimitIncreasePercent: customer.lastLimitIncreasePercent,
+      lastRepaymentDays: customer.lastRepaymentDays,
+      lastRepaymentRisk: customer.lastRepaymentRisk,
+    };
+  }
+
+  /**
+   * When the last open credit is paid, score the cycle from the oldest
+   * unpaid-reward credit and raise the limit from the initial limit.
+   */
+  private async settleRepaymentPerformance(
+    manager: EntityManager,
+    credit: CustomerCredit,
+  ) {
+    const creditRepo = manager.getRepository(CustomerCredit);
+    const stillOpen = await creditRepo.count({
+      where: {
+        customerId: credit.customerId,
+        status: Not(CreditStatus.PAID),
+      },
+    });
+    if (stillOpen > 0) return;
+
+    const pending = await creditRepo.find({
+      where: {
+        customerId: credit.customerId,
+        status: CreditStatus.PAID,
+        limitRewardApplied: false,
+      },
+    });
+    if (!pending.length) return;
+
+    const today = new Date();
+    let worstDays = 0;
+    for (const row of pending) {
+      const days = creditAgingDays(row.createdAt, today);
+      row.repaidInDays = days;
+      row.limitRewardApplied = true;
+      if (days > worstDays) worstDays = days;
+    }
+
+    const customer = await manager.getRepository(Customer).findOne({
+      where: { id: credit.customerId },
+    });
+    if (!customer) {
+      await creditRepo.save(pending);
+      return;
+    }
+
+    const meta = customerCreditAgingFromDays(worstDays);
+    const base = parseFloat(
+      customer.creditLimitBase ?? customer.creditLimit ?? '0',
+    );
+    const pct = repaymentLimitIncreasePercent(worstDays);
+    const increase = base > 0 ? (base * pct) / 100 : 0;
+    if (increase > 0 && customer.creditLimit != null) {
+      const current = parseFloat(customer.creditLimit);
+      customer.creditLimit = (current + increase).toFixed(2);
+    }
+    if (!customer.creditLimitBase && customer.creditLimit) {
+      customer.creditLimitBase = base > 0 ? base.toFixed(2) : customer.creditLimit;
+    }
+    customer.lastLimitIncrease = increase.toFixed(2);
+    customer.lastLimitIncreasePercent = pct;
+    customer.lastRepaymentDays = worstDays;
+    customer.lastRepaymentRisk = meta.agingRisk;
+    await manager.getRepository(Customer).save(customer);
+    await creditRepo.save(pending);
   }
 
   /** Used by sales before posting a CREDIT document. */

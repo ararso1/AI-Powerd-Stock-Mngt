@@ -37,10 +37,12 @@ export function bankAccountFormFromRecord(
 }
 
 export function formatBankAccountLabel(account: BankAccount): string {
-  if (account.bankName) {
-    return `${account.name} — ${account.bankName}`;
+  const name = account.name?.trim();
+  const bank = account.bankName?.trim();
+  if (bank && name && bank.toLowerCase() !== name.toLowerCase()) {
+    return `${name} — ${bank}`;
   }
-  return account.name;
+  return name || bank || "Account";
 }
 
 export function bankAccountTypeForPayment(

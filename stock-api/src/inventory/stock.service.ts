@@ -60,7 +60,7 @@ export class StockService {
   /** Coffee catalog SKUs are seeded as COF-*. */
   isCoffeeItem(item: Pick<Item, 'sku'> | null | undefined): boolean {
     const sku = item?.sku?.trim().toUpperCase();
-    return !!sku && sku.startsWith('COF-');
+    return !!sku && (sku.startsWith('COF-') || sku.startsWith('LOT-'));
   }
 
   async getStock(

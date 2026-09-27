@@ -8,6 +8,7 @@ import { PurchaseQualityResult } from '../database/entities/purchase-quality-res
 import { Purchase } from '../database/entities/purchase.entity';
 import { SupplierCredit } from '../database/entities/supplier-credit.entity';
 import { InventoryModule } from '../inventory/inventory.module';
+import { ProcessRunsModule } from '../process-runs/process-runs.module';
 import { NotificationsModule } from '../notifications/notifications.module';
 import { CreditsModule } from '../credits/credits.module';
 import { PurchaseQualityService } from './purchase-quality.service';
@@ -25,6 +26,7 @@ import { PurchasesService } from './purchases.service';
       LotEvent,
     ]),
     InventoryModule,
+    ProcessRunsModule,
     BanksModule,
     NotificationsModule,
     CreditsModule,

@@ -15,10 +15,7 @@ import {
   Shield,
   UserCog,
   BarChart3,
-  ClipboardList,
-  Factory,
   Layers,
-  Scale,
   Workflow,
   Ship,
   Flame,
@@ -77,12 +74,6 @@ export const operationsNav: NavItem[] = [
     permission: "lot.read",
   },
   {
-    title: "Cherry intake",
-    href: "/collections",
-    icon: Scale,
-    permission: "collection.read",
-  },
-  {
     title: "Processing",
     href: "/process-runs",
     icon: Workflow,
@@ -105,18 +96,6 @@ export const operationsNav: NavItem[] = [
     href: "/inventory",
     icon: Package,
     permission: "inventory.read",
-  },
-  {
-    title: "Product recipes",
-    href: "/boms",
-    icon: ClipboardList,
-    permission: "bom.read",
-  },
-  {
-    title: "Production",
-    href: "/production-orders",
-    icon: Factory,
-    permission: "production.read",
   },
   {
     title: "Move stock",

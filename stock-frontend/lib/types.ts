@@ -321,13 +321,27 @@ export interface CustomerCreditProfile {
   customerId: string;
   customerName: string;
   creditLimit: string | null;
+  initialCreditLimit?: string | null;
   invoiceTotal: string;
   paidTotal: string;
   outstanding: string;
+  usedCredit?: string;
   overdue: string;
   openCount: number;
   availableCredit: string | null;
   overLimit: boolean;
+  agingStatus?: string | null;
+  agingLabel?: string | null;
+  agingDays?: number | null;
+  creditScore?: number | null;
+  eligibleIncreasePercent?: number | null;
+  eligibleIncrease?: string | null;
+  normalIncrease?: string | null;
+  attentionIncrease?: string | null;
+  lastLimitIncrease?: string | null;
+  lastLimitIncreasePercent?: number | null;
+  lastRepaymentDays?: number | null;
+  lastRepaymentRisk?: string | null;
   credits?: CustomerCreditLine[];
   openCredits?: CustomerCreditLine[];
   payments?: CustomerCreditPayment[];
@@ -830,6 +844,7 @@ export interface Purchase {
   supplierCredit?: LinkedCredit;
   lines?: PurchaseLine[];
   qualityResults?: PurchaseQualityResult[];
+  processRuns?: ProcessRun[];
 }
 
 export interface SaleLine {
@@ -1367,6 +1382,13 @@ export interface Lot {
   rejectReason?: string | null;
   rejectPercent?: string | null;
   rejectAction?: string | null;
+  ectaCertificateNumber?: string | null;
+  ectaTestedAt?: string | null;
+  ectaGrade?: string | null;
+  ectaMoisturePercent?: string | null;
+  ectaCuppingScore?: string | null;
+  ectaNotes?: string | null;
+  ectaDocumentOriginalName?: string | null;
   roastDate?: string | null;
   bestBefore?: string | null;
   roastProfileId?: string | null;
@@ -1586,6 +1608,8 @@ export interface ProcessTemplate {
   outputItemId?: string | null;
   maxMoisturePercent?: string | null;
   notes?: string | null;
+  /** LOCAL or EXPORT intake workflow. Empty for mill/roast/pack templates. */
+  workflow?: "LOCAL" | "EXPORT" | null;
   isActive?: boolean;
   inputItem?: Item | null;
   outputItem?: Item | null;
@@ -1604,6 +1628,79 @@ export interface QcResult {
   createdAt: string;
 }
 
+export type LocalStageWarning = "HIGH_LOSS" | "UNDER_SCREEN";
+
+export interface LocalStagePack {
+  sizeKg: number;
+  count: number;
+  lotId: string;
+  lotCode: string;
+  sku: string;
+  kind?: "ROAST" | "GROUND";
+}
+
+export interface LocalStageResult {
+  stage: string;
+  inputQty: string;
+  removedQty: string;
+  outputQty: string;
+  lossPercent: string;
+  warnings: LocalStageWarning[];
+  completedAt: string;
+  completedById?: string | null;
+  completedByName?: string | null;
+  outputLotId?: string | null;
+  outputLotCode?: string | null;
+  rejectLotId?: string | null;
+  rejectLotCode?: string | null;
+  notes?: string | null;
+  packs?: LocalStagePack[];
+  remainderKg?: string;
+  roastQty?: string;
+  groundQty?: string;
+  roastLotId?: string | null;
+  roastLotCode?: string | null;
+  groundLotId?: string | null;
+  groundLotCode?: string | null;
+  unallocatedKg?: string;
+  roastRemainderKg?: string;
+  groundRemainderKg?: string;
+}
+
+export interface ProcessInputLine {
+  lotId: string;
+  itemId: string;
+  lotCode: string;
+  itemDescription: string;
+  quantity: string;
+}
+
+export interface LocalMarketView {
+  stages: string[];
+  nextStage: string | null;
+  availableInputKg: string;
+  cleaningOutputKg: string | null;
+  roastOutputKg: string | null;
+  roastPackKg: string | null;
+  groundPackKg: string | null;
+  salesStore: {
+    packs: Array<{
+      sizeKg: number;
+      produced: number;
+      onHand: number;
+      sold: number;
+      lotId: string;
+      lotCode: string;
+      sku: string;
+      kind?: "ROAST" | "GROUND" | null;
+      locationName?: string | null;
+    }>;
+    remainderKg: string;
+    roastRemainderKg?: string | null;
+    groundRemainderKg?: string | null;
+  } | null;
+}
+
 export interface ProcessRun {
   id: string;
   runNumber: string;
@@ -1611,6 +1708,9 @@ export interface ProcessRun {
   inputLotId: string;
   outputLotId?: string | null;
   locationId: string;
+  workflow?: "LOCAL" | "EXPORT" | null;
+  purchaseId?: string | null;
+  purchaseLineId?: string | null;
   quantityInput: string;
   quantityOutput?: string | null;
   quantityReject?: string;
@@ -1622,6 +1722,9 @@ export interface ProcessRun {
   currentStageIndex: number;
   stages: string[];
   stagesCompleted: string[];
+  stageResults?: LocalStageResult[];
+  inputLines?: ProcessInputLine[];
+  localMarket?: LocalMarketView;
   processCost?: string;
   roastProfileId?: string | null;
   notes?: string | null;

@@ -88,6 +88,10 @@ export function creditAgingDays(createdAt: Date | string, today = new Date()) {
 
 export function customerCreditAgingMeta(createdAt: Date | string) {
   const days = creditAgingDays(createdAt);
+  return customerCreditAgingFromDays(days);
+}
+
+export function customerCreditAgingFromDays(days: number) {
   const bucket = resolveAgingBucket(days, CUSTOMER_CREDIT_AGING_BUCKETS);
   return {
     agingDays: days,
@@ -95,4 +99,23 @@ export function customerCreditAgingMeta(createdAt: Date | string) {
     agingLabel: bucket.label,
     agingRisk: bucket.risk ?? bucket.label,
   };
+}
+
+/**
+ * Limit increase earned when a credit balance is fully repaid.
+ * Percent is of the customer's initial credit limit.
+ * 0–15 days (Normal) → 10%, 16–30 days (Attention) → 5%, later buckets → none.
+ */
+export function repaymentLimitIncreasePercent(days: number): number {
+  if (days <= 15) return 10;
+  if (days <= 30) return 5;
+  return 0;
+}
+
+/** Repayment score aligned with customer aging: Normal 100, Attention 75, High Risk 40, Highly Critical 10. */
+export function repaymentPerformanceScore(days: number): number {
+  if (days <= 15) return 100;
+  if (days <= 30) return 75;
+  if (days <= 60) return 40;
+  return 10;
 }

@@ -118,6 +118,46 @@ export class Lot extends UuidBaseEntity {
   @Column({ name: 'reject_action', type: 'varchar', length: 120, nullable: true })
   rejectAction: string | null;
 
+  /** ECTA lab result stored on the lot (file and/or manual scores). */
+  @Column({ name: 'ecta_certificate_number', type: 'varchar', length: 120, nullable: true })
+  ectaCertificateNumber: string | null;
+
+  @Column({ name: 'ecta_tested_at', type: 'date', nullable: true })
+  ectaTestedAt: string | null;
+
+  @Column({ name: 'ecta_grade', type: 'varchar', length: 80, nullable: true })
+  ectaGrade: string | null;
+
+  @Column({
+    name: 'ecta_moisture_percent',
+    type: 'decimal',
+    precision: 5,
+    scale: 2,
+    nullable: true,
+  })
+  ectaMoisturePercent: string | null;
+
+  @Column({
+    name: 'ecta_cupping_score',
+    type: 'decimal',
+    precision: 5,
+    scale: 2,
+    nullable: true,
+  })
+  ectaCuppingScore: string | null;
+
+  @Column({ name: 'ecta_notes', type: 'text', nullable: true })
+  ectaNotes: string | null;
+
+  @Column({ name: 'ecta_document_storage_key', type: 'varchar', length: 500, nullable: true })
+  ectaDocumentStorageKey: string | null;
+
+  @Column({ name: 'ecta_document_original_name', type: 'varchar', length: 255, nullable: true })
+  ectaDocumentOriginalName: string | null;
+
+  @Column({ name: 'ecta_document_mime_type', type: 'varchar', length: 120, nullable: true })
+  ectaDocumentMimeType: string | null;
+
   @Column({ name: 'roast_date', type: 'date', nullable: true })
   roastDate: string | null;
 

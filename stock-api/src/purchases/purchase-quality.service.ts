@@ -67,6 +67,17 @@ export class PurchaseQualityService {
     return rows.map((r) => this.serialize(r));
   }
 
+  async listForLot(lotId: string) {
+    const lot = await this.lotRepo.findOne({ where: { id: lotId } });
+    if (!lot) throw new NotFoundException('Lot not found');
+    const rows = await this.qualityRepo.find({
+      where: { lotId },
+      relations: { lot: true, purchaseLine: true },
+      order: { createdAt: 'DESC' },
+    });
+    return rows.map((r) => this.serialize(r));
+  }
+
   async upsertForLine(
     purchaseId: string,
     lineId: string,
@@ -236,12 +247,12 @@ export class PurchaseQualityService {
     const lot = await lotRepo.findOne({ where: { id: row.lotId } });
     if (!lot) return;
 
-    if (row.grade) lot.grade = row.grade;
-    if (row.moisturePercent) lot.moisturePercent = row.moisturePercent;
-    if (row.screenSize) lot.screenSize = row.screenSize;
-    if (row.cuppingScore) lot.cuppingScore = row.cuppingScore;
-    if (row.defectCount != null) lot.defectCount = row.defectCount;
-    if (row.defectLevel) lot.defectLevel = row.defectLevel;
+    if (row.grade) lot.ectaGrade = row.grade;
+    if (row.moisturePercent) lot.ectaMoisturePercent = row.moisturePercent;
+    if (row.cuppingScore) lot.ectaCuppingScore = row.cuppingScore;
+    if (row.certificateNumber) lot.ectaCertificateNumber = row.certificateNumber;
+    if (row.testedAt) lot.ectaTestedAt = row.testedAt;
+    if (row.notes) lot.ectaNotes = row.notes;
     if (lot.qcPhase === LotQcPhase.RECEIVED) {
       lot.qcPhase = LotQcPhase.SAMPLE_TESTED;
     }

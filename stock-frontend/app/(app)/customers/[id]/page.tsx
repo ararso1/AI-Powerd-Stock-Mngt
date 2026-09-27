@@ -305,6 +305,82 @@ export default function CustomerProfilePage() {
                     </p>
                   </div>
                 </div>
+                {credit ? (
+                  <div className="mb-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                    <div className="rounded border border-[var(--frappe-border)] p-3">
+                      <p className="text-xs text-[var(--frappe-text-muted)]">
+                        Repayment score
+                      </p>
+                      <p className="mt-1 text-lg font-semibold tabular-nums">
+                        {credit.creditScore != null
+                          ? `${credit.creditScore} / 100`
+                          : "—"}
+                      </p>
+                      <p className="mt-1 text-xs text-[var(--frappe-text-muted)]">
+                        {credit.creditScore == null
+                          ? "Shown after a credit is fully repaid"
+                          : "Average of repaid credits"}
+                      </p>
+                    </div>
+                    <div className="rounded border border-[var(--frappe-border)] p-3">
+                      <p className="text-xs text-[var(--frappe-text-muted)]">
+                        Aging status
+                      </p>
+                      <div className="mt-1">
+                        <Badge
+                          variant={agingRiskBadgeVariant(credit.agingStatus)}
+                        >
+                          {credit.agingStatus ?? "Clear"}
+                        </Badge>
+                      </div>
+                      <p className="mt-1 text-xs text-[var(--frappe-text-muted)]">
+                        {credit.agingDays != null
+                          ? `${credit.agingLabel ?? ""} · ${credit.agingDays} days`
+                          : "No open credit"}
+                      </p>
+                    </div>
+                    <div className="rounded border border-[var(--frappe-border)] p-3">
+                      <p className="text-xs text-[var(--frappe-text-muted)]">
+                        Initial credit limit
+                      </p>
+                      <p className="mt-1 text-lg font-semibold tabular-nums">
+                        {credit.initialCreditLimit != null
+                          ? formatMoney(credit.initialCreditLimit)
+                          : "—"}
+                      </p>
+                    </div>
+                    <div className="rounded border border-[var(--frappe-border)] p-3">
+                      <p className="text-xs text-[var(--frappe-text-muted)]">
+                        Eligible limit increase
+                      </p>
+                      <p className="mt-1 text-lg font-semibold tabular-nums">
+                        {credit.eligibleIncrease != null
+                          ? formatMoney(credit.eligibleIncrease)
+                          : "—"}
+                      </p>
+                      <p className="mt-1 text-xs text-[var(--frappe-text-muted)]">
+                        {credit.eligibleIncreasePercent != null
+                          ? credit.eligibleIncreasePercent > 0
+                            ? `${credit.eligibleIncreasePercent}% of the initial limit if repaid now`
+                            : "Past 30 days — no increase"
+                          : credit.normalIncrease
+                            ? `Normal 15 days +${formatMoney(credit.normalIncrease)} · Attention 30 days +${formatMoney(credit.attentionIncrease ?? 0)}`
+                            : "Set a credit limit to enable increases"}
+                      </p>
+                    </div>
+                  </div>
+                ) : null}
+                {credit?.lastLimitIncreasePercent != null &&
+                parseFloat(credit.lastLimitIncrease ?? "0") > 0 ? (
+                  <p className="mb-3 text-sm text-[var(--frappe-text-muted)]">
+                    Last repayment in {credit.lastRepaymentDays ?? "—"} days
+                    {credit.lastRepaymentRisk
+                      ? ` (${credit.lastRepaymentRisk})`
+                      : ""}{" "}
+                    raised the limit by {credit.lastLimitIncreasePercent}% (
+                    {formatMoney(credit.lastLimitIncrease ?? 0)}).
+                  </p>
+                ) : null}
                 {credit?.overLimit ? (
                   <p className="mb-3 text-sm text-[var(--frappe-red)]">
                     Outstanding exceeds the configured credit limit. New credit

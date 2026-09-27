@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   Param,
   Post,
@@ -12,6 +13,7 @@ import type { JwtPayload } from '../common/decorators/current-user.decorator';
 import { RequirePermissions } from '../common/decorators/permissions.decorator';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { PermissionsGuard } from '../common/guards/permissions.guard';
+import { PurchaseType } from '../common/enums';
 import { ProcessRunListQueryDto } from './dto/process-run-list-query.dto';
 import {
   CompleteProcessRunDto,
@@ -19,12 +21,17 @@ import {
   CreateProcessTemplateDto,
   SubmitQcDto,
 } from './dto/process-run.dto';
+import { SubmitLocalStageDto } from './dto/local-stage.dto';
+import { LocalMarketWorkflowService } from './local-market-workflow.service';
 import { ProcessRunsService } from './process-runs.service';
 
 @Controller()
 @UseGuards(JwtAuthGuard, PermissionsGuard)
 export class ProcessRunsController {
-  constructor(private readonly service: ProcessRunsService) {}
+  constructor(
+    private readonly service: ProcessRunsService,
+    private readonly localMarket: LocalMarketWorkflowService,
+  ) {}
 
   @Get('process-templates')
   @RequirePermissions('process.read')
@@ -44,10 +51,16 @@ export class ProcessRunsController {
     return this.service.findAll(query);
   }
 
+  @Get('process-runs/summary')
+  @RequirePermissions('process.read')
+  summary(@Query() query: ProcessRunListQueryDto) {
+    return this.service.summary(query);
+  }
+
   @Get('process-runs/:id')
   @RequirePermissions('process.read')
   findOne(@Param('id') id: string) {
-    return this.service.findOne(id);
+    return this.present(id);
   }
 
   @Post('process-runs')
@@ -60,6 +73,26 @@ export class ProcessRunsController {
   @RequirePermissions('process.write')
   start(@Param('id') id: string, @CurrentUser() user: JwtPayload) {
     return this.service.start(id, user.sub);
+  }
+
+  @Post('process-runs/:id/local-stage')
+  @RequirePermissions('process.write')
+  async submitLocalStage(
+    @Param('id') id: string,
+    @Body() dto: SubmitLocalStageDto,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    await this.localMarket.submit(id, dto, user.sub);
+    return this.present(id);
+  }
+
+  private async present(id: string) {
+    const run = await this.service.findOne(id);
+    if (run.workflow !== PurchaseType.LOCAL) return run;
+    return {
+      ...run,
+      localMarket: await this.localMarket.view(run),
+    };
   }
 
   @Post('process-runs/:id/complete-stage')
@@ -92,5 +125,17 @@ export class ProcessRunsController {
   @RequirePermissions('process.write')
   cancel(@Param('id') id: string, @CurrentUser() user: JwtPayload) {
     return this.service.cancel(id, user.sub);
+  }
+
+  @Post('process-runs/:id/rollback')
+  @RequirePermissions('process.write')
+  rollback(@Param('id') id: string) {
+    return this.service.rollback(id);
+  }
+
+  @Delete('process-runs/:id')
+  @RequirePermissions('process.write')
+  remove(@Param('id') id: string) {
+    return this.service.remove(id);
   }
 }

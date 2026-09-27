@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import type { CoffeeForm, Lot } from "@/lib/types";
 import { api } from "@/lib/api";
 import { errorMessage } from "@/lib/format";
-import { COFFEE_FORM_OPTIONS } from "@/lib/lots";
+import { COFFEE_FORM_OPTIONS, COFFEE_GRADE_OPTIONS } from "@/lib/lots";
 import { useLocations } from "@/hooks/use-locations";
 import { QuickCreateTrigger } from "@/components/shared/quick-create-trigger";
 import {
@@ -32,12 +32,18 @@ export function QuickLotDialog({
   onCreated,
   defaultLocationId,
   defaultItemId,
+  catalogItems = [],
+  /** Purchase receive adds the kg. Opening quantity stays 0. */
+  forPurchase = false,
   trigger,
   disabled,
 }: {
   onCreated: (lot: Lot) => void;
   defaultLocationId?: string;
   defaultItemId?: string;
+  /** Existing coffee products at the warehouse. Empty means the modal creates one. */
+  catalogItems?: { id: string; label: string }[];
+  forPurchase?: boolean;
   trigger?: React.ReactNode;
   disabled?: boolean;
 }) {
@@ -48,7 +54,7 @@ export function QuickLotDialog({
   const [form, setForm] = useState<CoffeeForm | string>("GREEN");
   const [grade, setGrade] = useState("G1");
   const [cropYear, setCropYear] = useState("2025/26");
-  const [quantity, setQuantity] = useState("100");
+  const [quantity, setQuantity] = useState(forPurchase ? "0" : "100");
   const [locationId, setLocationId] = useState(NONE);
   const [region, setRegion] = useState("");
   const [zone, setZone] = useState("");
@@ -56,13 +62,15 @@ export function QuickLotDialog({
   const [processMethod, setProcessMethod] = useState("Washed");
   const [moisture, setMoisture] = useState("11.5");
   const [notes, setNotes] = useState("");
+  const [catalogItemId, setCatalogItemId] = useState(defaultItemId ?? "");
+  const [productName, setProductName] = useState("");
 
   function reset() {
     setCode("");
     setForm("GREEN");
     setGrade("G1");
     setCropYear("2025/26");
-    setQuantity("100");
+    setQuantity(forPurchase ? "0" : "100");
     setLocationId(defaultLocationId || NONE);
     setRegion("");
     setZone("");
@@ -70,43 +78,76 @@ export function QuickLotDialog({
     setProcessMethod("Washed");
     setMoisture("11.5");
     setNotes("");
+    setCatalogItemId(defaultItemId ?? "");
+    setProductName("");
   }
 
   useEffect(() => {
     if (open) {
       setLocationId(defaultLocationId || NONE);
+      if (forPurchase) setQuantity("0");
     }
-  }, [open, defaultLocationId]);
+  }, [open, defaultLocationId, forPurchase]);
 
   function openDialog() {
     if (disabled) return;
     reset();
     setOpen(true);
+    void api<{ code: string }>("/lots/next-code")
+      .then((res) => {
+        if (res.code) setCode(res.code);
+      })
+      .catch(() => {
+        /* Server still assigns a code if this stays empty. */
+      });
   }
 
   async function handleSubmit() {
-    const qty = parseFloat(quantity);
-    if (!Number.isFinite(qty) || qty < 0) {
+    const qty = forPurchase ? 0 : parseFloat(quantity);
+    if (!forPurchase && (!Number.isFinite(qty) || qty < 0)) {
       toast.error("Enter a valid quantity");
       return;
+    }
+    if (forPurchase && (!defaultLocationId || locationId === NONE)) {
+      toast.error("Select the purchase warehouse first");
+      return;
+    }
+    const lotCode = code.trim().toUpperCase();
+    let itemId = catalogItemId || defaultItemId || "";
+    if (forPurchase && !itemId) {
+      if (!productName.trim()) {
+        toast.error("Enter the coffee product name for this lot");
+        return;
+      }
+      if (!lotCode) {
+        toast.error("Code (SKU) is required");
+        return;
+      }
     }
     setSaving(true);
     try {
       const lot = await api<Lot>("/lots", {
         method: "POST",
         body: {
-          code: code.trim() || undefined,
+          code: lotCode || undefined,
           form,
-          grade: grade.trim() || undefined,
+          grade: grade || undefined,
           cropYear: cropYear.trim() || undefined,
           quantity: qty,
           locationId: locationId === NONE ? undefined : locationId,
-          itemId: defaultItemId || undefined,
+          itemId: itemId || undefined,
+          itemDescription:
+            !itemId && productName.trim() ? productName.trim() : undefined,
+          itemSku: !itemId && lotCode ? lotCode : undefined,
           region: region.trim() || undefined,
           zone: zone.trim() || undefined,
           woreda: woreda.trim() || undefined,
-          processMethod: processMethod.trim() || undefined,
-          moisturePercent: moisture ? parseFloat(moisture) : undefined,
+          processMethod:
+            forPurchase || !processMethod.trim()
+              ? undefined
+              : processMethod.trim(),
+          moisturePercent:
+            forPurchase || !moisture ? undefined : parseFloat(moisture),
           notes: notes.trim() || undefined,
         },
       });
@@ -136,6 +177,7 @@ export function QuickLotDialog({
         open={open}
         onOpenChange={onOpenChange}
         title="Create coffee lot"
+        contentClassName="w-[min(72rem,calc(100%-2rem))] sm:max-w-none"
         footer={
           <>
             <FrappeButtonSecondary type="button" onClick={() => setOpen(false)}>
@@ -151,20 +193,26 @@ export function QuickLotDialog({
           </>
         }
       >
-        <div className="grid max-h-[70vh] gap-3 overflow-y-auto p-4 sm:grid-cols-2">
-          <div className="grid gap-1.5 sm:col-span-2">
+        <div className="grid max-h-[80vh] gap-x-4 gap-y-3 overflow-y-auto p-5 sm:grid-cols-2 lg:grid-cols-3">
+          <div className="grid gap-1.5 sm:col-span-2 lg:col-span-3">
             <p className="text-xs text-[var(--csolve-text-muted)]">
-              Opens a new lot at your receiving warehouse. Origin fields are the
-              coffee source, not the warehouse.
+              {forPurchase
+                ? "Creates the lot at this warehouse. The code is the product SKU. Enter the received kg, warehouse test scores, and ECTA result on the purchase."
+                : "Opens a new lot at your receiving warehouse. Origin fields are the coffee source, not the warehouse."}
             </p>
           </div>
           <div className="grid gap-1.5">
-            <Label>Code (optional)</Label>
+            <Label>{forPurchase ? "Code (SKU)" : "Code"}</Label>
             <Input
               value={code}
               onChange={(e) => setCode(e.target.value)}
-              placeholder="Auto-generated if empty"
+              placeholder="LOT-YYYY-0001"
             />
+            <p className="text-[11px] text-[var(--csolve-text-muted)]">
+              {forPurchase
+                ? "Filled automatically and used as the product SKU. You can change it before saving."
+                : "Filled automatically. You can change it before saving."}
+            </p>
           </div>
           <div className="grid gap-1.5">
             <Label>Form</Label>
@@ -183,7 +231,18 @@ export function QuickLotDialog({
           </div>
           <div className="grid gap-1.5">
             <Label>Grade</Label>
-            <Input value={grade} onChange={(e) => setGrade(e.target.value)} />
+            <Select value={grade} onValueChange={setGrade}>
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {COFFEE_GRADE_OPTIONS.map((value) => (
+                  <SelectItem key={value} value={value}>
+                    {value}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
           <div className="grid gap-1.5">
             <Label>Crop year</Label>
@@ -192,27 +251,75 @@ export function QuickLotDialog({
               onChange={(e) => setCropYear(e.target.value)}
             />
           </div>
+          {forPurchase ? null : (
+            <div className="grid gap-1.5">
+              <Label>Quantity (kg)</Label>
+              <Input
+                type="number"
+                min={0}
+                step="0.001"
+                value={quantity}
+                onChange={(e) => setQuantity(e.target.value)}
+              />
+            </div>
+          )}
+          {forPurchase ? (
+            <div className="grid gap-1.5 sm:col-span-2 lg:col-span-3">
+              <Label>Coffee product</Label>
+              {catalogItems.length > 0 ? (
+                <Select
+                  value={catalogItemId || NONE}
+                  onValueChange={(v) =>
+                    setCatalogItemId(v === NONE ? "" : v)
+                  }
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select existing coffee product" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value={NONE}>New coffee product</SelectItem>
+                    {catalogItems.map((item) => (
+                      <SelectItem key={item.id} value={item.id}>
+                        {item.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              ) : (
+                <p className="text-[11px] text-[var(--csolve-text-muted)]">
+                  No coffee product at this warehouse yet. Enter a name below.
+                  The lot code is saved as the SKU.
+                </p>
+              )}
+            </div>
+          ) : null}
+          {forPurchase && !catalogItemId ? (
+            <div className="grid gap-1.5 sm:col-span-2">
+              <Label>Product name</Label>
+              <Input
+                value={productName}
+                onChange={(e) => setProductName(e.target.value)}
+                placeholder="e.g. Yirgacheffe G1"
+              />
+            </div>
+          ) : null}
           <div className="grid gap-1.5">
-            <Label>Quantity (kg)</Label>
-            <Input
-              type="number"
-              min={0}
-              step="0.001"
-              value={quantity}
-              onChange={(e) => setQuantity(e.target.value)}
-            />
-          </div>
-          <div className="grid gap-1.5">
-            <Label>Warehouse / location</Label>
-            <Select value={locationId} onValueChange={setLocationId}>
+            <Label>Warehouse / business location</Label>
+            <Select
+              value={locationId}
+              onValueChange={setLocationId}
+              disabled={forPurchase && Boolean(defaultLocationId)}
+            >
               <SelectTrigger>
                 <SelectValue placeholder="Select location" />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value={NONE}>None</SelectItem>
+                {!forPurchase ? (
+                  <SelectItem value={NONE}>None</SelectItem>
+                ) : null}
                 {(locations ?? []).map((loc) => (
                   <SelectItem key={loc.id} value={loc.id}>
-                    {loc.name}
+                    {loc.name} ({loc.type})
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -227,31 +334,35 @@ export function QuickLotDialog({
             />
           </div>
           <div className="grid gap-1.5">
-            <Label>Zone</Label>
+            <Label>Zone (origin)</Label>
             <Input value={zone} onChange={(e) => setZone(e.target.value)} />
           </div>
           <div className="grid gap-1.5">
-            <Label>Woreda</Label>
+            <Label>Woreda (origin)</Label>
             <Input value={woreda} onChange={(e) => setWoreda(e.target.value)} />
           </div>
-          <div className="grid gap-1.5">
-            <Label>Process</Label>
-            <Input
-              value={processMethod}
-              onChange={(e) => setProcessMethod(e.target.value)}
-            />
-          </div>
-          <div className="grid gap-1.5">
-            <Label>Moisture %</Label>
-            <Input
-              type="number"
-              min={0}
-              step="0.01"
-              value={moisture}
-              onChange={(e) => setMoisture(e.target.value)}
-            />
-          </div>
-          <div className="grid gap-1.5 sm:col-span-2">
+          {forPurchase ? null : (
+            <>
+              <div className="grid gap-1.5">
+                <Label>Process</Label>
+                <Input
+                  value={processMethod}
+                  onChange={(e) => setProcessMethod(e.target.value)}
+                />
+              </div>
+              <div className="grid gap-1.5">
+                <Label>Moisture %</Label>
+                <Input
+                  type="number"
+                  min={0}
+                  step="0.01"
+                  value={moisture}
+                  onChange={(e) => setMoisture(e.target.value)}
+                />
+              </div>
+            </>
+          )}
+          <div className="grid gap-1.5 sm:col-span-2 lg:col-span-3">
             <Label>Notes</Label>
             <Textarea
               value={notes}

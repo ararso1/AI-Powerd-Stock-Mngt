@@ -41,6 +41,13 @@ export class CustomerCredit extends UuidBaseEntity {
   @Column({ type: 'date', nullable: true })
   dueDate: string | null;
 
+  /** Set once the account is clear and this credit has been scored. */
+  @Column({ name: 'limit_reward_applied', default: false })
+  limitRewardApplied: boolean;
+
+  @Column({ name: 'repaid_in_days', type: 'int', nullable: true })
+  repaidInDays: number | null;
+
   @ManyToOne(() => Customer)
   @JoinColumn({ name: 'customer_id' })
   customer: Customer;

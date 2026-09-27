@@ -8,6 +8,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { cn } from "@/lib/utils";
 
 /**
  * Quick-create fields rendered inside a full-page form (e.g. purchase/sale).
@@ -19,16 +20,23 @@ export function QuickCreateDialogShell({
   title,
   children,
   footer,
+  contentClassName,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   title: string;
   children: React.ReactNode;
   footer: React.ReactNode;
+  contentClassName?: string;
 }) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="gap-0 overflow-hidden p-0 sm:max-w-md">
+      <DialogContent
+        className={cn(
+          "gap-0 overflow-hidden p-0 sm:max-w-md",
+          contentClassName
+        )}
+      >
         <DialogHeader className="border-b border-[var(--frappe-border)] bg-[var(--frappe-section-head)] px-4 py-3">
           <DialogTitle className="text-base">{title}</DialogTitle>
         </DialogHeader>

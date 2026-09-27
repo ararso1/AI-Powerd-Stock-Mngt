@@ -23,6 +23,7 @@ export default function LocationsPage() {
   return (
     <MasterDataPage<Location>
       title="Locations"
+      subtitle="Our warehouses and showrooms (receiving sites) — not coffee origin"
       endpoint="/locations"
       readPermission="locations.read"
       writePermission="locations.write"

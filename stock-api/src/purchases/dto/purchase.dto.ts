@@ -53,9 +53,8 @@ export class CreatePurchaseDto {
   @IsUUID()
   locationId: string;
 
-  @IsOptional()
   @IsEnum(PurchaseType)
-  purchaseType?: PurchaseType;
+  purchaseType: PurchaseType;
 
   @IsEnum(PaymentMethod)
   paymentMethod: PaymentMethod;

@@ -128,6 +128,8 @@ export class CustomersService {
           notes: dto.notes?.trim() || null,
           creditLimit:
             dto.creditLimit !== undefined ? dto.creditLimit.toFixed(2) : null,
+          creditLimitBase:
+            dto.creditLimit !== undefined ? dto.creditLimit.toFixed(2) : null,
         }),
       )
       .then((c) => this.findOne(c.id));
@@ -163,8 +165,15 @@ export class CustomersService {
     if (dto.notes !== undefined) c.notes = dto.notes?.trim() || null;
     if (dto.isActive !== undefined) c.isActive = dto.isActive;
     if (dto.creditLimit !== undefined) {
-      c.creditLimit =
+      const next =
         dto.creditLimit === null ? null : Number(dto.creditLimit).toFixed(2);
+      const changed = (c.creditLimit ?? null) !== next;
+      c.creditLimit = next;
+      if (changed) {
+        c.creditLimitBase = next;
+        c.lastLimitIncrease = null;
+        c.lastLimitIncreasePercent = null;
+      }
     }
     await this.repo.save(c);
     return this.findOne(id);

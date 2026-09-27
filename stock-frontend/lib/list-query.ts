@@ -353,6 +353,8 @@ export type ProcessRunsListQueryParams = GenericListQueryParams & {
   locationId?: string;
   templateId?: string;
   status?: string;
+  workflow?: string;
+  stage?: string;
 };
 
 export function buildProcessRunsListPath(

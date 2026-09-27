@@ -88,7 +88,7 @@ export default function PurchasesPage() {
   return (
     <AppShell
       title="Purchase"
-      subtitle="List of all purchase transactions"
+      subtitle="Receive at our warehouse · coffee lots · ECTA quality"
       breadcrumbs={[{ label: "Stock", href: "/dashboard" }, { label: "Purchase" }]}
       actions={
         <PermissionGate permission="purchase.write">
@@ -217,7 +217,7 @@ export default function PurchasesPage() {
               },
               {
                 key: "location",
-                header: "Location",
+                header: "Warehouse",
                 cell: (r) => r.location?.name ?? "—",
               },
               {

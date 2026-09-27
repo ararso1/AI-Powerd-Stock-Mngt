@@ -77,6 +77,43 @@ export class Customer extends UuidBaseEntity {
   })
   creditLimit: string | null;
 
+  /** Limit used as the base for repayment increases (10% / 5%). */
+  @Column({
+    name: 'credit_limit_base',
+    type: 'decimal',
+    precision: 14,
+    scale: 2,
+    nullable: true,
+  })
+  creditLimitBase: string | null;
+
+  @Column({
+    name: 'last_limit_increase',
+    type: 'decimal',
+    precision: 14,
+    scale: 2,
+    nullable: true,
+  })
+  lastLimitIncrease: string | null;
+
+  @Column({
+    name: 'last_limit_increase_percent',
+    type: 'int',
+    nullable: true,
+  })
+  lastLimitIncreasePercent: number | null;
+
+  @Column({ name: 'last_repayment_days', type: 'int', nullable: true })
+  lastRepaymentDays: number | null;
+
+  @Column({
+    name: 'last_repayment_risk',
+    type: 'varchar',
+    length: 40,
+    nullable: true,
+  })
+  lastRepaymentRisk: string | null;
+
   @OneToMany(() => Sale, (sale) => sale.customer)
   sales: Sale[];
 

@@ -171,7 +171,7 @@ export class InventoryService {
 
     if (this.stockService.isCoffeeItem(item)) {
       throw new BadRequestException(
-        'Coffee stock must be lot-linked. Use cherry collection, process runs, or create a lot first.',
+        'Coffee stock is received on a lot. Create a green-bean lot, then purchase it into this warehouse.',
       );
     }
 

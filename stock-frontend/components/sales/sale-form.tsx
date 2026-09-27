@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { QuickCustomerDialog } from "@/components/customers/quick-customer-dialog";
@@ -17,7 +17,6 @@ import {
   FrappeDocument,
   FrappeField,
   FrappeFormGrid,
-  FrappeFormToolbar,
   FrappeGridCell,
   FrappeGridRow,
   FrappeGridTable,
@@ -44,7 +43,10 @@ import {
 import { fetchInventoryForLocation } from "@/lib/inventory-fetch";
 import { buildItemOptionMap, itemOptionsFromMap, isCoffeeSku, parseDocumentLines, productItemId, resolveItem, stockTransferOptions, type DocumentLineBody } from "@/lib/inventory-items";
 import { saleRepUser } from "@/lib/sale-utils";
-import { errorMessage } from "@/lib/format";
+import { errorMessage, formatMoney, formatQty } from "@/lib/format";
+import type { CustomerCreditProfile } from "@/lib/types";
+import { agingRiskBadgeVariant } from "@/lib/customers";
+import { Badge } from "@/components/ui/badge";
 import {
   COMMISSION_BASIS_OPTIONS,
   PAYMENT_METHOD_OPTIONS,
@@ -78,6 +80,51 @@ interface LineRow {
   quantity: string;
   unitPrice: string;
   item?: Item;
+  /** Set for packaged coffee. Quantity is then a pack count. */
+  packSizeKg?: number | null;
+  purchasePrice?: string;
+}
+
+function packSizeKgOf(item?: Item | null, lot?: { form?: string | null; processMethod?: string | null } | null) {
+  const sku = item?.sku?.trim().toUpperCase() ?? "";
+  const method = lot?.processMethod ?? "";
+  const packaged =
+    lot?.form === "PACKAGED" ||
+    item?.unit?.toLowerCase() === "pcs" ||
+    sku.endsWith("-1KG") ||
+    sku.endsWith("-500");
+  if (!packaged) return null;
+  if (sku.endsWith("-500") || /^0\.5/.test(method)) return 0.5;
+  const match = method.match(/([\d.]+)\s*kg/i);
+  if (match) {
+    const size = parseFloat(match[1]);
+    if (size > 0) return size;
+  }
+  return 1;
+}
+
+function lineMeasures(line: LineRow) {
+  const qty = parseFloat(line.quantity);
+  const count = Number.isFinite(qty) && qty > 0 ? qty : 0;
+  const packSize = line.packSizeKg ?? null;
+  if (packSize && packSize > 0) {
+    return {
+      packs: count,
+      kg: Math.round((count * packSize + Number.EPSILON) * 1000) / 1000,
+    };
+  }
+  return { packs: null as number | null, kg: count };
+}
+
+function lineCaption(line: LineRow) {
+  const name = line.item?.description ?? "Item";
+  const measure = lineMeasures(line);
+  if (measure.packs != null) {
+    const packs = formatQty(measure.packs);
+    const unit = measure.packs === 1 ? "pack" : "packs";
+    return `${name} · ${packs} ${unit} · ${formatQty(measure.kg)} kg`;
+  }
+  return `${name} · ${formatQty(measure.kg)} kg`;
 }
 
 function linesFromSale(sale: Sale): LineRow[] {
@@ -89,6 +136,7 @@ function linesFromSale(sale: Sale): LineRow[] {
       quantity: l.quantity,
       unitPrice: l.unitPrice,
       item: l.item ? resolveItem(itemId, l.item) : undefined,
+      packSizeKg: packSizeKgOf(l.item, l.lot),
     };
   });
   return rows.length > 0
@@ -116,6 +164,32 @@ export function SaleForm({ sale }: { sale?: Sale }) {
   const [creditDueDate, setCreditDueDate] = useState(
     sale?.creditDueDate?.slice(0, 10) ?? ""
   );
+  const [creditStanding, setCreditStanding] =
+    useState<CustomerCreditProfile | null>(null);
+  const [creditStandingLoading, setCreditStandingLoading] = useState(false);
+
+  useEffect(() => {
+    if (paymentMethod !== "CREDIT" || !customerId) {
+      setCreditStanding(null);
+      setCreditStandingLoading(false);
+      return;
+    }
+    let cancelled = false;
+    setCreditStandingLoading(true);
+    api<CustomerCreditProfile>(`/credits/customers/accounts/${customerId}`)
+      .then((data) => {
+        if (!cancelled) setCreditStanding(data);
+      })
+      .catch(() => {
+        if (!cancelled) setCreditStanding(null);
+      })
+      .finally(() => {
+        if (!cancelled) setCreditStandingLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [paymentMethod, customerId]);
   const [allowNegativeStock, setAllowNegativeStock] = useState(false);
   const [soldByUserId, setSoldByUserId] = useState(
     () =>
@@ -123,6 +197,10 @@ export function SaleForm({ sale }: { sale?: Sale }) {
       saleRepUser(sale ?? {})?.id ??
       ""
   );
+  const [commissionEnabled, setCommissionEnabled] = useState(() => {
+    const pct = parseFloat(String(sale?.commissionPercent ?? ""));
+    return Number.isFinite(pct) && pct > 0;
+  });
   const [commissionPercent, setCommissionPercent] = useState(() => {
     if (
       sale?.commissionPercent != null &&
@@ -130,7 +208,7 @@ export function SaleForm({ sale }: { sale?: Sale }) {
     ) {
       return String(sale.commissionPercent);
     }
-    return sale ? "" : "10";
+    return "10";
   });
   const [commissionBasis, setCommissionBasis] = useState<CommissionBasis>(
     () => sale?.commissionBasis ?? "PROFIT"
@@ -211,6 +289,43 @@ export function SaleForm({ sale }: { sale?: Sale }) {
   );
   const itemOptions = itemOptionsFromMap(itemMap);
   const stockOptions = stockTransferOptions(stockItems);
+  const summary = useMemo(() => {
+    const rows = lines
+      .filter((line) => line.itemId)
+      .map((line) => {
+        const measure = lineMeasures(line);
+        const qty = parseFloat(line.quantity);
+        const rate = parseFloat(line.unitPrice);
+        const amount =
+          Number.isFinite(qty) && Number.isFinite(rate) ? qty * rate : 0;
+        const cost = parseFloat(line.purchasePrice ?? "");
+        const profit =
+          Number.isFinite(qty) && Number.isFinite(rate) && Number.isFinite(cost)
+            ? amount - qty * cost
+            : null;
+        return {
+          name: line.item?.description ?? "Item",
+          packs: measure.packs,
+          kg: measure.kg,
+          amount,
+          profit,
+        };
+      });
+    const subtotal = rows.reduce((sum, row) => sum + row.amount, 0);
+    const packs = rows.reduce((sum, row) => sum + (row.packs ?? 0), 0);
+    const kg = rows.reduce((sum, row) => sum + row.kg, 0);
+    const pct = parseFloat(commissionPercent);
+    let commission: number | null = null;
+    if (commissionEnabled && Number.isFinite(pct) && pct > 0) {
+      if (commissionBasis === "SALES") {
+        commission = (subtotal * pct) / 100;
+      } else if (rows.every((row) => row.profit != null)) {
+        const profit = rows.reduce((sum, row) => sum + (row.profit ?? 0), 0);
+        commission = (profit * pct) / 100;
+      }
+    }
+    return { rows, subtotal, packs, kg, commission };
+  }, [lines, commissionEnabled, commissionPercent, commissionBasis]);
 
   const customerOptions = partySelectOptions(
     customers ?? [],
@@ -309,15 +424,15 @@ export function SaleForm({ sale }: { sale?: Sale }) {
     if (canOnBehalf && effectiveSoldByUserId) {
       body.soldByUserId = effectiveSoldByUserId;
     }
-    if (commissionPercent.trim()) {
+    if (commissionEnabled) {
       const pct = parseFloat(commissionPercent);
-      if (!Number.isNaN(pct)) {
-        if (pct < 0 || pct > 100) {
-          return { error: "Commission must be between 0 and 100." };
-        }
-        body.commissionPercent = pct;
-        body.commissionBasis = commissionBasis;
+      if (!Number.isFinite(pct) || pct <= 0 || pct > 100) {
+        return { error: "Enter a commission percentage from 0.01 to 100." };
       }
+      body.commissionPercent = pct;
+      body.commissionBasis = commissionBasis;
+    } else {
+      body.commissionPercent = 0;
     }
     return body;
   }
@@ -327,6 +442,37 @@ export function SaleForm({ sale }: { sale?: Sale }) {
     if (paymentMethod === "CREDIT" && !customerId) {
       toast.error("Customer is required for credit sales");
       return;
+    }
+    if (paymentMethod === "CREDIT" && customerId && !notesOnly) {
+      if (creditStandingLoading) {
+        toast.error("Customer credit is still loading");
+        return;
+      }
+      const standing = creditStanding;
+      const saleCredit = summary.subtotal;
+      let available =
+        standing?.availableCredit != null
+          ? parseFloat(standing.availableCredit)
+          : null;
+      const sameCustomer = sale?.customerId === customerId;
+      const existingBalance = parseFloat(sale?.customerCredit?.balance ?? "");
+      if (
+        sameCustomer &&
+        Number.isFinite(existingBalance) &&
+        available != null
+      ) {
+        available += existingBalance;
+      }
+      if (standing && standing.creditLimit == null) {
+        toast.error("Set a credit limit on this customer before a credit sale");
+        return;
+      }
+      if (available != null && saleCredit > available + 0.009) {
+        toast.error(
+          `This credit sale is ${formatMoney(saleCredit)} and available credit is ${formatMoney(available)}`
+        );
+        return;
+      }
     }
     const resolvedBankId = resolveBankAccountId(
       paymentMethod,
@@ -419,13 +565,6 @@ export function SaleForm({ sale }: { sale?: Sale }) {
 
   return (
     <form onSubmit={handleSubmit} className="mx-auto max-w-5xl">
-      <FrappeFormToolbar>
-        <FrappeButtonPrimary type="submit" disabled={saving}>
-          {saving ? <Spinner className="size-4" /> : "Save"}
-        </FrappeButtonPrimary>
-        <FrappeButtonLink href={cancelHref}>Cancel</FrappeButtonLink>
-      </FrappeFormToolbar>
-
       {notesOnly ? (
         <div className="mb-4 rounded border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
           Customer credit has payments — only notes can be changed.
@@ -553,6 +692,16 @@ export function SaleForm({ sale }: { sale?: Sale }) {
               </FrappeField>
             ) : null}
             {!notesOnly ? (
+              <div className="flex items-center gap-2 sm:col-span-2">
+                <Switch
+                  id="sale-commission"
+                  checked={commissionEnabled}
+                  onCheckedChange={setCommissionEnabled}
+                />
+                <Label htmlFor="sale-commission">Commission</Label>
+              </div>
+            ) : null}
+            {!notesOnly && commissionEnabled ? (
               <>
                 <FrappeField label="Commission basis">
                   <SearchSelect
@@ -579,7 +728,7 @@ export function SaleForm({ sale }: { sale?: Sale }) {
                     {commissionBasis === "SALES"
                       ? "sale subtotal"
                       : "gross profit"}
-                    . Default 10%. Clear for no commission.
+                    .
                   </p>
                 </FrappeField>
               </>
@@ -603,6 +752,19 @@ export function SaleForm({ sale }: { sale?: Sale }) {
             </FrappeField>
           </FrappeFormGrid>
         </FrappeSection>
+
+        {paymentMethod === "CREDIT" && customerId ? (
+          <CustomerCreditStanding
+            standing={creditStanding}
+            loading={creditStandingLoading}
+            saleTotal={summary.subtotal}
+            heldBalance={
+              sale?.customerId === customerId
+                ? parseFloat(sale?.customerCredit?.balance ?? "")
+                : 0
+            }
+          />
+        ) : null}
 
         {!notesOnly ? (
           <FrappeSection
@@ -665,10 +827,12 @@ export function SaleForm({ sale }: { sale?: Sale }) {
                             lotId: stockRow.lotId ?? null,
                             unitPrice:
                               line.unitPrice || stockRow.purchasePrice,
+                            purchasePrice: stockRow.purchasePrice,
                             item: resolveItem(
                               stockRow.itemId,
                               stockRow.item
                             ),
+                            packSizeKg: packSizeKgOf(stockRow.item, stockRow.lot),
                           });
                           return;
                         }
@@ -678,12 +842,13 @@ export function SaleForm({ sale }: { sale?: Sale }) {
                           itemId: v,
                           lotId: null,
                           item,
+                          packSizeKg: packSizeKgOf(item, null),
                         });
                       }}
                       options={
                         stockOptions.length > 0
                           ? stockOptions.map((o) => ({
-                              id: o.id,
+                              itemId: o.id,
                               label: o.label,
                             }))
                           : itemOptions
@@ -694,6 +859,11 @@ export function SaleForm({ sale }: { sale?: Sale }) {
                       onQueryChange={setItemQuery}
                       placeholder="Item / lot"
                     />
+                    {line.itemId ? (
+                      <p className="mt-1 text-xs text-[var(--frappe-text-muted)]">
+                        {lineCaption(line)}
+                      </p>
+                    ) : null}
                   </FrappeGridCell>
                   <FrappeGridCell>
                     <Input
@@ -726,7 +896,232 @@ export function SaleForm({ sale }: { sale?: Sale }) {
             </FrappeGridTable>
           </FrappeSection>
         ) : null}
+
+        {!notesOnly ? (
+          <FrappeSection
+            title="Summary"
+            description="Selected items, packs, kilograms, and amount"
+          >
+            {summary.rows.length === 0 ? (
+              <p className="text-sm text-[var(--frappe-text-muted)]">
+                Select an item to see its name, packs, and kilograms here.
+              </p>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="frappe-list-table">
+                  <thead>
+                    <tr>
+                      <th>Item</th>
+                      <th className="text-right">Packs</th>
+                      <th className="text-right">Kg</th>
+                      <th className="text-right">Amount</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {summary.rows.map((row, index) => (
+                      <tr key={`${row.name}-${index}`}>
+                        <td>{row.name}</td>
+                        <td className="text-right tabular-nums">
+                          {row.packs != null ? formatQty(row.packs) : "—"}
+                        </td>
+                        <td className="text-right tabular-nums">
+                          {formatQty(row.kg)}
+                        </td>
+                        <td className="text-right tabular-nums">
+                          {formatMoney(row.amount)}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                  <tfoot>
+                    <tr>
+                      <td className="font-medium">Total</td>
+                      <td className="text-right font-medium tabular-nums">
+                        {summary.packs > 0 ? formatQty(summary.packs) : "—"}
+                      </td>
+                      <td className="text-right font-medium tabular-nums">
+                        {formatQty(summary.kg)}
+                      </td>
+                      <td className="text-right font-medium tabular-nums">
+                        {formatMoney(summary.subtotal)}
+                      </td>
+                    </tr>
+                  </tfoot>
+                </table>
+                {commissionEnabled ? (
+                  <p className="mt-3 text-sm text-[var(--frappe-text-muted)]">
+                    Commission{" "}
+                    {summary.commission != null
+                      ? formatMoney(summary.commission)
+                      : "—"}{" "}
+                    at {commissionPercent || "0"}% of{" "}
+                    {commissionBasis === "SALES" ? "the sale amount" : "profit"}.
+                  </p>
+                ) : null}
+              </div>
+            )}
+          </FrappeSection>
+        ) : null}
       </FrappeDocument>
+
+      <div className="mt-4 flex flex-wrap items-center gap-2">
+        <FrappeButtonPrimary type="submit" disabled={saving}>
+          {saving ? <Spinner className="size-4" /> : "Save"}
+        </FrappeButtonPrimary>
+        <FrappeButtonLink href={cancelHref}>Cancel</FrappeButtonLink>
+      </div>
     </form>
+  );
+}
+
+function CustomerCreditStanding({
+  standing,
+  loading,
+  saleTotal,
+  heldBalance,
+}: {
+  standing: CustomerCreditProfile | null;
+  loading: boolean;
+  saleTotal: number;
+  heldBalance: number;
+}) {
+  if (loading && !standing) {
+    return (
+      <FrappeSection title="Customer credit">
+        <p className="text-sm text-[var(--frappe-text-muted)]">
+          Loading credit standing…
+        </p>
+      </FrappeSection>
+    );
+  }
+  if (!standing) {
+    return (
+      <FrappeSection title="Customer credit">
+        <p className="text-sm text-[var(--frappe-text-muted)]">
+          Credit standing could not be loaded.
+        </p>
+      </FrappeSection>
+    );
+  }
+
+  const availableRaw =
+    standing.availableCredit != null ? parseFloat(standing.availableCredit) : null;
+  const available =
+    availableRaw != null && Number.isFinite(heldBalance)
+      ? availableRaw + (Number.isFinite(heldBalance) ? heldBalance : 0)
+      : availableRaw;
+  const over =
+    available != null && saleTotal > available + 0.009 && saleTotal > 0;
+  const open = standing.eligibleIncreasePercent != null;
+  const increaseLabel =
+    standing.eligibleIncreasePercent != null &&
+    standing.eligibleIncreasePercent > 0
+      ? `${standing.eligibleIncreasePercent}% of the initial limit (${formatMoney(standing.eligibleIncrease ?? 0)}) if this balance is fully repaid now`
+      : open
+        ? "No limit increase — repayment is past the 30-day Attention window"
+        : null;
+
+  return (
+    <FrappeSection
+      title="Customer credit"
+      description="Limit, aging, and the increase earned when the balance is fully repaid"
+    >
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        <CreditStat
+          label="Credit limit"
+          value={
+            standing.creditLimit != null
+              ? formatMoney(standing.creditLimit)
+              : "Not set"
+          }
+          hint={
+            standing.initialCreditLimit
+              ? `Initial ${formatMoney(standing.initialCreditLimit)}`
+              : undefined
+          }
+        />
+        <CreditStat
+          label="Used credit"
+          value={formatMoney(standing.usedCredit ?? standing.outstanding)}
+        />
+        <CreditStat
+          label="Available credit"
+          value={available != null ? formatMoney(available) : "—"}
+        />
+        <div className="rounded border border-[var(--frappe-border)] p-3">
+          <p className="text-xs text-[var(--frappe-text-muted)]">Aging status</p>
+          <div className="mt-1">
+            <Badge variant={agingRiskBadgeVariant(standing.agingStatus)}>
+              {standing.agingStatus ?? "Clear"}
+            </Badge>
+          </div>
+          <p className="mt-1 text-xs text-[var(--frappe-text-muted)]">
+            {standing.agingDays != null
+              ? `${standing.agingLabel ?? ""} · ${standing.agingDays} days`.trim()
+              : "No open credit"}
+          </p>
+        </div>
+      </div>
+      <div className="mt-3 space-y-1 text-sm">
+        <p>
+          Repayment score{" "}
+          <span className="font-semibold tabular-nums">
+            {standing.creditScore != null ? standing.creditScore : "—"}
+          </span>
+          {standing.creditScore == null ? " · no fully repaid credit yet" : " / 100"}
+        </p>
+        {increaseLabel ? <p>Eligible limit increase: {increaseLabel}.</p> : null}
+        {!open && standing.normalIncrease ? (
+          <p>
+            Next full repayment: within 15 days (Normal) adds{" "}
+            {formatMoney(standing.normalIncrease)} (10% of the initial limit);
+            within 30 days (Attention) adds{" "}
+            {formatMoney(standing.attentionIncrease ?? 0)} (5%).
+          </p>
+        ) : null}
+        {standing.lastLimitIncreasePercent != null &&
+        parseFloat(standing.lastLimitIncrease ?? "0") > 0 ? (
+          <p>
+            Last increase: {standing.lastLimitIncreasePercent}% (
+            {formatMoney(standing.lastLimitIncrease ?? 0)}) after repayment in{" "}
+            {standing.lastRepaymentDays ?? "—"} days
+            {standing.lastRepaymentRisk
+              ? ` (${standing.lastRepaymentRisk})`
+              : ""}
+            .
+          </p>
+        ) : null}
+        {over ? (
+          <p className="text-[var(--frappe-red)]">
+            This sale ({formatMoney(saleTotal)}) is above available credit.
+          </p>
+        ) : null}
+        {standing.creditLimit == null ? (
+          <p className="text-[var(--frappe-text-muted)]">
+            Set a credit limit on the customer before recording a credit sale.
+          </p>
+        ) : null}
+      </div>
+    </FrappeSection>
+  );
+}
+
+function CreditStat({
+  label,
+  value,
+  hint,
+}: {
+  label: string;
+  value: string;
+  hint?: string;
+}) {
+  return (
+    <div className="rounded border border-[var(--frappe-border)] p-3">
+      <p className="text-xs text-[var(--frappe-text-muted)]">{label}</p>
+      <p className="mt-1 text-lg font-semibold tabular-nums">{value}</p>
+      {hint ? (
+        <p className="mt-1 text-xs text-[var(--frappe-text-muted)]">{hint}</p>
+      ) : null}
+    </div>
   );
 }

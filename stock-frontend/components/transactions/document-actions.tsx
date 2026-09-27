@@ -7,20 +7,24 @@ import { FrappeButtonLink } from "@/components/frappe";
 import { PermissionGate } from "@/components/permission-gate";
 import { api } from "@/lib/api";
 import { errorMessage } from "@/lib/format";
+import { canVoidPurchase } from "@/lib/purchases";
 import { toast } from "sonner";
 
 export function PurchaseDocumentActions({
   purchaseId,
   status,
+  createdAt,
   canEdit = true,
 }: {
   purchaseId: string;
   status?: string;
+  createdAt?: string | null;
   canEdit?: boolean;
 }) {
   const router = useRouter();
   const [voiding, setVoiding] = useState(false);
   const isVoided = status === "VOIDED";
+  const canVoid = canVoidPurchase(createdAt);
 
   async function handleVoid() {
     if (
@@ -53,16 +57,18 @@ export function PurchaseDocumentActions({
             Edit
           </FrappeButtonLink>
         ) : null}
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          className="h-8 text-xs text-destructive"
-          disabled={voiding}
-          onClick={handleVoid}
-        >
-          {voiding ? "Voiding…" : "Void"}
-        </Button>
+        {canVoid ? (
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="h-8 text-xs text-destructive"
+            disabled={voiding}
+            onClick={handleVoid}
+          >
+            {voiding ? "Voiding…" : "Void"}
+          </Button>
+        ) : null}
       </div>
     </PermissionGate>
   );

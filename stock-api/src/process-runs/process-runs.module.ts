@@ -7,6 +7,7 @@ import { ProcessRun } from '../database/entities/process-run.entity';
 import { ProcessTemplate } from '../database/entities/process-template.entity';
 import { QcResult } from '../database/entities/qc-result.entity';
 import { InventoryModule } from '../inventory/inventory.module';
+import { LocalMarketWorkflowService } from './local-market-workflow.service';
 import { ProcessRunsController } from './process-runs.controller';
 import { ProcessRunsService } from './process-runs.service';
 
@@ -23,7 +24,7 @@ import { ProcessRunsService } from './process-runs.service';
     InventoryModule,
   ],
   controllers: [ProcessRunsController],
-  providers: [ProcessRunsService],
+  providers: [ProcessRunsService, LocalMarketWorkflowService],
   exports: [ProcessRunsService],
 })
 export class ProcessRunsModule {}

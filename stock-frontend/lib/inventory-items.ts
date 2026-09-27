@@ -181,5 +181,59 @@ export function stockTransferOptions(stock: StockRecord[]) {
 }
 
 export function isCoffeeSku(sku: string | null | undefined): boolean {
-  return !!sku?.trim().toUpperCase().startsWith("COF-");
+  const value = sku?.trim().toUpperCase();
+  return !!value && (value.startsWith("COF-") || value.startsWith("LOT-"));
+}
+
+const PROCESSED_COFFEE_FORMS = new Set(["ROASTED", "FLOUR", "PACKAGED"]);
+
+/** Roast, ground, packaged, and reject coffee. Purchases and warehouse intake stay on raw lots. */
+export function isProcessedCoffeeProduct(source: {
+  form?: string | null;
+  processMethod?: string | null;
+  sku?: string | null;
+  itemType?: string | null;
+}): boolean {
+  const sku = source.sku?.trim().toUpperCase() ?? "";
+  if (
+    sku.startsWith("COF-ROAST") ||
+    sku.startsWith("COF-GROUND") ||
+    sku === "COF-REJECT"
+  ) {
+    return true;
+  }
+  if (source.itemType === "FINISHED") return true;
+  if (source.form && PROCESSED_COFFEE_FORMS.has(source.form)) return true;
+  const method = source.processMethod ?? "";
+  return (
+    method === "Roast & Ground" ||
+    method === "Roast coffee" ||
+    method === "Ground coffee"
+  );
+}
+
+/** Warehouse lots that can start a process run. Roast & ground and other finished coffee stay out. */
+export function isWarehouseProcessStock(row: {
+  lot?: { form?: string | null; processMethod?: string | null } | null;
+  item?: { sku?: string | null; itemType?: string | null } | null;
+}): boolean {
+  const form = row.lot?.form;
+  if (!form || PROCESSED_COFFEE_FORMS.has(form)) return false;
+  if (
+    row.lot?.processMethod === "Roast & Ground" ||
+    row.lot?.processMethod === "Roast coffee" ||
+    row.lot?.processMethod === "Ground coffee"
+  ) {
+    return false;
+  }
+  const sku = row.item?.sku?.trim().toUpperCase() ?? "";
+  if (
+    sku.startsWith("COF-ROAST") ||
+    sku.startsWith("COF-GROUND") ||
+    sku === "COF-REJECT"
+  ) {
+    return false;
+  }
+  if (row.item?.itemType === "FINISHED") return false;
+  return true;
 }

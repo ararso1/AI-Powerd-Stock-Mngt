@@ -72,6 +72,7 @@ export function MasterDataPage<
   fields,
   columns,
   emptyDescription,
+  subtitle,
   supportsActive = false,
   supportsDelete = false,
   listParams,
@@ -84,6 +85,7 @@ export function MasterDataPage<
   fields: MasterField[];
   columns: { key: string; header: string; cell: (row: T) => React.ReactNode }[];
   emptyDescription?: string;
+  subtitle?: string;
   supportsActive?: boolean;
   supportsDelete?: boolean;
   listParams?: ListQueryParams;
@@ -140,7 +142,7 @@ export function MasterDataPage<
   return (
     <AppShell
       title={title}
-      subtitle={`Manage ${title.toLowerCase()}`}
+      subtitle={subtitle ?? `Manage ${title.toLowerCase()}`}
       breadcrumbs={[
         { label: "Stock", href: "/dashboard" },
         { label: title },

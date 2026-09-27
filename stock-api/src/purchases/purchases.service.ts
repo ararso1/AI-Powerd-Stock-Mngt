@@ -36,6 +36,7 @@ import { NotificationsService } from '../notifications/notifications.service';
 import { CreatePurchaseDto, PurchaseLineDto } from './dto/purchase.dto';
 import { UpdatePurchaseDto } from './dto/update-purchase.dto';
 import { CreditsService } from '../credits/credits.service';
+import { ProcessRunsService } from '../process-runs/process-runs.service';
 import { PurchaseQualityService } from './purchase-quality.service';
 
 @Injectable()
@@ -51,6 +52,7 @@ export class PurchasesService {
     private readonly notifications: NotificationsService,
     private readonly creditsService: CreditsService,
     private readonly qualityService: PurchaseQualityService,
+    private readonly processRuns: ProcessRunsService,
   ) {}
 
   async findAll(query: PurchaseListQueryDto) {
@@ -143,13 +145,18 @@ export class PurchasesService {
       },
     });
     if (!purchase) throw new NotFoundException('Purchase not found');
-    const [hasCreditPayments, qualityResults] = await Promise.all([
-      purchase.credit
-        ? this.hasSubsequentCreditPayments(purchase.credit.id)
-        : Promise.resolve(false),
-      this.qualityService.listForPurchase(id),
-    ]);
-    return this.serialize(purchase, hasCreditPayments, qualityResults);
+    const [hasCreditPayments, qualityResults, processRuns] =
+      await Promise.all([
+        purchase.credit
+          ? this.hasSubsequentCreditPayments(purchase.credit.id)
+          : Promise.resolve(false),
+        this.qualityService.listForPurchase(id),
+        this.processRuns.listForPurchase(id),
+      ]);
+    return {
+      ...this.serialize(purchase, hasCreditPayments, qualityResults),
+      processRuns,
+    };
   }
 
   private serializeListRow(purchase: Purchase) {
@@ -249,11 +256,6 @@ export class PurchasesService {
         if (lot.itemId && lot.itemId !== line.itemId) {
           throw new BadRequestException(
             `Lot ${lot.code} does not match purchase line item`,
-          );
-        }
-        if (line.quality && !isCoffee) {
-          throw new BadRequestException(
-            'ECTA quality results are only allowed on coffee purchase lines with a lot',
           );
         }
       } else if (line.quality) {
@@ -566,6 +568,11 @@ export class PurchasesService {
       const oldPaymentMethod = purchase.paymentMethod;
       const oldBankAccountId = purchase.bankAccountId;
 
+      await this.processRuns.releasePurchaseWorkflow(
+        manager,
+        purchase.id,
+        userId,
+      );
       await this.reverseReceiveLines(
         manager,
         purchase,
@@ -668,6 +675,16 @@ export class PurchasesService {
       if (purchase.status === DocumentStatus.VOIDED) {
         throw new BadRequestException('Purchase already voided');
       }
+      const createdAt = new Date(purchase.createdAt).getTime();
+      const voidWindowMs = 7 * 24 * 60 * 60 * 1000;
+      if (
+        Number.isNaN(createdAt) ||
+        Date.now() - createdAt > voidWindowMs
+      ) {
+        throw new BadRequestException(
+          'A purchase can only be voided within 7 days of creation',
+        );
+      }
 
       if (purchase.credit) {
         const locked = await this.hasSubsequentCreditPayments(
@@ -682,6 +699,11 @@ export class PurchasesService {
         await creditRepo.remove(purchase.credit);
       }
 
+      await this.processRuns.releasePurchaseWorkflow(
+        manager,
+        purchase.id,
+        userId,
+      );
       await this.reverseReceiveLines(
         manager,
         purchase,
@@ -749,7 +771,7 @@ export class PurchasesService {
         purchaseRepo.create({
           supplierId: dto.supplierId,
           locationId: dto.locationId,
-          purchaseType: dto.purchaseType ?? PurchaseType.LOCAL,
+          purchaseType: dto.purchaseType,
           paymentMethod: dto.paymentMethod,
           bankAccountId: dto.bankAccountId ?? null,
           subtotal: subtotal.toFixed(2),

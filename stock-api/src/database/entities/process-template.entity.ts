@@ -7,7 +7,11 @@ import {
   OneToMany,
   UpdateDateColumn,
 } from 'typeorm';
-import { CoffeeForm, ProcessOperationType } from '../../common/enums';
+import {
+  CoffeeForm,
+  ProcessOperationType,
+  PurchaseType,
+} from '../../common/enums';
 import { Item } from './item.entity';
 import { ProcessRun } from './process-run.entity';
 import { UuidBaseEntity } from './uuid-base.entity';
@@ -44,6 +48,19 @@ export class ProcessTemplate extends UuidBaseEntity {
     default: ProcessOperationType.OTHER,
   })
   operationType: ProcessOperationType;
+
+  /**
+   * Local-market vs export intake workflow.
+   * Null means a shared mill/roast/pack template.
+   * Stages stay empty until that workflow's steps are defined.
+   */
+  @Column({
+    type: 'enum',
+    enum: PurchaseType,
+    enumName: 'process_workflow_enum',
+    nullable: true,
+  })
+  workflow: PurchaseType | null;
 
   /** When set, quantityOutput on complete is pack count; kg = packs × packSizeKg. */
   @Column({

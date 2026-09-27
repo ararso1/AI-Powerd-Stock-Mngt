@@ -1,7 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { Fragment, useState } from "react";
 import Link from "next/link";
+import { ChevronDownIcon } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import {
   FrappeDocument,
@@ -13,11 +14,20 @@ import {
 import { PurchaseDocumentActions } from "@/components/transactions/document-actions";
 import { apiBlob } from "@/lib/api";
 import { formatMoney, formatDate, formatQty, errorMessage } from "@/lib/format";
+import { coffeeFormLabel } from "@/lib/lots";
+import {
+  farasulaKgLabel,
+  fromStoredPurchaseLine,
+} from "@/lib/farasula";
 import {
   documentTotal,
   paymentMethodLabel,
 } from "@/lib/document-utils";
 import { purchaseTypeLabel } from "@/lib/purchases";
+import {
+  processStatusLabel,
+  processWorkflowLabel,
+} from "@/lib/process-runs";
 import type {
   Purchase,
   PurchaseLine,
@@ -64,12 +74,6 @@ function lineAmount(line: PurchaseLine) {
   return "0";
 }
 
-function passedLabel(passed?: boolean | null) {
-  if (passed === true) return "Yes";
-  if (passed === false) return "No";
-  return "—";
-}
-
 function ViewQualityDocument({
   quality,
 }: {
@@ -83,7 +87,8 @@ function ViewQualityDocument({
       type="button"
       disabled={busy}
       className="text-xs font-medium text-[var(--frappe-primary)] hover:underline disabled:opacity-50"
-      onClick={() => {
+      onClick={(event) => {
+        event.stopPropagation();
         setBusy(true);
         void apiBlob(quality.downloadPath!)
           .then(({ blob }) => {
@@ -95,9 +100,14 @@ function ViewQualityDocument({
           .finally(() => setBusy(false));
       }}
     >
-      {busy ? "Opening…" : "View document"}
+      {busy ? "Opening…" : "View result"}
     </button>
   );
+}
+
+function scoreValue(value: string | number | null | undefined, suffix = "") {
+  if (value == null || value === "") return "—";
+  return `${value}${suffix}`;
 }
 
 function QualitySummary({
@@ -111,31 +121,17 @@ function QualitySummary({
     );
   }
 
-  const bits = [
-    quality.labName,
-    quality.grade ? `Grade ${quality.grade}` : null,
-    quality.moisturePercent != null && quality.moisturePercent !== ""
-      ? `Moisture ${quality.moisturePercent}%`
-      : null,
-    quality.cuppingScore != null && quality.cuppingScore !== ""
-      ? `Cup ${quality.cuppingScore}`
-      : null,
-    quality.passed != null ? `Passed ${passedLabel(quality.passed)}` : null,
-  ].filter(Boolean);
-
   return (
     <div className="space-y-1">
       <p className="text-sm text-[var(--frappe-text)]">
-        {bits.length > 0 ? bits.join(" · ") : "Recorded"}
+        {[
+          quality.labName || "ECTA",
+          quality.grade ? `Grade ${quality.grade}` : null,
+        ]
+          .filter(Boolean)
+          .join(" · ")}
       </p>
-      {quality.certificateNumber ? (
-        <p className="text-xs text-[var(--frappe-text-muted)]">
-          Cert #{quality.certificateNumber}
-          {quality.testedAt
-            ? ` · ${formatDate(quality.testedAt)}`
-            : ""}
-        </p>
-      ) : quality.testedAt ? (
+      {quality.testedAt ? (
         <p className="text-xs text-[var(--frappe-text-muted)]">
           Tested {formatDate(quality.testedAt)}
         </p>
@@ -145,8 +141,68 @@ function QualitySummary({
   );
 }
 
+function LotDetailsPanel({ line }: { line: PurchaseLine }) {
+  const lot = line.lot;
+  if (!lot) {
+    return (
+      <p className="text-sm text-[var(--frappe-text-muted)]">
+        This line has no lot.
+      </p>
+    );
+  }
+  const origin = [lot.region, lot.zone, lot.woreda, lot.kebele]
+    .filter(Boolean)
+    .join(", ");
+  return (
+    <div className="grid gap-4 sm:grid-cols-2">
+      <div className="grid gap-3 sm:grid-cols-2">
+        <DetailField label="Lot (SKU)" value={lot.code} href={`/lots/${lot.id}`} />
+        <DetailField label="Form" value={coffeeFormLabel(lot.form)} />
+        <DetailField label="Grade" value={lot.grade ?? "—"} />
+        <DetailField label="Crop year" value={lot.cropYear ?? "—"} />
+        <DetailField label="Process" value={lot.processMethod ?? "—"} />
+        <DetailField label="Variety" value={lot.variety ?? "—"} />
+        <DetailField label="Origin" value={origin || "—"} />
+        <DetailField
+          label="On lot"
+          value={
+            lot.quantity != null && lot.quantity !== ""
+              ? `${formatQty(lot.quantity)} kg`
+              : "—"
+          }
+        />
+      </div>
+      <div className="grid gap-3 sm:grid-cols-2">
+        <DetailField
+          label="Moisture %"
+          value={scoreValue(lot.moisturePercent, "%")}
+        />
+        <DetailField label="Cupping" value={scoreValue(lot.cuppingScore)} />
+        <DetailField label="Screen" value={scoreValue(lot.screenSize)} />
+        <DetailField
+          label="Defects"
+          value={
+            lot.defectCount != null || lot.defectLevel
+              ? `${lot.defectCount ?? "—"} / ${lot.defectLevel ?? "—"}`
+              : "—"
+          }
+        />
+        <div className="sm:col-span-2">
+          <p className="text-xs font-medium text-[var(--frappe-text-muted)]">
+            ECTA
+          </p>
+          <div className="mt-1">
+            <QualitySummary quality={line.quality} />
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function PurchaseDetail({ purchase }: { purchase: Purchase }) {
   const lines = purchase.lines ?? [];
+  const [openLineKey, setOpenLineKey] = useState<string | null>(null);
   const paymentLabel = paymentMethodLabel(purchase.paymentMethod);
   const isVoided = purchase.status === "VOIDED";
   const credit = purchase.credit ?? purchase.supplierCredit;
@@ -159,7 +215,6 @@ export function PurchaseDetail({ purchase }: { purchase: Purchase }) {
     purchase.paymentMethod === "CASH" ||
     purchase.paymentMethod === "BANK" ||
     purchase.paymentMethod === "PARTIAL";
-  const hasLotOrQuality = lines.some((l) => l.lotId || l.quality);
 
   return (
     <div className="mx-auto max-w-5xl space-y-4">
@@ -179,6 +234,7 @@ export function PurchaseDetail({ purchase }: { purchase: Purchase }) {
           <PurchaseDocumentActions
             purchaseId={purchase.id}
             status={purchase.status}
+            createdAt={purchase.createdAt}
           />
         </div>
       </div>
@@ -273,7 +329,7 @@ export function PurchaseDetail({ purchase }: { purchase: Purchase }) {
 
         <FrappeSection
           title="Items"
-          description={`${lines.length} line${lines.length === 1 ? "" : "s"}`}
+          description={`${lines.length} line${lines.length === 1 ? "" : "s"} · click a row for lot details`}
         >
           {lines.length === 0 ? (
             <p className="text-sm text-[var(--frappe-text-muted)]">
@@ -285,53 +341,79 @@ export function PurchaseDetail({ purchase }: { purchase: Purchase }) {
                 <thead>
                   <tr>
                     <th>Item</th>
-                    <th>SKU</th>
-                    {hasLotOrQuality ? <th>Lot</th> : null}
-                    <th className="text-right tabular-nums">Qty</th>
-                    <th className="text-right tabular-nums">Rate</th>
+                    <th>Lot (SKU)</th>
+                    <th className="text-right tabular-nums">Qty (Farasula)</th>
+                    <th className="text-right tabular-nums">Price / Farasula</th>
                     <th className="text-right tabular-nums">Amount</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {lines.map((line, i) => (
-                    <tr key={line.id ?? `${line.itemId}-${i}`}>
-                      <td>{line.item?.description ?? line.itemId}</td>
-                      <td className="text-[var(--frappe-text-muted)]">
-                        {line.item?.sku ?? "—"}
+                  {lines.map((line, i) => {
+                    const measured = fromStoredPurchaseLine(
+                      line.quantity,
+                      line.unitPrice,
+                      line.lineTotal
+                    );
+                    const rowKey = line.id ?? `${line.itemId}-${i}`;
+                    const open = openLineKey === rowKey;
+                    const lotCode =
+                      line.lot?.code ?? line.item?.sku ?? line.lotId?.slice(0, 8);
+                    return (
+                    <Fragment key={rowKey}>
+                    <tr
+                      className="cursor-pointer hover:bg-[var(--frappe-section-head)]/80"
+                      onClick={() =>
+                        setOpenLineKey((current) =>
+                          current === rowKey ? null : rowKey
+                        )
+                      }
+                    >
+                      <td>
+                        <span className="inline-flex items-center gap-1.5">
+                          <ChevronDownIcon
+                            className={`size-3.5 text-[var(--frappe-text-muted)] transition-transform ${open ? "rotate-180" : ""}`}
+                          />
+                          {line.item?.description ?? line.itemId}
+                        </span>
                       </td>
-                      {hasLotOrQuality ? (
-                        <td>
-                          {line.lotId ? (
-                            <Link
-                              href={`/lots/${line.lotId}`}
-                              className="font-medium text-[var(--frappe-primary)] hover:underline"
-                            >
-                              {line.lot?.code ?? line.lotId.slice(0, 8)}
-                            </Link>
-                          ) : (
-                            <span className="text-[var(--frappe-text-muted)]">
-                              —
-                            </span>
-                          )}
-                        </td>
-                      ) : null}
-                      <td className="text-right tabular-nums">
-                        {formatQty(line.quantity)}
-                        {line.item?.unit ? ` ${line.item.unit}` : ""}
+                      <td>
+                        {line.lotId ? (
+                          <Link
+                            href={`/lots/${line.lotId}`}
+                            className="font-medium text-[var(--frappe-primary)] hover:underline"
+                            onClick={(event) => event.stopPropagation()}
+                          >
+                            {lotCode}
+                          </Link>
+                        ) : (
+                          <span>{line.item?.sku ?? "—"}</span>
+                        )}
                       </td>
                       <td className="text-right tabular-nums">
-                        {formatMoney(line.unitPrice)}
+                        {farasulaKgLabel(measured.farasula) ?? "—"}
+                      </td>
+                      <td className="text-right tabular-nums">
+                        {formatMoney(measured.pricePerFarasula)}
                       </td>
                       <td className="text-right tabular-nums font-medium">
                         {formatMoney(lineAmount(line))}
                       </td>
                     </tr>
-                  ))}
+                    {open ? (
+                      <tr key={`${rowKey}-details`} className="bg-[var(--frappe-section-head)]/40">
+                        <td colSpan={5} className="px-3 py-3">
+                          <LotDetailsPanel line={line} />
+                        </td>
+                      </tr>
+                    ) : null}
+                    </Fragment>
+                    );
+                  })}
                 </tbody>
                 <tfoot>
                   <tr className="bg-[var(--frappe-section-head)]">
                     <td
-                      colSpan={hasLotOrQuality ? 5 : 4}
+                      colSpan={4}
                       className="px-3 py-2 text-right text-xs font-semibold uppercase text-[var(--frappe-text-muted)]"
                     >
                       Total
@@ -346,10 +428,125 @@ export function PurchaseDetail({ purchase }: { purchase: Purchase }) {
           )}
         </FrappeSection>
 
+        {/* <FrappeSection
+          title="Warehouse stock"
+          description="Purchased coffee is available at this warehouse. A process run is started separately from Processing, using the stock you select. Normal operation is a processing yield of 80% or more."
+        >
+          {(purchase.processRuns ?? []).length === 0 ? (
+            <p className="text-sm text-[var(--frappe-text-muted)]">
+              This purchase is in warehouse inventory.{" "}
+              <Link
+                href="/process-runs/new"
+                className="text-[var(--frappe-primary)] hover:underline"
+              >
+                Create a process run
+              </Link>{" "}
+              when you are ready to process it.
+            </p>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="frappe-list-table">
+                <thead>
+                  <tr>
+                    <th>Workflow</th>
+                    <th>Run</th>
+                    <th>Lot (SKU)</th>
+                    <th>Kg</th>
+                    <th>Status</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(purchase.processRuns ?? []).map((run) => (
+                    <tr key={run.id}>
+                      <td>
+                        {processWorkflowLabel(
+                          run.workflow ?? purchase.purchaseType
+                        )}
+                      </td>
+                      <td>
+                        <Link
+                          href={`/process-runs/${run.id}`}
+                          className="font-medium text-[var(--frappe-primary)] hover:underline"
+                        >
+                          {run.runNumber}
+                        </Link>
+                      </td>
+                      <td>
+                        {run.inputLotId ? (
+                          <Link
+                            href={`/lots/${run.inputLotId}`}
+                            className="text-[var(--frappe-primary)] hover:underline"
+                          >
+                            {run.inputLot?.code ?? "Lot"}
+                          </Link>
+                        ) : (
+                          "—"
+                        )}
+                      </td>
+                      <td className="tabular-nums">
+                        {formatQty(run.quantityInput)} kg
+                      </td>
+                      <td>
+                        <Badge variant="outline">
+                          {processStatusLabel(run.status)}
+                        </Badge>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </FrappeSection> */}
+
+        <FrappeSection
+          title="Warehouse test scores"
+          description="Moisture, cupping, screen, and defects recorded on each lot"
+        >
+          {lines.some((line) => line.lot) ? (
+            <div className="overflow-x-auto">
+              <table className="frappe-list-table">
+                <thead>
+                  <tr>
+                    <th>Lot (SKU)</th>
+                    <th>Moisture %</th>
+                    <th>Cupping</th>
+                    <th>Screen</th>
+                    <th>Defects</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {lines.map((line, i) => {
+                    const lot = line.lot;
+                    if (!lot) return null;
+                    return (
+                      <tr key={line.id ?? `scores-${i}`}>
+                        <td className="font-medium">{lot.code}</td>
+                        <td>{scoreValue(lot.moisturePercent, "%")}</td>
+                        <td>{scoreValue(lot.cuppingScore)}</td>
+                        <td>{scoreValue(lot.screenSize)}</td>
+                        <td>
+                          {lot.defectCount != null || lot.defectLevel
+                            ? `${lot.defectCount ?? "—"} / ${lot.defectLevel ?? "—"}`
+                            : "—"}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <p className="text-sm text-[var(--frappe-text-muted)]">
+              No lot scores on this purchase.
+            </p>
+          )}
+        </FrappeSection>
+
         {lines.some((l) => l.quality || l.lotId) ? (
           <FrappeSection
-            title="ECTA quality"
-            description="Lab results per coffee line"
+            title="Ethiopian Coffee and Tea Authority (ECTA) quality Results"
+            description="Lab results linked to this purchase and lot"
           >
             <div className="overflow-x-auto">
               <table className="frappe-list-table">

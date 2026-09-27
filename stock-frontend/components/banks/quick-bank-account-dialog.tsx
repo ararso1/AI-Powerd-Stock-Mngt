@@ -22,10 +22,13 @@ export function QuickBankAccountDialog({
   onCreated,
   trigger,
   defaultAccountType = "BANK",
+  compact = false,
 }: {
   onCreated: (account: BankAccount) => void;
   trigger?: React.ReactNode;
   defaultAccountType?: BankAccountType;
+  /** Hide account type and use one name for display name and bank. */
+  compact?: boolean;
 }) {
   const { open, setOpen, onOpenChange } = useQuickCreateDialog();
   const [values, setValues] = useState(() =>
@@ -44,7 +47,11 @@ export function QuickBankAccountDialog({
 
   async function handleSubmit() {
     if (!values.name.trim()) {
-      toast.error("Display name is required");
+      toast.error(
+        compact && values.accountType === "BANK"
+          ? "Bank / provider is required"
+          : "Display name is required"
+      );
       return;
     }
     setSaving(true);
@@ -93,6 +100,7 @@ export function QuickBankAccountDialog({
             mode="create"
             values={values}
             onChange={patchValues}
+            compact={compact}
           />
         </div>
       </QuickCreateDialogShell>

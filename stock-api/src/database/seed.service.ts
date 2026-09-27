@@ -33,6 +33,7 @@ import {
   LotEventType,
   LotStatus,
   ProcessOperationType,
+  PurchaseType,
 } from '../common/enums';
 
 const DEMO_PASSWORD = 'Demo@123';
@@ -591,8 +592,73 @@ export class SeedService implements OnModuleInit {
         await this.processTemplateRepo.save(existing);
       }
     }
+    const workflows: Array<{
+      code: string;
+      name: string;
+      workflow: PurchaseType;
+      notes: string;
+      stages?: string[];
+    }> = [
+      {
+        code: 'LOCAL-MARKET',
+        name: 'Local market processing',
+        workflow: PurchaseType.LOCAL,
+        notes:
+          'Local market flow: Processing Started, Cleaning, Roast & Ground, Sales Store. Stock is chosen from the warehouse when the run is created.',
+        stages: [
+          'Processing Started',
+          'Cleaning',
+          'Roast & Ground',
+          'Sales Store',
+        ],
+      },
+      {
+        code: 'EXPORT-MARKET',
+        name: 'Export processing',
+        workflow: PurchaseType.EXPORT,
+        notes:
+          'Coffee purchased for export. Processing steps are defined on this workflow.',
+      },
+    ];
+    for (const workflow of workflows) {
+      const existing = await this.processTemplateRepo.findOne({
+        where: { code: workflow.code },
+      });
+      if (!existing) {
+        await this.processTemplateRepo.save(
+          this.processTemplateRepo.create({
+            code: workflow.code,
+            name: workflow.name,
+            inputForm: CoffeeForm.GREEN,
+            outputForm: CoffeeForm.GREEN,
+            operationType: ProcessOperationType.OTHER,
+            expectedYieldPercent:
+              workflow.code === 'LOCAL-MARKET' ? '80.00' : '100.00',
+            requiresQc: false,
+            stages: workflow.stages ?? [],
+            workflow: workflow.workflow,
+            notes: workflow.notes,
+            isActive: true,
+          }),
+        );
+      } else {
+        if (!existing.workflow) {
+          existing.workflow = workflow.workflow;
+          existing.name = workflow.name;
+        }
+        if (workflow.stages?.length) {
+          existing.stages = workflow.stages;
+          existing.notes = workflow.notes;
+          if (workflow.code === 'LOCAL-MARKET') {
+            existing.expectedYieldPercent = '80.00';
+          }
+        }
+        await this.processTemplateRepo.save(existing);
+      }
+    }
+
     this.logger.log(
-      'Process templates seeded (wet/dry/natural/roast/flour/pack)',
+      'Process templates seeded (wet/dry/natural/roast/flour/pack, local/export workflows)',
     );
   }
 

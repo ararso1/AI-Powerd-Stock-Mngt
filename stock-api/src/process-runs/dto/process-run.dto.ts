@@ -10,8 +10,13 @@ import {
   IsUUID,
   MaxLength,
   Min,
+  ValidateNested,
 } from 'class-validator';
-import { CoffeeForm, ProcessOperationType } from '../../common/enums';
+import {
+  CoffeeForm,
+  ProcessOperationType,
+  PurchaseType,
+} from '../../common/enums';
 
 export class CreateProcessTemplateDto {
   @IsString()
@@ -55,6 +60,10 @@ export class CreateProcessTemplateDto {
   operationType?: ProcessOperationType;
 
   @IsOptional()
+  @IsEnum(PurchaseType)
+  workflow?: PurchaseType;
+
+  @IsOptional()
   @Type(() => Number)
   @IsNumber()
   @Min(0.001)
@@ -71,20 +80,38 @@ export class CreateProcessTemplateDto {
   notes?: string;
 }
 
-export class CreateProcessRunDto {
+export class ProcessRunInputDto {
   @IsUUID()
-  templateId: string;
-
-  @IsUUID()
-  inputLotId: string;
-
-  @IsUUID()
-  locationId: string;
+  lotId: string;
 
   @Type(() => Number)
   @IsNumber()
   @Min(0.001)
-  quantityInput: number;
+  quantity: number;
+}
+
+export class CreateProcessRunDto {
+  @IsUUID()
+  templateId: string;
+
+  @IsOptional()
+  @IsUUID()
+  inputLotId?: string;
+
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => ProcessRunInputDto)
+  inputs?: ProcessRunInputDto[];
+
+  @IsUUID()
+  locationId: string;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0.001)
+  quantityInput?: number;
 
   @IsOptional()
   @Type(() => Number)

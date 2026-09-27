@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import { AppShell } from "@/components/app-shell";
 import { CreateLotDialog } from "@/components/lots/create-lot-dialog";
 import { DataCardTable } from "@/components/shared/data-card-table";
@@ -39,10 +40,13 @@ import { usePaginatedList } from "@/hooks/use-paginated-list";
 const ALL = "__all__";
 
 export default function LotsPage() {
+  const searchParams = useSearchParams();
   const [search, setSearch] = useState("");
   const [form, setForm] = useState<CoffeeForm | "">("");
   const [status, setStatus] = useState<LotStatus | "">("");
-  const [locationId, setLocationId] = useState(ALL);
+  const [locationId, setLocationId] = useState(
+    () => searchParams.get("locationId") || ALL
+  );
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
   const debouncedSearch = useDebouncedValue(search);
@@ -69,7 +73,7 @@ export default function LotsPage() {
   return (
     <AppShell
       title="Lots"
-      subtitle="Coffee lot identity and step-by-step traceability"
+      subtitle="Coffee lot identity, warehouse location, and purchase/ECTA traceability"
       breadcrumbs={[
         { label: "Operations", href: "/dashboard" },
         { label: "Lots" },
@@ -89,7 +93,7 @@ export default function LotsPage() {
           />
           <div className="grid gap-2">
             <Label className="text-sm text-[var(--frappe-text-muted)]">
-              Location
+              Warehouse
             </Label>
             <Select value={locationId} onValueChange={setLocationId}>
               <SelectTrigger className="w-[220px]">
@@ -206,7 +210,7 @@ export default function LotsPage() {
               },
               {
                 key: "location",
-                header: "Location",
+                header: "Warehouse",
                 cell: (r) => r.location?.name ?? "—",
               },
               {

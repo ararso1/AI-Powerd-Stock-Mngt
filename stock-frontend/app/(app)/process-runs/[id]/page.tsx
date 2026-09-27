@@ -29,7 +29,8 @@ import {
 import { api } from "@/lib/api";
 import { errorMessage, formatDate, formatMoney, formatQty } from "@/lib/format";
 import { coffeeFormLabel } from "@/lib/lots";
-import { processStatusLabel } from "@/lib/process-runs";
+import { processStatusLabel, processWorkflowLabel } from "@/lib/process-runs";
+import { LocalMarketWorkflow } from "@/components/process-runs/local-market-workflow";
 import type { ProcessRun } from "@/lib/types";
 import { useFetch } from "@/hooks/use-fetch";
 import { cn } from "@/lib/utils";
@@ -169,6 +170,8 @@ export default function ProcessRunDetailPage() {
               Back to list
             </FrappeButtonLink>
           </div>
+        ) : run.workflow === "LOCAL" ? (
+          <LocalMarketWorkflow run={run} onReload={reload} />
         ) : (
           <div className="mx-auto max-w-5xl space-y-4">
             <div className="flex flex-wrap items-center gap-2">
@@ -201,9 +204,10 @@ export default function ProcessRunDetailPage() {
                     Complete stage
                   </FrappeButtonPrimary>
                 ) : null}
-                {run.status === "QC_HOLD" ||
-                run.status === "READY" ||
-                run.status === "IN_PROGRESS" ? (
+                {(run.status === "QC_HOLD" ||
+                  run.status === "READY" ||
+                  run.status === "IN_PROGRESS") &&
+                !(run.workflow && (run.stages?.length ?? 0) === 0) ? (
                   <FrappeButtonSecondary
                     type="button"
                     disabled={busy}
@@ -212,9 +216,10 @@ export default function ProcessRunDetailPage() {
                     Record QC
                   </FrappeButtonSecondary>
                 ) : null}
-                {run.status === "READY" ||
-                (run.status === "IN_PROGRESS" &&
-                  !run.template?.requiresQc) ? (
+                {(run.status === "READY" ||
+                  (run.status === "IN_PROGRESS" &&
+                    !run.template?.requiresQc)) &&
+                !(run.workflow && (run.stages?.length ?? 0) === 0) ? (
                   <FrappeButtonPrimary
                     type="button"
                     disabled={busy}
@@ -247,13 +252,43 @@ export default function ProcessRunDetailPage() {
               <FrappeSection
                 title="Run"
                 description={
-                  run.template
-                    ? `${run.template.name} · ${coffeeFormLabel(run.template.inputForm)} → ${coffeeFormLabel(run.template.outputForm)}`
-                    : undefined
+                  run.workflow
+                    ? `${processWorkflowLabel(run.workflow)}. Quantity stays on the warehouse lot until the workflow steps are completed.`
+                    : run.template
+                      ? `${run.template.name} · ${coffeeFormLabel(run.template.inputForm)} → ${coffeeFormLabel(run.template.outputForm)}`
+                      : undefined
                 }
               >
                 <FrappeFormGrid columns={3}>
                   <DetailField label="Run #" value={run.runNumber} />
+                  <DetailField
+                    label="Workflow"
+                    value={
+                      run.workflow ? (
+                        <Link
+                          href="/process-runs"
+                          className="text-[var(--frappe-primary)] hover:underline"
+                        >
+                          {processWorkflowLabel(run.workflow)}
+                        </Link>
+                      ) : (
+                        "Mill / other"
+                      )
+                    }
+                  />
+                  {run.purchaseId ? (
+                    <DetailField
+                      label="Purchase"
+                      value={
+                        <Link
+                          href={`/purchases/${run.purchaseId}`}
+                          className="text-[var(--frappe-primary)] hover:underline"
+                        >
+                          View purchase
+                        </Link>
+                      }
+                    />
+                  ) : null}
                   <DetailField
                     label="Location"
                     value={run.location?.name ?? "—"}
@@ -352,7 +387,9 @@ export default function ProcessRunDetailPage() {
               <FrappeSection title="Stages">
                 {(run.stages?.length ?? 0) === 0 ? (
                   <p className="px-4 py-3 text-sm text-[var(--csolve-text-muted)]">
-                    No staged checklist — go straight to QC / complete.
+                    {run.workflow
+                      ? "No processing steps yet. This workflow is ready for its own steps. The lot and its kilograms stay in the purchase warehouse."
+                      : "No staged checklist — go straight to QC / complete."}
                   </p>
                 ) : (
                   <ol className="space-y-2 px-4 py-3">

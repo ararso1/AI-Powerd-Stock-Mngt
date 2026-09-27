@@ -6,6 +6,8 @@ import type {
   ReceivingDisposition,
 } from "@/lib/types";
 
+export const COFFEE_GRADE_OPTIONS = ["G1", "G2", "G3", "G4", "G5"] as const;
+
 export const COFFEE_FORM_OPTIONS: { value: CoffeeForm; label: string }[] = [
   { value: "CHERRY", label: "Cherry" },
   { value: "PARCHMENT", label: "Parchment" },

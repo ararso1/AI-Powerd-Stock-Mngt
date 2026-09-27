@@ -7,10 +7,20 @@ import {
   OneToMany,
   UpdateDateColumn,
 } from 'typeorm';
-import { ProcessRunStatus } from '../../common/enums';
+import { ProcessRunStatus, PurchaseType } from '../../common/enums';
+import type { LocalStageResult } from '../../process-runs/local-market.stages';
+
+export interface ProcessInputLine {
+  lotId: string;
+  itemId: string;
+  lotCode: string;
+  itemDescription: string;
+  quantity: string;
+}
 import { Location } from './location.entity';
 import { Lot } from './lot.entity';
 import { ProcessTemplate } from './process-template.entity';
+import { Purchase } from './purchase.entity';
 import { QcResult } from './qc-result.entity';
 import { RoastProfile } from './roast-profile.entity';
 import { User } from './user.entity';
@@ -32,6 +42,22 @@ export class ProcessRun extends UuidBaseEntity {
 
   @Column({ name: 'location_id', type: 'uuid' })
   locationId: string;
+
+  /** Local market or export workflow. Null for mill/roast/pack runs. */
+  @Column({
+    type: 'enum',
+    enum: PurchaseType,
+    enumName: 'process_workflow_enum',
+    nullable: true,
+  })
+  workflow: PurchaseType | null;
+
+  @Column({ name: 'purchase_id', type: 'uuid', nullable: true })
+  purchaseId: string | null;
+
+  /** Line that queued this run. Not a foreign key: purchase edits replace lines. */
+  @Column({ name: 'purchase_line_id', type: 'uuid', nullable: true })
+  purchaseLineId: string | null;
 
   @Column({
     name: 'quantity_input',
@@ -114,6 +140,14 @@ export class ProcessRun extends UuidBaseEntity {
   @Column({ name: 'stages_completed', type: 'jsonb', default: () => "'[]'" })
   stagesCompleted: string[];
 
+  /** Per-stage quantities, warnings, lots, and who recorded the step. */
+  @Column({ name: 'stage_results', type: 'jsonb', default: () => "'[]'" })
+  stageResults: LocalStageResult[];
+
+  /** Stock lots committed to this run, with the kg taken from each. */
+  @Column({ name: 'input_lines', type: 'jsonb', default: () => "'[]'" })
+  inputLines: ProcessInputLine[];
+
   @Column({
     name: 'process_cost',
     type: 'decimal',
@@ -153,6 +187,10 @@ export class ProcessRun extends UuidBaseEntity {
   @ManyToOne(() => Location)
   @JoinColumn({ name: 'location_id' })
   location: Location;
+
+  @ManyToOne(() => Purchase, { nullable: true, onDelete: 'SET NULL' })
+  @JoinColumn({ name: 'purchase_id' })
+  purchase: Purchase | null;
 
   @ManyToOne(() => User, { nullable: true })
   @JoinColumn({ name: 'created_by_id' })

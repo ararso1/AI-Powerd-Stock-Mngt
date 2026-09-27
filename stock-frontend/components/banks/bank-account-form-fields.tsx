@@ -16,30 +16,54 @@ export function BankAccountFormFields({
   values,
   onChange,
   mode,
+  compact = false,
 }: {
   values: BankAccountFormValues;
   onChange: (patch: Partial<BankAccountFormValues>) => void;
   mode: "create" | "edit";
+  /** Purchase quick-create: no account type, one name for display and bank. */
+  compact?: boolean;
 }) {
+  const mergedName = compact && values.accountType === "BANK";
   return (
     <div className="grid gap-4">
-      <div className="grid gap-2">
-        <Label htmlFor="bank-display-name">
-          Display name <span className="text-[var(--frappe-red)]">*</span>
-        </Label>
-        <Input
-          id="bank-display-name"
-          value={values.name}
-          onChange={(e) => onChange({ name: e.target.value })}
-          placeholder='e.g. "Main Bank", "Cash"'
-          required
-          autoFocus
-        />
-        <p className="text-xs text-[var(--frappe-text-muted)]">
-          Short label shown in dropdowns across purchases, sales, and expenses.
-        </p>
-      </div>
-      {mode === "create" ? (
+      {mergedName ? (
+        <div className="grid gap-2">
+          <Label htmlFor="bank-display-name">
+            Bank / provider <span className="text-[var(--frappe-red)]">*</span>
+          </Label>
+          <Input
+            id="bank-display-name"
+            value={values.name}
+            onChange={(e) =>
+              onChange({ name: e.target.value, bankName: e.target.value })
+            }
+            placeholder="Commercial Bank of Ethiopia"
+            required
+            autoFocus
+          />
+        </div>
+      ) : (
+        <div className="grid gap-2">
+          <Label htmlFor="bank-display-name">
+            Display name <span className="text-[var(--frappe-red)]">*</span>
+          </Label>
+          <Input
+            id="bank-display-name"
+            value={values.name}
+            onChange={(e) => onChange({ name: e.target.value })}
+            placeholder='e.g. "Main Bank", "Cash"'
+            required
+            autoFocus
+          />
+          {compact ? null : (
+            <p className="text-xs text-[var(--frappe-text-muted)]">
+              Short label shown in dropdowns across purchases, sales, and expenses.
+            </p>
+          )}
+        </div>
+      )}
+      {mode === "create" && !compact ? (
         <div className="grid gap-2">
           <Label htmlFor="bank-account-type">
             Account type <span className="text-[var(--frappe-red)]">*</span>
@@ -62,15 +86,17 @@ export function BankAccountFormFields({
       ) : null}
       {values.accountType === "BANK" || mode === "edit" ? (
         <>
-          <div className="grid gap-2">
-            <Label htmlFor="bank-institution">Bank / provider</Label>
-            <Input
-              id="bank-institution"
-              value={values.bankName}
-              onChange={(e) => onChange({ bankName: e.target.value })}
-              placeholder="Commercial Bank of Ethiopia"
-            />
-          </div>
+          {mergedName ? null : (
+            <div className="grid gap-2">
+              <Label htmlFor="bank-institution">Bank / provider</Label>
+              <Input
+                id="bank-institution"
+                value={values.bankName}
+                onChange={(e) => onChange({ bankName: e.target.value })}
+                placeholder="Commercial Bank of Ethiopia"
+              />
+            </div>
+          )}
           <div className="grid gap-2">
             <Label htmlFor="bank-holder">Account holder name</Label>
             <Input

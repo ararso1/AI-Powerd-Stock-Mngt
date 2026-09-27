@@ -8,7 +8,7 @@ export default function NewPurchasePage() {
   return (
     <AppShell
       title="New Purchase"
-      subtitle="Not Saved"
+      subtitle="Receive coffee at our warehouse · assign lots · record ECTA quality"
       variant="form"
       breadcrumbs={[
         { label: "Stock", href: "/dashboard" },

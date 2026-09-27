@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useRef, type RefObject } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { CsolveMark } from "@/components/brand/csolve-mark";
@@ -15,6 +16,7 @@ import {
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
+  useSidebar,
 } from "@/components/ui/sidebar";
 import { useAuth } from "@/lib/auth";
 import { hasAnyPermission, hasPermission } from "@/lib/permissions";
@@ -38,6 +40,10 @@ function filterNav(
   });
 }
 
+function isNavActive(pathname: string, href: string) {
+  return pathname === href || pathname.startsWith(`${href}/`);
+}
+
 function NavItems({
   items,
   user,
@@ -50,12 +56,16 @@ function NavItems({
 
   if (visible.length === 0) return null;
 
+  // Prefer the most specific matching href when paths nest.
+  const activeHref = visible
+    .filter((item) => isNavActive(pathname, item.href))
+    .sort((a, b) => b.href.length - a.href.length)[0]?.href;
+
   return (
     <SidebarMenu>
       {visible.map((item) => {
         const Icon = item.icon;
-        const active =
-          pathname === item.href || pathname.startsWith(`${item.href}/`);
+        const active = item.href === activeHref;
         return (
           <SidebarMenuItem key={item.href}>
             <SidebarMenuButton asChild isActive={active} tooltip={item.title}>
@@ -95,10 +105,33 @@ function NavSection({
   );
 }
 
+function useScrollActiveNavIntoView(
+  contentRef: RefObject<HTMLDivElement | null>
+) {
+  const pathname = usePathname();
+  const { openMobile, isMobile, state } = useSidebar();
+
+  useEffect(() => {
+    const root = contentRef.current;
+    if (!root) return;
+    if (isMobile && !openMobile) return;
+
+    const frame = requestAnimationFrame(() => {
+      const active = root.querySelector<HTMLElement>(
+        '[data-sidebar="menu-button"][data-active="true"]'
+      );
+      active?.scrollIntoView({ block: "nearest", inline: "nearest" });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [pathname, openMobile, isMobile, state, contentRef]);
+}
+
 export function AppSidebar({
   ...props
 }: React.ComponentProps<typeof Sidebar>) {
   const { user } = useAuth();
+  const contentRef = useRef<HTMLDivElement>(null);
+  useScrollActiveNavIntoView(contentRef);
 
   return (
     <Sidebar collapsible="offcanvas" className="csolve-sidebar border-r-0" {...props}>
@@ -125,7 +158,7 @@ export function AppSidebar({
           </SidebarMenuItem>
         </SidebarMenu>
       </SidebarHeader>
-      <SidebarContent className="gap-1 pt-1">
+      <SidebarContent ref={contentRef} className="gap-1 pt-1">
         <NavSection label="Overview" items={insightsNav} user={user} />
         <NavSection label="Coffee & stock" items={operationsNav} user={user} />
         <NavSection label="Money" items={financeNav} user={user} />

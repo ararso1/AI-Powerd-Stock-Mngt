@@ -56,14 +56,43 @@ import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { Switch } from "@/components/ui/switch";
 
+const CREDIT_STATUS_CLASS: Record<CreditStatus, string> = {
+  OPEN: "border-transparent bg-primary/15 text-primary",
+  PARTIAL: "border-transparent bg-warning text-warning-foreground",
+  PAID: "border-transparent bg-[var(--csolve-moss)] text-[var(--csolve-parchment)]",
+};
+
+const CREDIT_STATUS_LABEL: Record<CreditStatus, string> = {
+  OPEN: "Open",
+  PARTIAL: "Partial",
+  PAID: "Paid",
+};
+
 function creditStatusBadge(status: CreditStatus) {
-  const variant =
-    status === "PAID"
-      ? "secondary"
-      : status === "PARTIAL"
-        ? "outline"
-        : "destructive";
-  return <Badge variant={variant}>{status}</Badge>;
+  return (
+    <Badge className={CREDIT_STATUS_CLASS[status]}>
+      {CREDIT_STATUS_LABEL[status]}
+    </Badge>
+  );
+}
+
+function agingStatusClass(risk?: string | null) {
+  if (!risk) return "border-transparent bg-muted text-muted-foreground";
+  if (risk.includes("Highly")) {
+    return "border-transparent bg-destructive text-[var(--csolve-parchment)]";
+  }
+  if (risk.includes("High Risk")) {
+    return "border-transparent bg-destructive/15 text-destructive";
+  }
+  if (risk.includes("Attention")) {
+    return "border-transparent bg-warning text-warning-foreground";
+  }
+  return "border-transparent bg-[var(--csolve-moss-soft)] text-[var(--csolve-moss)]";
+}
+
+function AgingStatusBadge({ risk }: { risk?: string | null }) {
+  if (!risk) return null;
+  return <Badge className={agingStatusClass(risk)}>{risk}</Badge>;
 }
 
 function isCreditOverdue(record: CreditRecord): boolean {
@@ -173,8 +202,13 @@ function creditColumns(
       cell: (r: CreditRecord) => (
         <div className="flex flex-wrap items-center gap-1">
           {creditStatusBadge(r.status)}
+          {partyKey === "customer" ? (
+            <AgingStatusBadge risk={r.agingRisk} />
+          ) : null}
           {r.isOverdue || isCreditOverdue(r) ? (
-            <Badge variant="destructive">OVERDUE</Badge>
+            <Badge className="border-transparent bg-destructive/15 text-destructive">
+              Overdue
+            </Badge>
           ) : null}
         </div>
       ),
@@ -279,6 +313,7 @@ export default function CreditsPage() {
       }
     >
       <PermissionGate permission="credit.read">
+        <CreditAnalysis aging={aging ?? null} />
         <FrappeFilterBar>
           <ListSearchField
             value={search}
@@ -428,6 +463,117 @@ export default function CreditsPage() {
   );
 }
 
+function moneyNumber(value?: string | null) {
+  const n = parseFloat(value ?? "");
+  return Number.isFinite(n) ? n : 0;
+}
+
+function CreditAnalysis({ aging }: { aging: CreditAgingReport | null }) {
+  if (!aging) {
+    return (
+      <div className="mb-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        {Array.from({ length: 4 }).map((_, i) => (
+          <div
+            key={i}
+            className="h-24 animate-pulse rounded-xl border border-[var(--frappe-border)] bg-[var(--frappe-surface)]"
+          />
+        ))}
+      </div>
+    );
+  }
+
+  const receivables = moneyNumber(aging.customers.totalOutstanding);
+  const payables = moneyNumber(aging.suppliers.totalOutstanding);
+  const openCredits = aging.customers.buckets.reduce((sum, b) => sum + b.count, 0);
+  const openBills = aging.suppliers.buckets.reduce((sum, b) => sum + b.count, 0);
+  const current = aging.customers.buckets.find((b) => b.key === "d0_15");
+  const watch = aging.customers.buckets.filter(
+    (b) => b.risk && b.risk !== "Normal"
+  );
+  const watchBalance = watch.reduce((sum, b) => sum + moneyNumber(b.balance), 0);
+  const watchCount = watch.reduce((sum, b) => sum + b.count, 0);
+  const currentShare =
+    receivables > 0 ? Math.round((moneyNumber(current?.balance) / receivables) * 100) : 0;
+
+  return (
+    <section className="mb-4 space-y-3">
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        <AnalysisCard
+          label="Customer receivables"
+          value={formatMoney(aging.customers.totalOutstanding)}
+          hint={
+            openCredits === 1 ? "1 open credit" : `${openCredits} open credits`
+          }
+        />
+        <AnalysisCard
+          label="Supplier payables"
+          value={formatMoney(aging.suppliers.totalOutstanding)}
+          hint={openBills === 1 ? "1 open bill" : `${openBills} open bills`}
+        />
+        <AnalysisCard
+          label="Still current"
+          value={formatMoney(current?.balance ?? "0")}
+          hint={
+            receivables > 0
+              ? `${currentShare}% of receivables · Normal, 0–15 days`
+              : "No open customer credit"
+          }
+        />
+        <AnalysisCard
+          label="Needs attention"
+          value={formatMoney(watchBalance)}
+          hint={
+            watchCount === 0
+              ? "Nothing past 15 days"
+              : watchCount === 1
+                ? "1 credit past 15 days"
+                : `${watchCount} credits past 15 days`
+          }
+          tone={watchBalance > 0 ? "watch" : "ok"}
+        />
+      </div>
+      <p className="text-sm text-[var(--frappe-text-muted)]">
+        {receivables <= 0
+          ? "Customer credit is clear."
+          : watchBalance <= 0
+            ? "Every open customer credit is still inside the Normal 15-day window."
+            : `${formatMoney(watchBalance)} of customer credit is past 15 days. ${formatMoney(payables)} is still owed to suppliers.`}
+      </p>
+    </section>
+  );
+}
+
+function AnalysisCard({
+  label,
+  value,
+  hint,
+  tone = "default",
+}: {
+  label: string;
+  value: string;
+  hint: string;
+  tone?: "default" | "watch" | "ok";
+}) {
+  return (
+    <div
+      className={cn(
+        "rounded-xl border px-4 py-3 shadow-sm",
+        tone === "watch"
+          ? "border-[var(--csolve-honey)] bg-warning"
+          : tone === "ok"
+            ? "border-[var(--csolve-moss)] bg-[var(--csolve-moss-soft)]"
+            : "border-[var(--frappe-border)] bg-[var(--frappe-surface)]"
+      )}
+    >
+      <p className="text-sm text-[var(--frappe-text-muted)]">{label}</p>
+      <p className="mt-1 text-2xl font-semibold tabular-nums text-[var(--frappe-text)]">
+        {value}
+      </p>
+      <p className="mt-1 text-xs text-[var(--frappe-text-muted)]">{hint}</p>
+    </div>
+  );
+}
+
 function AgingPanel({
   title,
   side,
@@ -435,9 +581,10 @@ function AgingPanel({
   title: string;
   side: CreditAgingReport["customers"];
 }) {
+  const total = moneyNumber(side.totalOutstanding);
   return (
-    <div className="rounded border border-[var(--frappe-border)]">
-      <div className="border-b border-[var(--frappe-border)] bg-[var(--frappe-section-head)] px-4 py-3">
+    <div className="overflow-hidden rounded-xl border border-[var(--frappe-border)] bg-[var(--frappe-surface)] shadow-sm">
+      <div className="border-b border-[var(--frappe-border)] px-4 py-3">
         <h3 className="text-sm font-semibold text-[var(--frappe-text)]">
           {title}
         </h3>
@@ -448,39 +595,52 @@ function AgingPanel({
           </span>
         </p>
       </div>
-      <div className="overflow-x-auto">
-        <table className="frappe-list-table">
-          <thead>
-            <tr>
-              <th>Bucket</th>
-              <th className="text-right">Count</th>
-              <th className="text-right">Balance</th>
-            </tr>
-          </thead>
-          <tbody>
-            {side.buckets.map((b) => (
-              <tr key={b.key}>
-                <td>
-                  <div>
-                    <p>{b.label}</p>
-                    {"risk" in b && b.risk ? (
-                      <p className="text-xs text-[var(--frappe-text-muted)]">
-                        {String(b.risk)}
-                      </p>
-                    ) : null}
+      <ul className="divide-y divide-[var(--frappe-border)]">
+        {side.buckets.map((b) => {
+          const balance = moneyNumber(b.balance);
+          const share = total > 0 ? Math.round((balance / total) * 100) : 0;
+          return (
+            <li key={b.key} className="px-4 py-3">
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="text-sm font-medium text-[var(--frappe-text)]">
+                    {b.label}
+                  </p>
+                  <div className="mt-1 flex flex-wrap items-center gap-2">
+                    <AgingStatusBadge risk={b.risk} />
+                    <span className="text-xs text-[var(--frappe-text-muted)]">
+                      {b.count === 1 ? "1 account" : `${b.count} accounts`}
+                    </span>
                   </div>
-                </td>
-                <td className="text-right tabular-nums">{b.count}</td>
-                <td className="text-right tabular-nums">
-                  {formatMoney(b.balance)}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+                </div>
+                <div className="text-right">
+                  <p className="text-sm font-semibold tabular-nums">
+                    {formatMoney(b.balance)}
+                  </p>
+                  <p className="text-xs tabular-nums text-[var(--frappe-text-muted)]">
+                    {share}%
+                  </p>
+                </div>
+              </div>
+              <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-[var(--frappe-section-head)]">
+                <div
+                  className={cn("h-full rounded-full", agingBarClass(b.risk))}
+                  style={{ width: `${share}%` }}
+                />
+              </div>
+            </li>
+          );
+        })}
+      </ul>
     </div>
   );
+}
+
+function agingBarClass(risk?: string | null) {
+  if (!risk) return "bg-[var(--frappe-primary)]";
+  if (risk.includes("Highly") || risk.includes("High Risk")) return "bg-destructive";
+  if (risk.includes("Attention")) return "bg-[var(--csolve-honey)]";
+  return "bg-[var(--csolve-moss)]";
 }
 
 function PaymentButton({

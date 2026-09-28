@@ -1,8 +1,3 @@
-import { IsOptional, IsUUID } from 'class-validator';
-import { PaginationQueryDto } from '../../common/dto/pagination.dto';
+import { InventoryListQueryDto } from './inventory-list-query.dto';
 
-export class LowStockListQueryDto extends PaginationQueryDto {
-  @IsOptional()
-  @IsUUID()
-  locationId?: string;
-}
+export class LowStockListQueryDto extends InventoryListQueryDto {}

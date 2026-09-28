@@ -6,7 +6,8 @@ import type { Item, StockRecord } from "@/lib/types";
 /** Load all stock rows at a location (paginated API). Optional `search` uses backend filter. */
 export async function fetchInventoryForLocation(
   locationId: string,
-  search?: string
+  search?: string,
+  options?: { forSale?: boolean }
 ): Promise<StockRecord[]> {
   if (!locationId) return [];
   const term = search?.trim();
@@ -15,6 +16,7 @@ export async function fetchInventoryForLocation(
       {
         locationId,
         search: term || undefined,
+        forSale: options?.forSale || undefined,
       },
       page,
       limit

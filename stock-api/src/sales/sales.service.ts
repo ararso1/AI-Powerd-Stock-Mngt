@@ -11,6 +11,7 @@ import {
   CommissionBasis,
   CreditStatus,
   DEFAULT_COMMISSION_PERCENT,
+  CoffeeForm,
   DocumentStatus,
   LotEventType,
   LotStatus,
@@ -19,6 +20,7 @@ import {
   StockMovementSourceType,
 } from '../common/enums';
 import { computeCommissionAmount } from '../common/utils/commission.util';
+import { isSellableStock } from '../common/utils/sale-stock.util';
 import {
   applyDateRangeToQb,
   applyRelatedIlikeSearch,
@@ -301,6 +303,56 @@ export class SalesService {
     }));
   }
 
+  /** Processed/finished coffee and reject lots. Raw purchased coffee is refused. */
+  private async assertSellableSaleLine(
+    manager: EntityManager,
+    line: { itemId: string; lotId?: string | null },
+  ) {
+    const item = await manager.getRepository(Item).findOne({
+      where: { id: line.itemId },
+    });
+    if (!item) {
+      throw new BadRequestException(`Item not found: ${line.itemId}`);
+    }
+
+    let lot: Lot | null = null;
+    if (line.lotId) {
+      lot = await manager.getRepository(Lot).findOne({
+        where: { id: line.lotId },
+      });
+      if (!lot) throw new BadRequestException('Lot not found');
+      const rejectOnHold =
+        lot.status === LotStatus.HOLD && lot.form === CoffeeForm.REJECT;
+      if (lot.status !== LotStatus.ACTIVE && !rejectOnHold) {
+        throw new BadRequestException(`Lot ${lot.code} is not available for sale`);
+      }
+      if (lot.itemId && lot.itemId !== line.itemId) {
+        throw new BadRequestException(
+          `Lot ${lot.code} does not match sale line item`,
+        );
+      }
+    } else if (this.stockService.isCoffeeItem(item)) {
+      throw new BadRequestException(
+        `Coffee item ${item.sku ?? item.description} requires lotId on sale line`,
+      );
+    }
+
+    if (
+      !isSellableStock({
+        sku: item.sku,
+        itemType: item.itemType,
+        lotCode: lot?.code,
+        form: lot?.form,
+        processMethod: lot?.processMethod,
+      })
+    ) {
+      const name = lot?.code ?? item.description ?? item.sku;
+      throw new BadRequestException(
+        `${name} is unprocessed coffee and cannot be sold. Select processed coffee or reject stock.`,
+      );
+    }
+  }
+
   private paysViaBank(method: PaymentMethod): boolean {
     return method === PaymentMethod.BANK || method === PaymentMethod.CASH;
   }
@@ -462,6 +514,10 @@ export class SalesService {
           },
           manager,
         );
+      }
+
+      for (const line of lines) {
+        await this.assertSellableSaleLine(manager, line);
       }
 
       stockWarnings = await this.stockService.checkAvailability(
@@ -709,6 +765,10 @@ export class SalesService {
       const saleRepo = manager.getRepository(Sale);
       const creditRepo = manager.getRepository(CustomerCredit);
 
+      for (const line of dto.lines) {
+        await this.assertSellableSaleLine(manager, line);
+      }
+
       const stockWarnings = await this.stockService.checkAvailability(
         dto.locationId,
         dto.lines.map((l) => ({
@@ -722,35 +782,11 @@ export class SalesService {
 
       const saleLines: SaleLineDraft[] = [];
       let subtotal = 0;
-      const itemRepo = manager.getRepository(Item);
       const lotRepo = manager.getRepository(Lot);
       const eventRepo = manager.getRepository(LotEvent);
       const channel = dto.channel ?? SaleChannel.LOCAL;
 
       for (const line of dto.lines) {
-        const item = await itemRepo.findOne({ where: { id: line.itemId } });
-        if (!item) {
-          throw new BadRequestException(`Item not found: ${line.itemId}`);
-        }
-        const isCoffee = this.stockService.isCoffeeItem(item);
-        if (isCoffee && !line.lotId) {
-          throw new BadRequestException(
-            `Coffee item ${item.sku ?? item.description} requires lotId on sale line`,
-          );
-        }
-        if (line.lotId) {
-          const lot = await lotRepo.findOne({ where: { id: line.lotId } });
-          if (!lot) throw new BadRequestException('Lot not found');
-          if (lot.status !== LotStatus.ACTIVE) {
-            throw new BadRequestException(`Lot ${lot.code} is not active`);
-          }
-          if (lot.itemId && lot.itemId !== line.itemId) {
-            throw new BadRequestException(
-              `Lot ${lot.code} does not match sale line item`,
-            );
-          }
-        }
-
         const stock = await this.stockService.getStock(
           dto.locationId,
           line.itemId,

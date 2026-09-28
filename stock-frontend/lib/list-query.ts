@@ -37,6 +37,8 @@ export type InventoryListQueryParams = GenericListQueryParams & {
   form?: CoffeeForm;
   cropYear?: string;
   grade?: string;
+  forSale?: boolean;
+  stockGroup?: "process" | "sales" | "reject";
 };
 
 export type InventoryAdjustmentsListQueryParams = GenericListQueryParams & {
@@ -68,6 +70,7 @@ export type SalesListQueryParams = GenericListQueryParams & {
 export type ExpensesListQueryParams = GenericListQueryParams & {
   categoryId?: string;
   bankAccountId?: string;
+  coffeeMarket?: "LOCAL" | "EXPORT" | "NONE";
 };
 
 export type CreditsCustomersListQueryParams = GenericListQueryParams & {

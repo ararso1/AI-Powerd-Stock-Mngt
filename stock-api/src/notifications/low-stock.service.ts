@@ -2,7 +2,13 @@ import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { IsNull, Repository } from 'typeorm';
 import { NotificationType } from '../common/enums';
-import { buildMeta } from '../common/utils/query.util';
+import {
+  PROCESS_AVAILABLE_STOCK_SQL,
+  REJECT_STOCK_SQL,
+  SALES_STORE_STOCK_SQL,
+} from '../common/utils/sale-stock.util';
+import { applyDateRangeToQb, buildMeta } from '../common/utils/query.util';
+import { InventoryListQueryDto } from '../inventory/dto/inventory-list-query.dto';
 import { StockLevel } from '../database/entities/stock-level.entity';
 import { NotificationsService } from './notifications.service';
 
@@ -21,11 +27,7 @@ export class LowStockService {
     private readonly notifications: NotificationsService,
   ) {}
 
-  async findAllLowStock(query: {
-    locationId?: string;
-    page?: number;
-    limit?: number;
-  }) {
+  async findAllLowStock(query: InventoryListQueryDto) {
     const page = query.page ?? 1;
     const limit = query.limit ?? 20;
 
@@ -45,6 +47,34 @@ export class LowStockService {
       qb.andWhere('stock.location_id = :locationId', {
         locationId: query.locationId,
       });
+    }
+    if (query.form || query.cropYear || query.grade) {
+      if (query.form) {
+        qb.andWhere('lot.form = :form', { form: query.form });
+      }
+      if (query.cropYear) {
+        qb.andWhere('lot.crop_year = :cropYear', { cropYear: query.cropYear });
+      }
+      if (query.grade) {
+        qb.andWhere('UPPER(lot.grade) = UPPER(:grade)', {
+          grade: query.grade.trim(),
+        });
+      }
+    }
+    if (query.stockGroup === 'process') {
+      qb.andWhere(PROCESS_AVAILABLE_STOCK_SQL);
+    } else if (query.stockGroup === 'sales') {
+      qb.andWhere(SALES_STORE_STOCK_SQL);
+    } else if (query.stockGroup === 'reject') {
+      qb.andWhere(REJECT_STOCK_SQL);
+    }
+    applyDateRangeToQb(qb, 'stock.updated_at', query.from, query.to);
+    if (query.search?.trim()) {
+      const term = `%${query.search.trim()}%`;
+      qb.andWhere(
+        `(item.description ILIKE :term OR item.sku ILIKE :term OR lot.code ILIKE :term)`,
+        { term },
+      );
     }
 
     const [data, total] = await qb

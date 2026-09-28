@@ -26,7 +26,7 @@ export class DashboardController {
     return this.service.getOverview(query.from, query.to);
   }
 
-  /** Local roast / domestic market command center. */
+  /** Local market: purchase, inventory, cleaning, roast, sales store, and local sales. */
   @Get('local')
   @RequirePermissions('insights.read', 'dashboard.read')
   local(@Query() query: DashboardQueryDto) {

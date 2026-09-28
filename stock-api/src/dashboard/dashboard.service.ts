@@ -36,6 +36,10 @@ import { StockLevel } from '../database/entities/stock-level.entity';
 import { Supplier } from '../database/entities/supplier.entity';
 import { SupplierCredit } from '../database/entities/supplier-credit.entity';
 import { MarketPricesService } from '../market-prices/market-prices.service';
+import {
+  currentProcessStage,
+  kgAtCurrentStage,
+} from '../process-runs/process-summary';
 
 type Recommendation = {
   id: string;
@@ -83,144 +87,11 @@ export class DashboardService {
   ) {}
 
   /**
-   * Local roast / domestic market dashboard.
-   * Intake → process → roast → local sales, quality, production, domestic finance.
+   * Local market only: purchase → inventory → cleaning → roast & ground → sales store → sales.
+   * Export purchases, export sales, and export contracts are excluded.
    */
   async getLocalOverview(from?: string, to?: string) {
-    const overview = await this.getOverview(from, to);
-    const fromIso = overview.period?.from ?? from ?? undefined;
-    const toIso = overview.period?.to ?? to ?? undefined;
-    const localPnl = await this.computeProfitSummary(
-      fromIso ?? undefined,
-      toIso ?? undefined,
-      SaleChannel.LOCAL,
-    );
-
-    const roastedStock = await this.lotRepo
-      .createQueryBuilder('lot')
-      .select('COALESCE(SUM(lot.quantity::numeric), 0)', 'kg')
-      .where('lot.form IN (:...forms)', {
-        forms: [CoffeeForm.ROASTED, CoffeeForm.PACKAGED, CoffeeForm.FLOUR],
-      })
-      .andWhere('lot.status = :status', { status: LotStatus.ACTIVE })
-      .getRawOne<{ kg: string }>();
-
-    const localCodes = new Set([
-      'SHRINKAGE',
-      'MOISTURE_RISK',
-      'LOT_LINK',
-    ]);
-    const recommendations = (overview.recommendations ?? []).filter((r) =>
-      localCodes.has(r.code),
-    );
-    const executiveInsights = (overview.executiveInsights ?? []).filter(
-      (c) =>
-        c.category === 'Stock' ||
-        c.category === 'Credit' ||
-        c.category === 'Quality' ||
-        c.href.includes('/sales') ||
-        c.href.includes('/collections') ||
-        c.href.includes('/process') ||
-        c.href.includes('/credits') ||
-        c.href.includes('/inventory') ||
-        c.href.includes('/lots'),
-    ).filter((c) => c.category !== 'Export' && c.id !== 'exec-profit-mix');
-
-    // Prefer a local-channel profit insight when we have local margin.
-    const localGross = parseFloat(localPnl.grossProfit);
-    if (localGross !== 0) {
-      executiveInsights.unshift({
-        id: 'local-profit',
-        tone: localGross >= 0 ? 'profit' : 'warn',
-        category: 'Profit',
-        title: `Local channel gross profit is ${localGross.toLocaleString()} ETB for the period.`,
-        detail: `Revenue ${localPnl.revenue} · COGS ${localPnl.costOfGoodsSold}`,
-        href: '/sales?channel=LOCAL',
-      });
-    }
-
-    const analytics = overview.analytics;
-    return {
-      channel: 'LOCAL' as const,
-      currency: overview.currency,
-      asOf: overview.asOf,
-      period: overview.period,
-      totalInventoryValue: overview.totalInventoryValue,
-      stockValueByLocation: overview.stockValueByLocation,
-      showroomCount: overview.showroomCount,
-      dailySales: overview.pulse?.localSalesToday ?? overview.dailySales,
-      dailyPurchases: overview.dailyPurchases,
-      profitAndLoss: localPnl,
-      financialOverview: overview.financialOverview,
-      pulse: overview.pulse
-        ? {
-            intakeKgToday: overview.pulse.intakeKgToday,
-            processWipKg: overview.pulse.processWipKg,
-            processWipRuns: overview.pulse.processWipRuns,
-            roastOutputKgToday: overview.pulse.roastOutputKgToday,
-            localSalesToday: overview.pulse.localSalesToday,
-            roastedStockKg: parseFloat(roastedStock?.kg ?? '0').toFixed(3),
-            openAlerts: overview.pulse.openAlerts,
-            greenStockKg: overview.pulse.greenStockKg,
-          }
-        : null,
-      traceability: overview.traceability,
-      commercial: overview.commercial
-        ? {
-            localRevenue: overview.commercial.localRevenue,
-            customerCreditOutstanding:
-              overview.commercial.customerCreditOutstanding,
-            supplierCreditOutstanding:
-              overview.commercial.supplierCreditOutstanding,
-            totalLiquidity: overview.commercial.totalLiquidity,
-          }
-        : null,
-      analytics: analytics
-        ? {
-            inventory: {
-              totalStockKg: analytics.inventory.totalStockKg,
-              stockValue: analytics.inventory.stockValue,
-              availableKg: analytics.inventory.availableKg,
-              reservedKg: analytics.inventory.reservedKg,
-              lowStockItems: analytics.inventory.lowStockItems,
-            },
-            trading: {
-              totalPurchases: analytics.trading.totalPurchases,
-              localSalesValue: analytics.trading.localSalesValue,
-              salesVolumeKg: analytics.trading.localSalesVolumeKg,
-              salesValue: analytics.trading.localSalesValue,
-              chart: [
-                {
-                  label: 'Local sales',
-                  value: Number(analytics.trading.localSalesValue),
-                },
-                {
-                  label: 'Purchases',
-                  value: Number(analytics.trading.totalPurchases),
-                },
-              ],
-            },
-            quality: analytics.quality,
-            finance: analytics.finance,
-            production: analytics.production,
-          }
-        : null,
-      recommendations: recommendations.slice(0, 12),
-      executiveInsights: executiveInsights.slice(0, 6),
-      links: {
-        collectionsToday: overview.links?.collectionsToday,
-        processWip: overview.links?.processWip,
-        greenLots: overview.links?.greenLots,
-        qcHoldLots: overview.links?.qcHoldLots,
-        localSales: overview.links?.localSales,
-        unlinkedInventory: overview.links?.unlinkedInventory,
-        notifications: overview.links?.notifications,
-        reports: overview.links?.reports,
-        profitLoss: overview.links?.profitLoss,
-        insights: overview.links?.insights,
-        credits: overview.links?.credits,
-      },
-    };
+    return this.buildLocalMarket(from, to);
   }
 
   /**
@@ -618,7 +489,7 @@ export class DashboardService {
         unlinkedInventory: '/inventory',
         notifications: '/notifications',
         reports: '/reports',
-        profitLoss: '/profit-loss',
+        profitLoss: '/reports?tab=profit-loss',
         insights: '/insights',
         credits: '/credits',
         marketPrices: '/market-prices',
@@ -1545,10 +1416,606 @@ export class DashboardService {
         category: 'Profit',
         title: `Export sales generated ${exportShare}% of total coffee gross profit this period.`,
         detail: `Gross profit ${profitAndLoss.grossProfit} · export share of margin`,
-        href: '/profit-loss',
+        href: '/reports?tab=profit-loss',
       });
     }
 
     return cards.slice(0, 6);
   }
+
+  private async buildLocalMarket(from?: string, to?: string) {
+    const pnl = await this.computeProfitSummary(from, to, SaleChannel.LOCAL);
+    const [localLotIds, exportLotIds, stocks, runs, purchaseTotals, purchaseKg, saleLines, customerCredit, supplierCredit] =
+      await Promise.all([
+        this.purchaseLotIds(PurchaseType.LOCAL),
+        this.purchaseLotIds(PurchaseType.EXPORT),
+        this.stockRepo.find({
+          relations: { item: true, lot: true, location: true },
+        }),
+        this.processRunRepo.find({ where: { workflow: PurchaseType.LOCAL } }),
+        this.localPurchaseTotals(from, to),
+        this.localPurchaseKg(from, to),
+        this.localSaleLines(from, to),
+        this.localCustomerCredit(),
+        this.localSupplierCredit(),
+      ]);
+
+    let inventoryKg = 0;
+    let inventoryValue = 0;
+    let salesStoreKg = 0;
+    let salesStoreValue = 0;
+    let rejectKg = 0;
+    const storePacks = {
+      roast1: emptyPack(),
+      roast500: emptyPack(),
+      ground1: emptyPack(),
+      ground500: emptyPack(),
+    };
+    const byLocation = new Map<
+      string,
+      { locationName: string; value: number; kg: number }
+    >();
+
+    for (const stock of stocks) {
+      if (!isLocalMarketStock(stock, localLotIds, exportLotIds)) continue;
+      const qty = num(stock.quantity);
+      if (qty <= 0) continue;
+      const sku = (stock.item?.sku ?? '').trim().toUpperCase();
+      const form = stock.lot?.form ?? null;
+      const method = stock.lot?.processMethod ?? null;
+      const kg = coffeeQuantityKg(qty, sku, form, method, stock.item?.unit);
+      const value = qty * num(stock.purchasePrice);
+      const bucket = localStockBucket(sku, form, method, stock.item?.itemType);
+      if (bucket === 'sales') {
+        salesStoreKg += kg;
+        salesStoreValue += value;
+        const pack = salesStorePack(sku, form, method);
+        if (pack) {
+          const row = storePacks[pack];
+          row.packs += qty;
+          row.kg += kg;
+          row.value += value;
+        }
+      } else if (bucket === 'reject') {
+        rejectKg += kg;
+      } else {
+        inventoryKg += kg;
+        inventoryValue += value;
+      }
+      const locationId = stock.locationId;
+      const row = byLocation.get(locationId) ?? {
+        locationName: stock.location?.name ?? 'Location',
+        value: 0,
+        kg: 0,
+      };
+      row.value += value;
+      row.kg += kg;
+      byLocation.set(locationId, row);
+    }
+
+    const openStatuses = new Set<ProcessRunStatus>([
+      ProcessRunStatus.IN_PROGRESS,
+      ProcessRunStatus.QC_HOLD,
+      ProcessRunStatus.READY,
+    ]);
+    let processingStartedKg = 0;
+    let cleaningKg = 0;
+    let roastGroundKg = 0;
+    let cleaningInputKg = 0;
+    let cleaningOutputKg = 0;
+    let cleaningLossKg = 0;
+    let highLossRuns = 0;
+    let underScreenRuns = 0;
+    let roastKg = 0;
+    let groundKg = 0;
+
+    for (const run of runs) {
+      if (openStatuses.has(run.status)) {
+        const stage = currentProcessStage(run);
+        const kg = kgAtCurrentStage(run);
+        if (stage === 'Processing Started') processingStartedKg += kg;
+        else if (stage === 'Cleaning') cleaningKg += kg;
+        else if (stage === 'Roast & Ground') roastGroundKg += kg;
+      }
+      for (const result of run.stageResults ?? []) {
+        if (!inPeriod(result.completedAt, from, to)) continue;
+        if (result.stage === 'Cleaning') {
+          cleaningInputKg += num(result.inputQty);
+          cleaningOutputKg += num(result.outputQty);
+          cleaningLossKg += num(result.removedQty);
+          if (result.warnings?.includes('HIGH_LOSS')) highLossRuns += 1;
+          if (result.warnings?.includes('UNDER_SCREEN')) underScreenRuns += 1;
+        }
+        if (result.stage === 'Roast & Ground') {
+          const roastQty = parseFloat(result.roastQty ?? '');
+          const groundQty = parseFloat(result.groundQty ?? '');
+          if (Number.isFinite(roastQty) || Number.isFinite(groundQty)) {
+            roastKg += Number.isFinite(roastQty) ? roastQty : 0;
+            groundKg += Number.isFinite(groundQty) ? groundQty : 0;
+          } else {
+            roastKg += num(result.outputQty);
+          }
+        }
+      }
+    }
+
+    const saleIds = new Set<string>();
+    let salesKg = 0;
+    let salesValue = 0;
+    let soldRoastKg = 0;
+    let soldGroundKg = 0;
+    let soldRoastValue = 0;
+    let soldGroundValue = 0;
+    const trend = new Map<string, { roastKg: number; groundKg: number }>();
+    const trendBucket = salesTrendBucket(from, to);
+    for (const line of saleLines) {
+      const sku = (line.item?.sku ?? '').trim().toUpperCase();
+      const form = line.lot?.form ?? null;
+      const method = line.lot?.processMethod ?? null;
+      const lineKg = coffeeQuantityKg(
+        num(line.quantity),
+        sku,
+        form,
+        method,
+        line.item?.unit,
+      );
+      salesKg += lineKg;
+      if (!saleIds.has(line.saleId)) {
+        saleIds.add(line.saleId);
+        salesValue += num(line.sale?.total);
+      }
+      const kind = salesStoreKind(sku, method);
+      if (!kind || lineKg <= 0) continue;
+      const lineValue = num(line.lineTotal);
+      if (kind === 'roast') {
+        soldRoastKg += lineKg;
+        soldRoastValue += lineValue;
+      } else {
+        soldGroundKg += lineKg;
+        soldGroundValue += lineValue;
+      }
+      const soldAt = line.sale?.createdAt;
+      if (!soldAt) continue;
+      const key = trendKey(new Date(soldAt), trendBucket);
+      const point = trend.get(key) ?? { roastKg: 0, groundKg: 0 };
+      point[kind === 'roast' ? 'roastKg' : 'groundKg'] += lineKg;
+      trend.set(key, point);
+    }
+
+    const yieldPercent =
+      cleaningInputKg > 0 ? (cleaningOutputKg / cleaningInputKg) * 100 : 0;
+    const gross = num(pnl.grossProfit);
+    const insights: Array<{
+      id: string;
+      tone: 'positive' | 'critical' | 'warn' | 'info' | 'profit';
+      category: string;
+      title: string;
+      detail: string;
+      href: string;
+    }> = [];
+    if (gross !== 0) {
+      insights.push({
+        id: 'local-profit',
+        tone: gross >= 0 ? 'profit' : 'warn',
+        category: 'Sales',
+        title: `Local sales gross profit is ${gross.toLocaleString()} for this period.`,
+        detail: `Revenue ${pnl.revenue} · cost ${pnl.costOfGoodsSold}`,
+        href: '/sales?channel=LOCAL',
+      });
+    }
+    if (highLossRuns > 0 || underScreenRuns > 0) {
+      insights.push({
+        id: 'local-cleaning',
+        tone: 'warn',
+        category: 'Cleaning',
+        title: `${highLossRuns} cleaning run${highLossRuns === 1 ? '' : 's'} flagged high loss, ${underScreenRuns} under screen.`,
+        detail: `Loss ${kg(cleaningLossKg)} kg from ${kg(cleaningInputKg)} kg cleaned.`,
+        href: '/process-runs',
+      });
+    }
+    if (inventoryKg > 0 && processingStartedKg + cleaningKg + roastGroundKg === 0) {
+      insights.push({
+        id: 'local-ready',
+        tone: 'info',
+        category: 'Inventory',
+        title: `${kg(inventoryKg)} kg of local coffee is available to start processing.`,
+        detail: 'Purchased coffee stays in inventory until a process run is created.',
+        href: '/process-runs',
+      });
+    }
+    if (num(customerCredit) > 0) {
+      insights.push({
+        id: 'local-credit',
+        tone: 'info',
+        category: 'Credit',
+        title: `Local customer credit outstanding is ${num(customerCredit).toLocaleString()}.`,
+        detail: 'Open balances are limited to local-market sales.',
+        href: '/credits',
+      });
+    }
+
+    const onHandChart = [
+      { label: 'Inventory', value: round3(inventoryKg) },
+      { label: 'Started', value: round3(processingStartedKg) },
+      { label: 'Cleaning', value: round3(cleaningKg) },
+      { label: 'Roast & ground', value: round3(roastGroundKg) },
+      { label: 'Sales store', value: round3(salesStoreKg) },
+      { label: 'Reject', value: round3(rejectKg) },
+    ];
+
+    return {
+      channel: 'LOCAL' as const,
+      currency: getAppCurrency(this.config),
+      asOf: new Date().toISOString(),
+      period: { from: from ?? null, to: to ?? null },
+      pipeline: {
+        purchaseCount: purchaseTotals.count,
+        purchaseKg: kg(purchaseKg),
+        purchaseValue: money(purchaseTotals.value),
+        inventoryKg: kg(inventoryKg),
+        inventoryValue: money(inventoryValue),
+        processingStartedKg: kg(processingStartedKg),
+        cleaningKg: kg(cleaningKg),
+        roastGroundKg: kg(roastGroundKg),
+        salesStoreKg: kg(salesStoreKg),
+        salesStoreValue: money(salesStoreValue),
+        rejectKg: kg(rejectKg),
+        salesCount: saleIds.size,
+        salesKg: kg(salesKg),
+        salesValue: money(salesValue),
+      },
+      onHandChart,
+      activity: {
+        cleaningInputKg: kg(cleaningInputKg),
+        cleaningOutputKg: kg(cleaningOutputKg),
+        cleaningLossKg: kg(cleaningLossKg),
+        yieldPercent: yieldPercent.toFixed(2),
+        highLossRuns,
+        underScreenRuns,
+        roastKg: kg(roastKg),
+        groundKg: kg(groundKg),
+      },
+      tradingChart: [
+        { label: 'Purchases', value: round2(purchaseTotals.value) },
+        { label: 'Local sales', value: round2(salesValue) },
+      ],
+      salesStore: {
+        roast: {
+          kg1: packRow(storePacks.roast1),
+          kg500: packRow(storePacks.roast500),
+        },
+        ground: {
+          kg1: packRow(storePacks.ground1),
+          kg500: packRow(storePacks.ground500),
+        },
+        availableKg: kg(salesStoreKg),
+        availableValue: money(salesStoreValue),
+        soldKg: kg(soldRoastKg + soldGroundKg),
+        soldValue: money(soldRoastValue + soldGroundValue),
+        soldRoastKg: kg(soldRoastKg),
+        soldRoastValue: money(soldRoastValue),
+        soldGroundKg: kg(soldGroundKg),
+        soldGroundValue: money(soldGroundValue),
+        trend: [...trend.entries()]
+          .sort(([a], [b]) => a.localeCompare(b))
+          .map(([label, point]) => ({
+            label: trendLabel(label, trendBucket),
+            roastKg: round3(point.roastKg),
+            groundKg: round3(point.groundKg),
+          })),
+      },
+      finance: {
+        revenue: pnl.revenue,
+        costOfGoodsSold: pnl.costOfGoodsSold,
+        grossProfit: pnl.grossProfit,
+        netProfit: pnl.netProfit,
+        customerCredit,
+        supplierCredit,
+      },
+      stockByLocation: [...byLocation.entries()]
+        .map(([locationId, row]) => ({
+          locationId,
+          locationName: row.locationName,
+          value: money(row.value),
+          kg: kg(row.kg),
+        }))
+        .sort((a, b) => num(b.value) - num(a.value)),
+      executiveInsights: insights.slice(0, 4),
+    };
+  }
+
+  private async purchaseLotIds(type: PurchaseType): Promise<Set<string>> {
+    const rows = await this.purchaseRepo
+      .createQueryBuilder('p')
+      .innerJoin('p.lines', 'line')
+      .select('line.lot_id', 'lotId')
+      .where('p.purchase_type = :type', { type })
+      .andWhere('p.status = :status', { status: DocumentStatus.ACTIVE })
+      .andWhere('line.lot_id IS NOT NULL')
+      .getRawMany<Record<string, string>>();
+    return new Set(
+      rows
+        .map((row) => row.lotId ?? row.lotid ?? '')
+        .filter((id) => id.length > 0),
+    );
+  }
+
+  private async localPurchaseTotals(from?: string, to?: string) {
+    const qb = this.purchaseRepo
+      .createQueryBuilder('p')
+      .innerJoin('p.lines', 'line')
+      .select('COUNT(DISTINCT p.id)', 'count')
+      .addSelect('COALESCE(SUM(line.lineTotal), 0)', 'value')
+      .where('p.purchase_type = :type', { type: PurchaseType.LOCAL })
+      .andWhere('p.status = :status', { status: DocumentStatus.ACTIVE })
+      .andWhere('line.lot_id IS NOT NULL');
+    applyDateRangeToQb(qb, 'p.created_at', from, to);
+    const row = await qb.getRawOne<{ count: string; value: string }>();
+    return {
+      count: parseInt(row?.count ?? '0', 10),
+      value: num(row?.value),
+    };
+  }
+
+  private async localPurchaseKg(from?: string, to?: string) {
+    const qb = this.purchaseRepo
+      .createQueryBuilder('p')
+      .innerJoin('p.lines', 'line')
+      .select('COALESCE(SUM(line.quantity::numeric), 0)', 'kg')
+      .where('p.purchase_type = :type', { type: PurchaseType.LOCAL })
+      .andWhere('p.status = :status', { status: DocumentStatus.ACTIVE })
+      .andWhere('line.lot_id IS NOT NULL');
+    applyDateRangeToQb(qb, 'p.created_at', from, to);
+    const row = await qb.getRawOne<{ kg: string }>();
+    return num(row?.kg);
+  }
+
+  private async localSaleLines(from?: string, to?: string) {
+    const qb = this.saleLineRepo
+      .createQueryBuilder('line')
+      .innerJoinAndSelect('line.sale', 'sale')
+      .innerJoinAndSelect('line.item', 'item')
+      .leftJoinAndSelect('line.lot', 'lot')
+      .where('sale.status = :status', { status: DocumentStatus.ACTIVE })
+      .andWhere('sale.channel = :channel', { channel: SaleChannel.LOCAL });
+    applyDateRangeToQb(qb, 'sale.created_at', from, to);
+    return qb.getMany();
+  }
+
+  private async localCustomerCredit() {
+    const row = await this.customerCreditRepo
+      .createQueryBuilder('credit')
+      .innerJoin('credit.sale', 'sale')
+      .select('COALESCE(SUM(credit.balance::numeric), 0)', 'total')
+      .where('credit.status IN (:...statuses)', {
+        statuses: [CreditStatus.OPEN, CreditStatus.PARTIAL],
+      })
+      .andWhere('sale.channel = :channel', { channel: SaleChannel.LOCAL })
+      .getRawOne<{ total: string }>();
+    return money(num(row?.total));
+  }
+
+  private async localSupplierCredit() {
+    const row = await this.supplierCreditRepo
+      .createQueryBuilder('credit')
+      .innerJoin('credit.purchase', 'purchase')
+      .select('COALESCE(SUM(credit.balance::numeric), 0)', 'total')
+      .where('credit.status IN (:...statuses)', {
+        statuses: [CreditStatus.OPEN, CreditStatus.PARTIAL],
+      })
+      .andWhere('purchase.purchase_type = :type', { type: PurchaseType.LOCAL })
+      .getRawOne<{ total: string }>();
+    return money(num(row?.total));
+  }
+}
+
+function num(value: string | number | null | undefined): number {
+  const n = typeof value === 'number' ? value : parseFloat(value ?? '');
+  return Number.isFinite(n) ? n : 0;
+}
+
+function round3(value: number): number {
+  return Math.round((value + Number.EPSILON) * 1000) / 1000;
+}
+
+function round2(value: number): number {
+  return Math.round((value + Number.EPSILON) * 100) / 100;
+}
+
+function kg(value: number): string {
+  return round3(value).toFixed(3);
+}
+
+function money(value: number): string {
+  return round2(value).toFixed(2);
+}
+
+function inPeriod(
+  value: Date | string | null | undefined,
+  from?: string,
+  to?: string,
+): boolean {
+  if (!from && !to) return true;
+  if (!value) return false;
+  const time = new Date(value).getTime();
+  if (Number.isNaN(time)) return false;
+  if (from && time < new Date(from).getTime()) return false;
+  if (to) {
+    const end = new Date(to);
+    end.setHours(23, 59, 59, 999);
+    if (time > end.getTime()) return false;
+  }
+  return true;
+}
+
+function coffeeQuantityKg(
+  qty: number,
+  sku: string,
+  form: string | null,
+  method: string | null,
+  unit: string | null | undefined,
+): number {
+  if (!Number.isFinite(qty) || qty <= 0) return 0;
+  const packaged =
+    form === CoffeeForm.PACKAGED ||
+    (unit ?? '').toLowerCase() === 'pcs' ||
+    sku.endsWith('-1KG') ||
+    sku.endsWith('-500') ||
+    sku.endsWith('-250');
+  if (!packaged) return qty;
+  let size = 1;
+  if (sku.endsWith('-500') || /^0\.5/.test(method ?? '')) size = 0.5;
+  else if (sku.endsWith('-250') || /250\s*g/i.test(method ?? '')) size = 0.25;
+  else {
+    const match = (method ?? '').match(/([\d.]+)\s*kg/i);
+    if (match) {
+      const parsed = parseFloat(match[1]);
+      if (parsed > 0) size = parsed;
+    }
+  }
+  return round3(qty * size);
+}
+
+function localStockBucket(
+  sku: string,
+  form: string | null,
+  method: string | null,
+  itemType: string | null | undefined,
+): 'inventory' | 'sales' | 'reject' {
+  if (sku === 'COF-REJECT' || method === 'Reject') return 'reject';
+  if (
+    form === CoffeeForm.ROASTED ||
+    form === CoffeeForm.FLOUR ||
+    form === CoffeeForm.PACKAGED ||
+    itemType === 'FINISHED' ||
+    sku.startsWith('COF-ROAST') ||
+    sku.startsWith('COF-GROUND') ||
+    method === 'Roast & Ground' ||
+    method === 'Roast coffee' ||
+    method === 'Ground coffee'
+  ) {
+    return 'sales';
+  }
+  return 'inventory';
+}
+
+function isLocalMarketStock(
+  stock: StockLevel,
+  localLotIds: Set<string>,
+  exportLotIds: Set<string>,
+): boolean {
+  const sku = (stock.item?.sku ?? '').trim().toUpperCase();
+  const code = (stock.lot?.code ?? '').trim().toUpperCase();
+  const form = stock.lot?.form ?? null;
+  const method = stock.lot?.processMethod ?? null;
+  const coffee =
+    sku.startsWith('COF-') ||
+    sku.startsWith('LOT-') ||
+    code.startsWith('LOT-') ||
+    code.startsWith('PR-') ||
+    !!form;
+  if (!coffee) return false;
+  const lotId = stock.lotId ?? stock.lot?.id ?? null;
+  if (lotId && exportLotIds.has(lotId) && !localLotIds.has(lotId)) {
+    return false;
+  }
+  if (lotId && localLotIds.has(lotId)) return true;
+  if (
+    method === 'Cleaning' ||
+    method === 'Roast coffee' ||
+    method === 'Ground coffee' ||
+    method === 'Roast & Ground' ||
+    method === 'Reject' ||
+    method === '1 kg' ||
+    method === '0.5 kg'
+  ) {
+    return true;
+  }
+  // Outputs created by a local process run, not seeded demo lots.
+  return code.startsWith('PR-') || code.includes('-CLN') || code.includes('-RJ');
+}
+
+type PackTotals = { packs: number; kg: number; value: number };
+
+function emptyPack(): PackTotals {
+  return { packs: 0, kg: 0, value: 0 };
+}
+
+function packRow(row: PackTotals) {
+  return {
+    packs: round3(row.packs),
+    kg: kg(row.kg),
+    value: money(row.value),
+  };
+}
+
+/** Roast and ground finished coffee. Ground is matched first so combined names stay with ground only when the SKU is ground. */
+function salesStoreKind(
+  sku: string,
+  method: string | null,
+): 'roast' | 'ground' | null {
+  const process = method ?? '';
+  if (sku.startsWith('COF-GROUND') || process === 'Ground coffee') return 'ground';
+  if (
+    sku.startsWith('COF-ROAST') ||
+    process === 'Roast coffee' ||
+    process === 'Roast & Ground'
+  ) {
+    return 'roast';
+  }
+  return null;
+}
+
+function salesStorePack(
+  sku: string,
+  form: string | null,
+  method: string | null,
+): 'roast1' | 'roast500' | 'ground1' | 'ground500' | null {
+  const kind = salesStoreKind(sku, method);
+  if (!kind) return null;
+  const process = method ?? '';
+  const half = sku.endsWith('-500') || /^0\.5/.test(process);
+  const one = sku.endsWith('-1KG') || process === '1 kg';
+  if (!half && !one) return null;
+  if (form !== CoffeeForm.PACKAGED && !half && !one) return null;
+  if (kind === 'roast') return half ? 'roast500' : 'roast1';
+  return half ? 'ground500' : 'ground1';
+}
+
+function salesTrendBucket(from?: string, to?: string): 'day' | 'month' {
+  if (!from || !to) return 'month';
+  const start = new Date(from).getTime();
+  const end = new Date(to).getTime();
+  if (!Number.isFinite(start) || !Number.isFinite(end)) return 'month';
+  return end - start <= 62 * 24 * 60 * 60 * 1000 ? 'day' : 'month';
+}
+
+function trendKey(date: Date, bucket: 'day' | 'month'): string {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  if (bucket === 'month') return `${year}-${month}`;
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+const TREND_MONTHS = [
+  'Jan',
+  'Feb',
+  'Mar',
+  'Apr',
+  'May',
+  'Jun',
+  'Jul',
+  'Aug',
+  'Sep',
+  'Oct',
+  'Nov',
+  'Dec',
+];
+
+function trendLabel(key: string, bucket: 'day' | 'month'): string {
+  const [year, month, day] = key.split('-');
+  const monthName = TREND_MONTHS[Number(month) - 1] ?? month;
+  if (bucket === 'day') return `${Number(day)} ${monthName}`;
+  return `${monthName} ${year}`;
 }

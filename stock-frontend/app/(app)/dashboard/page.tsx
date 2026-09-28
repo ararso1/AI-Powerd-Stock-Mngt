@@ -8,7 +8,7 @@ export default function DashboardPage() {
   return (
     <AppShell
       title="Dashboard"
-      subtitle="Local roast, export contracts, and import — channel-specific KPIs and analytics"
+      subtitle="Local market from purchase through sales. Export stays on its own tab."
       layout="default"
       breadcrumbs={[{ label: "Overview" }, { label: "Dashboard" }]}
     >

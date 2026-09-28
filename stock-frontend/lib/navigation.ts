@@ -8,7 +8,6 @@ import {
   CreditCard,
   Wallet,
   Landmark,
-  TrendingUp,
   MapPin,
   Truck,
   Users,
@@ -56,12 +55,6 @@ export const insightsNav: NavItem[] = [
     href: "/reports",
     icon: BarChart3,
     permission: "reports.read",
-  },
-  {
-    title: "Profit & loss",
-    href: "/profit-loss",
-    icon: TrendingUp,
-    permission: "profit_loss.read",
   },
 ];
 

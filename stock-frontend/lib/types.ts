@@ -404,10 +404,14 @@ export interface Expense {
   id: string;
   categoryId: string;
   bankAccountId: string;
+  paymentMethod?: "CASH" | "BANK";
   amount: string;
   description?: string;
   expenseDate: string;
+  receiptOriginalName?: string | null;
+  coffeeMarket?: "LOCAL" | "EXPORT" | null;
   category?: ExpenseCategory;
+  bankAccount?: { id: string; name: string; accountType?: BankAccountType };
 }
 
 export interface CreditRecord {
@@ -423,6 +427,9 @@ export interface CreditRecord {
   dueDate?: string;
   isOverdue?: boolean;
   daysOverdue?: number | null;
+  agingDays?: number;
+  agingLabel?: string;
+  agingRisk?: string;
   customer?: Customer;
   supplier?: Supplier;
   sale?: Pick<
@@ -655,57 +662,79 @@ export interface DashboardData {
   }>;
 }
 
+export interface SalesStorePack {
+  packs: number;
+  kg: string;
+  value: string;
+}
+
 export interface LocalDashboardData {
   channel: "LOCAL";
   currency?: Currency;
   asOf?: string;
   period?: { from?: string | null; to?: string | null };
-  totalInventoryValue: string;
-  stockValueByLocation: DashboardData["stockValueByLocation"];
-  showroomCount: number;
-  dailySales: string;
-  dailyPurchases: string;
-  profitAndLoss: DashboardData["profitAndLoss"];
-  financialOverview: DashboardData["financialOverview"];
-  pulse: {
-    intakeKgToday: string;
-    processWipKg: string;
-    processWipRuns: number;
-    roastOutputKgToday: string;
-    localSalesToday: string;
-    roastedStockKg: string;
-    openAlerts: number;
-    greenStockKg: string;
-  } | null;
-  traceability?: DashboardData["traceability"];
-  commercial: {
-    localRevenue: string;
-    customerCreditOutstanding: string;
-    supplierCreditOutstanding: string;
-    totalLiquidity: string;
-  } | null;
-  analytics: {
-    inventory: {
-      totalStockKg: string;
-      stockValue: string;
-      availableKg: string;
-      reservedKg: string;
-      lowStockItems: number;
+  pipeline: {
+    purchaseCount: number;
+    purchaseKg: string;
+    purchaseValue: string;
+    inventoryKg: string;
+    inventoryValue: string;
+    processingStartedKg: string;
+    cleaningKg: string;
+    roastGroundKg: string;
+    salesStoreKg: string;
+    salesStoreValue: string;
+    rejectKg: string;
+    salesCount: number;
+    salesKg: string;
+    salesValue: string;
+  };
+  onHandChart: Array<{ label: string; value: number }>;
+  activity: {
+    cleaningInputKg: string;
+    cleaningOutputKg: string;
+    cleaningLossKg: string;
+    yieldPercent: string;
+    highLossRuns: number;
+    underScreenRuns: number;
+    roastKg: string;
+    groundKg: string;
+  };
+  tradingChart: Array<{ label: string; value: number }>;
+  salesStore: {
+    roast: {
+      kg1: SalesStorePack;
+      kg500: SalesStorePack;
     };
-    trading: {
-      totalPurchases: string;
-      localSalesValue: string;
-      salesVolumeKg: string;
-      salesValue: string;
-      chart: Array<{ label: string; value: number }>;
+    ground: {
+      kg1: SalesStorePack;
+      kg500: SalesStorePack;
     };
-    quality: NonNullable<DashboardData["analytics"]>["quality"];
-    finance: NonNullable<DashboardData["analytics"]>["finance"];
-    production: NonNullable<DashboardData["analytics"]>["production"];
-  } | null;
-  recommendations?: DashboardData["recommendations"];
+    availableKg: string;
+    availableValue: string;
+    soldKg: string;
+    soldValue: string;
+    soldRoastKg: string;
+    soldRoastValue: string;
+    soldGroundKg: string;
+    soldGroundValue: string;
+    trend: Array<{ label: string; roastKg: number; groundKg: number }>;
+  };
+  finance: {
+    revenue: string;
+    costOfGoodsSold: string;
+    grossProfit: string;
+    netProfit: string;
+    customerCredit: string;
+    supplierCredit: string;
+  };
+  stockByLocation: Array<{
+    locationId: string;
+    locationName: string;
+    value: string;
+    kg: string;
+  }>;
   executiveInsights?: DashboardData["executiveInsights"];
-  links?: DashboardData["links"];
 }
 
 export interface ExportDashboardData {

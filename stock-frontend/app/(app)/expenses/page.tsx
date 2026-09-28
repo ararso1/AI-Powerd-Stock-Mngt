@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { SearchSelect } from "@/components/shared/search-select";
 import { AppShell } from "@/components/app-shell";
 import { DataCardTable } from "@/components/shared/data-card-table";
 import { PageLoading } from "@/components/shared/page-loading";
@@ -24,12 +25,27 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { api } from "@/lib/api";
+import { api, apiBlob } from "@/lib/api";
 import { apiList } from "@/lib/list-response";
 import { buildExpensesListPath } from "@/lib/list-query";
-import { bankAccountSelectOptions } from "@/lib/bank-accounts";
+import {
+  bankAccountSelectOptions,
+  bankAccountsUrl,
+  resolveBankAccountId,
+} from "@/lib/bank-accounts";
+import {
+  bankAccountValidationError,
+  onPaymentMethodChange,
+  useAutoPaymentAccount,
+} from "@/hooks/use-payment-bank-account";
 import { formatMoney, formatDate, errorMessage } from "@/lib/format";
-import type { BankAccount, Expense, ExpenseCategory, ExpenseListTotals } from "@/lib/types";
+import type {
+  BankAccount,
+  Expense,
+  ExpenseCategory,
+  ExpenseListTotals,
+  PaymentMethod,
+} from "@/lib/types";
 import { ListPageTotals } from "@/components/shared/list-page-totals";
 import { useFetch } from "@/hooks/use-fetch";
 import { usePaginatedList } from "@/hooks/use-paginated-list";
@@ -40,6 +56,9 @@ export default function ExpensesPage() {
   const [search, setSearch] = useState("");
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
+  const [coffeeMarket, setCoffeeMarket] = useState<
+    "" | "LOCAL" | "EXPORT" | "NONE"
+  >("");
   const debouncedSearch = useDebouncedValue(search);
   const { rows, meta, totals, setPage, setLimit, loading, reload } =
     usePaginatedList<Expense, ExpenseListTotals>(
@@ -49,11 +68,12 @@ export default function ExpensesPage() {
             from: from || undefined,
             to: to || undefined,
             search: debouncedSearch || undefined,
+            coffeeMarket: coffeeMarket || undefined,
           },
           page,
           limit
         ),
-      [from, to, debouncedSearch]
+      [from, to, debouncedSearch, coffeeMarket]
     );
 
   return (
@@ -78,6 +98,20 @@ export default function ExpensesPage() {
             onFromChange={setFrom}
             onToChange={setTo}
           />
+          <div className="grid min-w-[220px] gap-2">
+            <Label className="text-sm text-[var(--frappe-text-muted)]">
+              Coffee
+            </Label>
+            <SearchSelect
+              value={coffeeMarket}
+              onValueChange={(value) =>
+                setCoffeeMarket(value as "" | "LOCAL" | "EXPORT" | "NONE")
+              }
+              options={COFFEE_MARKET_FILTER_OPTIONS}
+              placeholder="All expenses"
+              searchPlaceholder="Search…"
+            />
+          </div>
         </FrappeFilterBar>
         <FrappeListToolbar>
           <span className="text-[var(--frappe-text-muted)]">
@@ -120,10 +154,37 @@ export default function ExpensesPage() {
                 cell: (r) => r.description ?? "—",
               },
               {
+                key: "coffee",
+                header: "Coffee",
+                cell: (r) => (
+                  <CoffeeMarketCell expense={r} onSuccess={reload} />
+                ),
+              },
+              {
                 key: "amount",
                 header: "Amount",
                 className: "text-right",
                 cell: (r) => formatMoney(r.amount),
+              },
+              {
+                key: "payment",
+                header: "Paid by",
+                cell: (r) =>
+                  r.paymentMethod === "CASH"
+                    ? "Cash"
+                    : r.bankAccount?.name
+                      ? `Transfer · ${r.bankAccount.name}`
+                      : "Transfer",
+              },
+              {
+                key: "receipt",
+                header: "Receipt",
+                cell: (r) =>
+                  r.receiptOriginalName ? (
+                    <ReceiptLink id={r.id} name={r.receiptOriginalName} />
+                  ) : (
+                    "—"
+                  ),
               },
               {
                 key: "actions",
@@ -181,17 +242,91 @@ function DeleteExpenseButton({
   );
 }
 
+const EXPENSE_PAYMENT_OPTIONS = [
+  { value: "CASH", label: "Cash" },
+  { value: "BANK", label: "Transfer" },
+];
+
+const COFFEE_MARKET_OPTIONS = [
+  { value: "", label: "Unassigned" },
+  { value: "LOCAL", label: "Local Market Coffee" },
+  { value: "EXPORT", label: "Export Coffee" },
+];
+
+const COFFEE_MARKET_FILTER_OPTIONS = [
+  { value: "", label: "All expenses" },
+  { value: "LOCAL", label: "Local Market Coffee" },
+  { value: "EXPORT", label: "Export Coffee" },
+  { value: "NONE", label: "Unassigned" },
+];
+
+function coffeeMarketLabel(value?: string | null) {
+  if (value === "LOCAL") return "Local Market Coffee";
+  if (value === "EXPORT") return "Export Coffee";
+  return "Unassigned";
+}
+
+function CoffeeMarketCell({
+  expense,
+  onSuccess,
+}: {
+  expense: Expense;
+  onSuccess: () => void;
+}) {
+  const [saving, setSaving] = useState(false);
+
+  async function change(value: string) {
+    const next = value === "" ? null : value;
+    if ((expense.coffeeMarket ?? null) === next) return;
+    setSaving(true);
+    try {
+      await api(`/expenses/${expense.id}`, {
+        method: "PATCH",
+        body: { coffeeMarket: next },
+      });
+      onSuccess();
+    } catch (err) {
+      toast.error(errorMessage(err));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <PermissionGate
+      permission="expense.write"
+      fallback={
+        <span className="text-sm">{coffeeMarketLabel(expense.coffeeMarket)}</span>
+      }
+    >
+      <SearchSelect
+        value={expense.coffeeMarket ?? ""}
+        onValueChange={(value) => void change(value)}
+        options={COFFEE_MARKET_OPTIONS}
+        placeholder="Unassigned"
+        searchPlaceholder="Search…"
+        disabled={saving}
+        className="min-w-[180px]"
+      />
+    </PermissionGate>
+  );
+}
+
 function ExpenseDialog({ onSuccess }: { onSuccess: () => void }) {
   const [open, setOpen] = useState(false);
   const [categoryId, setCategoryId] = useState("");
+  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>("CASH");
   const [bankAccountId, setBankAccountId] = useState("");
   const [amount, setAmount] = useState("");
   const [description, setDescription] = useState("");
   const [expenseDate, setExpenseDate] = useState(
     new Date().toISOString().slice(0, 10)
   );
+  const [receipt, setReceipt] = useState<File | null>(null);
+  const [coffeeMarket, setCoffeeMarket] = useState("");
   const [saving, setSaving] = useState(false);
 
+  const accountType = paymentMethod === "CASH" ? "CASH" : "BANK";
   const {
     data: categories,
     reload: reloadCategories,
@@ -199,9 +334,23 @@ function ExpenseDialog({ onSuccess }: { onSuccess: () => void }) {
   } = useFetch(() => api<ExpenseCategory[]>("/expenses/categories"), []);
   const {
     data: banks,
+    loading: banksLoading,
     reload: reloadBanks,
     setData: setBanks,
-  } = useFetch(() => apiList<BankAccount>("/banks/accounts"), []);
+  } = useFetch(
+    () => apiList<BankAccount>(bankAccountsUrl(accountType)),
+    [accountType]
+  );
+
+  useAutoPaymentAccount(
+    paymentMethod,
+    banks,
+    bankAccountId,
+    setBankAccountId
+  );
+
+  const showAccountList =
+    paymentMethod === "BANK" || (banks?.length ?? 0) !== 1;
 
   function onCategoryCreated(category: ExpenseCategory) {
     setCategories((prev) => [...(prev ?? []), category]);
@@ -217,20 +366,36 @@ function ExpenseDialog({ onSuccess }: { onSuccess: () => void }) {
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+    const resolvedBankId = resolveBankAccountId(
+      paymentMethod,
+      banks,
+      bankAccountId
+    );
+    const bankError = bankAccountValidationError(
+      paymentMethod,
+      banks,
+      resolvedBankId
+    );
+    if (bankError || !resolvedBankId) {
+      toast.error(bankError ?? "Select an account");
+      return;
+    }
     setSaving(true);
     try {
-      await api("/expenses", {
-        method: "POST",
-        body: {
-          categoryId,
-          bankAccountId,
-          amount: parseFloat(amount),
-          description,
-          expenseDate,
-        },
-      });
+      const form = new FormData();
+      form.append("categoryId", categoryId);
+      form.append("paymentMethod", paymentMethod);
+      form.append("bankAccountId", resolvedBankId);
+      form.append("amount", amount);
+      form.append("expenseDate", expenseDate);
+      if (description.trim()) form.append("description", description.trim());
+      if (coffeeMarket) form.append("coffeeMarket", coffeeMarket);
+      if (receipt) form.append("file", receipt);
+      await api("/expenses", { method: "POST", body: form });
       toast.success("Expense recorded");
       setOpen(false);
+      setReceipt(null);
+      setCoffeeMarket("");
       onSuccess();
     } catch (err) {
       toast.error(errorMessage(err));
@@ -269,19 +434,45 @@ function ExpenseDialog({ onSuccess }: { onSuccess: () => void }) {
                 <QuickExpenseCategoryDialog onCreated={onCategoryCreated} />
               }
             />
-            <EntitySelectField
-              label="Bank account"
-              required
-              value={bankAccountId}
-              onValueChange={setBankAccountId}
-              options={bankAccountSelectOptions(banks ?? [], bankAccountId)}
-              listHref="/banks"
-              listLabel="All accounts"
-              emptyMessage="Create a bank account to pay from."
-              quickCreate={
-                <QuickBankAccountDialog onCreated={onBankCreated} />
-              }
-            />
+            <div className="grid gap-2">
+              <Label>Payment</Label>
+              <SearchSelect
+                value={paymentMethod}
+                onValueChange={(value) =>
+                  onPaymentMethodChange(
+                    value as PaymentMethod,
+                    setPaymentMethod,
+                    setBankAccountId
+                  )
+                }
+                options={EXPENSE_PAYMENT_OPTIONS}
+                placeholder="Select payment"
+                searchPlaceholder="Search…"
+              />
+            </div>
+            {showAccountList ? (
+              <EntitySelectField
+                label={paymentMethod === "CASH" ? "Cash till" : "Bank account"}
+                required
+                value={bankAccountId}
+                onValueChange={setBankAccountId}
+                options={bankAccountSelectOptions(banks ?? [], bankAccountId)}
+                listHref="/banks"
+                listLabel="All accounts"
+                emptyMessage={
+                  paymentMethod === "CASH"
+                    ? "Create a cash till under Bank."
+                    : "Create a bank account to transfer from."
+                }
+                quickCreate={
+                  <QuickBankAccountDialog
+                    defaultAccountType={accountType}
+                    onCreated={onBankCreated}
+                  />
+                }
+                loading={banksLoading}
+              />
+            ) : null}
             <div className="grid gap-2">
               <Label>Amount</Label>
               <Input
@@ -302,11 +493,37 @@ function ExpenseDialog({ onSuccess }: { onSuccess: () => void }) {
               />
             </div>
             <div className="grid gap-2">
+              <Label>Coffee</Label>
+              <SearchSelect
+                value={coffeeMarket}
+                onValueChange={setCoffeeMarket}
+                options={COFFEE_MARKET_OPTIONS}
+                placeholder="Unassigned"
+                searchPlaceholder="Search…"
+              />
+              <p className="text-xs text-[var(--frappe-text-muted)]">
+                Optional. Leave unassigned when the expense is not for a
+                specific coffee market.
+              </p>
+            </div>
+            <div className="grid gap-2">
               <Label>Description</Label>
               <Input
                 value={description}
                 onChange={(e) => setDescription(e.target.value)}
               />
+            </div>
+            <div className="grid gap-2">
+              <Label htmlFor="expense-receipt">Receipt (optional)</Label>
+              <Input
+                id="expense-receipt"
+                type="file"
+                accept="image/jpeg,image/png,image/webp,application/pdf"
+                onChange={(e) => setReceipt(e.target.files?.[0] ?? null)}
+              />
+              <p className="text-xs text-[var(--frappe-text-muted)]">
+                JPEG, PNG, WebP, or PDF, up to 10MB.
+              </p>
             </div>
           </div>
           <DialogFooter className="border-t border-[var(--frappe-border)] bg-[var(--frappe-section-head)] px-4 py-3">
@@ -317,5 +534,29 @@ function ExpenseDialog({ onSuccess }: { onSuccess: () => void }) {
         </form>
       </DialogContent>
     </Dialog>
+  );
+}
+
+function ReceiptLink({ id, name }: { id: string; name: string }) {
+  const [busy, setBusy] = useState(false);
+  return (
+    <button
+      type="button"
+      disabled={busy}
+      className="text-xs font-medium text-[var(--frappe-primary)] hover:underline disabled:opacity-50"
+      onClick={() => {
+        setBusy(true);
+        void apiBlob(`/expenses/${id}/receipt`)
+          .then(({ blob }) => {
+            const url = URL.createObjectURL(blob);
+            window.open(url, "_blank", "noopener,noreferrer");
+            setTimeout(() => URL.revokeObjectURL(url), 60_000);
+          })
+          .catch((err) => toast.error(errorMessage(err)))
+          .finally(() => setBusy(false));
+      }}
+    >
+      {busy ? "Opening…" : name}
+    </button>
   );
 }

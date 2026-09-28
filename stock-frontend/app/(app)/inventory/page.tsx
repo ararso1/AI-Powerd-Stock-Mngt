@@ -9,6 +9,7 @@ import { FrappeFilterBar, FrappeListToolbar } from "@/components/frappe";
 import { DateRangeFilter } from "@/components/shared/date-range-filter";
 import { ListSearchField } from "@/components/shared/list-search-field";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
+import { useFetch } from "@/hooks/use-fetch";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -54,7 +55,14 @@ import type {
   StockRecord,
 } from "@/lib/types";
 import { ITEM_TYPE_OPTIONS, itemTypeLabel } from "@/lib/item-types";
-import { COFFEE_FORM_OPTIONS, coffeeFormLabel } from "@/lib/lots";
+import { COFFEE_FORM_OPTIONS, COFFEE_GRADE_OPTIONS, coffeeFormLabel } from "@/lib/lots";
+import { fetchAllPages } from "@/lib/fetch-all-pages";
+import type { ProcessOverview } from "@/lib/process-runs";
+import {
+  CoffeeStockAnalysis,
+  summarizeCoffeeStock,
+  type CoffeeStockFigures,
+} from "@/components/inventory/coffee-stock-analysis";
 import { ListPageTotals } from "@/components/shared/list-page-totals";
 import { requestNotificationsRefresh } from "@/lib/notification-events";
 import { useLocations } from "@/hooks/use-locations";
@@ -81,6 +89,9 @@ export default function InventoryPage() {
   const [formFilter, setFormFilter] = useState<CoffeeForm | "">("");
   const [cropYear, setCropYear] = useState("");
   const [grade, setGrade] = useState("");
+  const [stockGroup, setStockGroup] = useState<"" | "process" | "sales" | "reject">(
+    ""
+  );
   const [viewMode, setViewMode] = useState<typeof VIEW_ALL | typeof VIEW_LOW_STOCK>(
     VIEW_ALL
   );
@@ -89,7 +100,6 @@ export default function InventoryPage() {
   const [to, setTo] = useState("");
   const debouncedSearch = useDebouncedValue(search);
   const debouncedCropYear = useDebouncedValue(cropYear);
-  const debouncedGrade = useDebouncedValue(grade);
 
   const { data: locations } = useLocations();
 
@@ -106,39 +116,27 @@ export default function InventoryPage() {
       ? `${selectedLocation.name}-${selectedLocation.type}`
       : "stock";
 
-  const exportFilters = {
+  const listFilters = {
     locationId: listLocationId,
     from: from || undefined,
     to: to || undefined,
     search: debouncedSearch || undefined,
+    form: formFilter || undefined,
+    cropYear: debouncedCropYear || undefined,
+    grade: grade || undefined,
+    stockGroup: stockGroup || undefined,
   };
+
+  const exportFilters = listFilters;
 
   const isLowStockView = viewMode === VIEW_LOW_STOCK;
 
   const { rows, meta, totals, setPage, setLimit, loading, reload } =
     usePaginatedList<StockRecord | LowStockRecord, InventoryListTotals>(
-    (page, limit) => {
-      if (isLowStockView) {
-        return buildLowStockListPath(
-          { locationId: listLocationId },
-          page,
-          limit
-        );
-      }
-      return buildInventoryListPath(
-        {
-          locationId: listLocationId,
-          from: from || undefined,
-          to: to || undefined,
-          search: debouncedSearch || undefined,
-          form: formFilter || undefined,
-          cropYear: debouncedCropYear || undefined,
-          grade: debouncedGrade || undefined,
-        },
-        page,
-        limit
-      );
-    },
+    (page, limit) =>
+      isLowStockView
+        ? buildLowStockListPath(listFilters, page, limit)
+        : buildInventoryListPath(listFilters, page, limit),
     [
       listLocationId,
       from,
@@ -147,9 +145,38 @@ export default function InventoryPage() {
       isLowStockView,
       formFilter,
       debouncedCropYear,
-      debouncedGrade,
+      grade,
+      stockGroup,
     ]
   );
+
+  const { data: coffeeAnalysis, loading: analysisLoading } =
+    useFetch<CoffeeStockFigures>(async () => {
+      const params = { ...listFilters, stockGroup: undefined };
+      const [stock, overview] = await Promise.all([
+        fetchAllPages<StockRecord>((page, limit) =>
+          buildInventoryListPath(params, page, limit)
+        ),
+        api<ProcessOverview>(
+          listLocationId
+            ? `/process-runs/summary?locationId=${listLocationId}`
+            : "/process-runs/summary"
+        ).catch(() => null),
+      ]);
+      return summarizeCoffeeStock(stock, overview);
+    }, [
+      listLocationId,
+      from,
+      to,
+      debouncedSearch,
+      formFilter,
+      debouncedCropYear,
+      grade,
+    ]);
+
+  const analysisLocation = isAllLocations
+    ? "All locations"
+    : (selectedLocation?.name ?? "This location");
 
   return (
     <AppShell
@@ -235,51 +262,97 @@ export default function InventoryPage() {
             value={search}
             onChange={setSearch}
             placeholder="Search item, SKU, or lot…"
-            disabled={isLowStockView}
-            className={isLowStockView ? "opacity-60" : undefined}
           />
-          <Select
-            value={formFilter || ALL}
-            onValueChange={(v) =>
-              setFormFilter(v === ALL ? "" : (v as CoffeeForm))
-            }
-            disabled={isLowStockView}
-          >
-            <SelectTrigger className="h-9 w-full min-w-[140px] border-[var(--frappe-border)] bg-[var(--frappe-surface)] sm:w-[160px]">
-              <SelectValue placeholder="Form" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value={ALL}>All forms</SelectItem>
-              {COFFEE_FORM_OPTIONS.map((o) => (
-                <SelectItem key={o.value} value={o.value}>
-                  {o.label}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          <Input
-            className="h-9 w-full min-w-[110px] border-[var(--frappe-border)] bg-[var(--frappe-surface)] sm:w-[120px]"
-            placeholder="Crop year"
-            value={cropYear}
-            onChange={(e) => setCropYear(e.target.value)}
-            disabled={isLowStockView}
-          />
-          <Input
-            className="h-9 w-full min-w-[100px] border-[var(--frappe-border)] bg-[var(--frappe-surface)] sm:w-[120px]"
-            placeholder="Grade"
-            value={grade}
-            onChange={(e) => setGrade(e.target.value)}
-            disabled={isLowStockView}
-          />
+          <div className="grid gap-2">
+            <Label className="text-sm text-[var(--frappe-text-muted)]">
+              Coffee
+            </Label>
+            <Select
+              value={stockGroup || ALL}
+              onValueChange={(v) =>
+                setStockGroup(
+                  v === ALL ? "" : (v as "process" | "sales" | "reject")
+                )
+              }
+            >
+              <SelectTrigger className="h-9 w-full min-w-[180px] border-[var(--frappe-border)] bg-[var(--frappe-surface)] sm:w-[210px]">
+                <SelectValue placeholder="All coffee" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value={ALL}>All coffee</SelectItem>
+                <SelectItem value="process">Available for processing</SelectItem>
+                <SelectItem value="sales">Sales store</SelectItem>
+                <SelectItem value="reject">Reject</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="grid gap-2">
+            <Label className="text-sm text-[var(--frappe-text-muted)]">
+              Form
+            </Label>
+            <Select
+              value={formFilter || ALL}
+              onValueChange={(v) =>
+                setFormFilter(v === ALL ? "" : (v as CoffeeForm))
+              }
+            >
+              <SelectTrigger className="h-9 w-full min-w-[140px] border-[var(--frappe-border)] bg-[var(--frappe-surface)] sm:w-[160px]">
+                <SelectValue placeholder="Form" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value={ALL}>All forms</SelectItem>
+                {COFFEE_FORM_OPTIONS.map((o) => (
+                  <SelectItem key={o.value} value={o.value}>
+                    {o.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="grid gap-2">
+            <Label className="text-sm text-[var(--frappe-text-muted)]">
+              Grade
+            </Label>
+            <Select
+              value={grade || ALL}
+              onValueChange={(v) => setGrade(v === ALL ? "" : v)}
+            >
+              <SelectTrigger className="h-9 w-full min-w-[120px] border-[var(--frappe-border)] bg-[var(--frappe-surface)] sm:w-[140px]">
+                <SelectValue placeholder="Grade" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value={ALL}>All grades</SelectItem>
+                {COFFEE_GRADE_OPTIONS.map((value) => (
+                  <SelectItem key={value} value={value}>
+                    {value}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="grid gap-2">
+            <Label className="text-sm text-[var(--frappe-text-muted)]">
+              Crop year
+            </Label>
+            <Input
+              className="h-9 w-full min-w-[110px] border-[var(--frappe-border)] bg-[var(--frappe-surface)] sm:w-[120px]"
+              placeholder="2026"
+              value={cropYear}
+              onChange={(e) => setCropYear(e.target.value)}
+            />
+          </div>
           <DateRangeFilter
             from={from}
             to={to}
             onFromChange={setFrom}
             onToChange={setTo}
-            disabled={isLowStockView}
-            className={isLowStockView ? "opacity-60" : undefined}
           />
         </FrappeFilterBar>
+        <CoffeeStockAnalysis
+          analysis={coffeeAnalysis}
+          loading={analysisLoading}
+          locationName={analysisLocation}
+        />
         <FrappeListToolbar>
           <span className="text-[var(--frappe-text-muted)]">
             {meta.total} {isLowStockView ? "low-stock item" : "item"}

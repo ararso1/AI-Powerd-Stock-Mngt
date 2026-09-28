@@ -6,6 +6,7 @@ import {
   BarChart,
   CartesianGrid,
   Cell,
+  Legend,
   ResponsiveContainer,
   Tooltip,
   XAxis,
@@ -108,6 +109,44 @@ export function MiniBarChart({
               <Cell key={i} fill={CHART_COLORS[i % CHART_COLORS.length]} />
             ))}
           </Bar>
+        </BarChart>
+      </ResponsiveContainer>
+    </div>
+  );
+}
+
+export function GroupedBarChart({
+  data,
+  series,
+}: {
+  data: Array<Record<string, string | number>>;
+  series: Array<{ key: string; name: string; color: string }>;
+}) {
+  if (!data.length) {
+    return (
+      <p className="flex h-56 items-center justify-center text-sm text-muted-foreground">
+        No roast or ground sales in this period.
+      </p>
+    );
+  }
+  return (
+    <div className="h-56 w-full">
+      <ResponsiveContainer width="100%" height="100%">
+        <BarChart data={data} margin={{ top: 8, right: 8, left: -12, bottom: 0 }}>
+          <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e5e7eb" />
+          <XAxis dataKey="label" tick={{ fontSize: 11 }} />
+          <YAxis tick={{ fontSize: 11 }} />
+          <Tooltip />
+          <Legend />
+          {series.map((item) => (
+            <Bar
+              key={item.key}
+              dataKey={item.key}
+              name={item.name}
+              fill={item.color}
+              radius={[4, 4, 0, 0]}
+            />
+          ))}
         </BarChart>
       </ResponsiveContainer>
     </div>

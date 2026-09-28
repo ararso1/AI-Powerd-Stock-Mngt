@@ -41,7 +41,7 @@ import {
   useAutoPaymentAccount,
 } from "@/hooks/use-payment-bank-account";
 import { fetchInventoryForLocation } from "@/lib/inventory-fetch";
-import { buildItemOptionMap, itemOptionsFromMap, isCoffeeSku, parseDocumentLines, productItemId, resolveItem, stockTransferOptions, type DocumentLineBody } from "@/lib/inventory-items";
+import { buildItemOptionMap, itemOptionsFromMap, isCoffeeSku, isSaleStock, parseDocumentLines, productItemId, resolveItem, stockTransferOptions, type DocumentLineBody } from "@/lib/inventory-items";
 import { saleRepUser } from "@/lib/sale-utils";
 import { errorMessage, formatMoney, formatQty } from "@/lib/format";
 import type { CustomerCreditProfile } from "@/lib/types";
@@ -277,12 +277,16 @@ export function SaleForm({ sale }: { sale?: Sale }) {
   } = useFetch(
     () =>
       locationId
-        ? fetchInventoryForLocation(locationId, debouncedItemQuery || undefined)
+        ? fetchInventoryForLocation(
+            locationId,
+            debouncedItemQuery || undefined,
+            { forSale: true }
+          )
         : Promise.resolve([]),
     [locationId, debouncedItemQuery]
   );
 
-  const stockItems = stock ?? [];
+  const stockItems = (stock ?? []).filter((row) => isSaleStock(row));
   const itemMap = buildItemOptionMap(
     stockItems,
     [...lines, ...(sale?.lines ?? [])]
@@ -773,7 +777,9 @@ export function SaleForm({ sale }: { sale?: Sale }) {
               locationId
                 ? stockLoading
                   ? "Loading stock at location…"
-                  : `${stockOptions.length || itemOptions.length} stock line(s) available`
+                  : stockOptions.length > 0
+                    ? `${stockOptions.length} processed or reject stock line(s) available`
+                    : "No processed or reject stock at this location"
                 : "Select a location first"
             }
           >

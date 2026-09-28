@@ -1926,14 +1926,14 @@ export class AiService implements OnModuleInit {
           'profit_by_grade',
           'Not enough sale/lot data to rank profit by grade yet.',
           {},
-          '/profit-loss',
+          '/reports?tab=profit-loss',
         );
       }
       return ok(
         'profit_by_grade',
         `Grade ${top.grade} generated the highest estimated gross profit: Br ${top.profit.toLocaleString()} over the last 90 days.`,
         { top: ranked.slice(0, 5) },
-        '/profit-loss',
+        '/reports?tab=profit-loss',
       );
     }
 

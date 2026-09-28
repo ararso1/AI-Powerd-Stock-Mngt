@@ -7,8 +7,15 @@ import {
   Patch,
   Post,
   Query,
+  Res,
+  StreamableFile,
+  UploadedFile,
   UseGuards,
+  UseInterceptors,
 } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
+import { memoryStorage } from 'multer';
+import type { Response } from 'express';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import type { JwtPayload } from '../common/decorators/current-user.decorator';
 import { ExpenseListQueryDto } from './dto/expense-list-query.dto';
@@ -47,8 +54,43 @@ export class ExpensesController {
 
   @Post()
   @RequirePermissions('expense.write')
-  create(@Body() dto: CreateExpenseDto, @CurrentUser() user: JwtPayload) {
-    return this.service.create(dto, user.sub);
+  @UseInterceptors(
+    FileInterceptor('file', {
+      storage: memoryStorage(),
+      limits: { fileSize: 10 * 1024 * 1024 },
+    }),
+  )
+  create(
+    @Body() dto: CreateExpenseDto,
+    @UploadedFile() file: Express.Multer.File | undefined,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.service.create(
+      dto,
+      user.sub,
+      file
+        ? {
+            originalname: file.originalname,
+            mimetype: file.mimetype,
+            size: file.size,
+            buffer: file.buffer,
+          }
+        : undefined,
+    );
+  }
+
+  @Get(':id/receipt')
+  @RequirePermissions('expense.read')
+  async receipt(
+    @Param('id') id: string,
+    @Res({ passthrough: true }) res: Response,
+  ): Promise<StreamableFile> {
+    const { stream, mimeType, originalName } = await this.service.receiptFile(id);
+    res.set({
+      'Content-Type': mimeType,
+      'Content-Disposition': `inline; filename="${originalName.replace(/"/g, '')}"`,
+    });
+    return new StreamableFile(stream);
   }
 
   @Patch(':id')

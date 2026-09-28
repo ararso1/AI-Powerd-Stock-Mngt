@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { AppShell } from "@/components/app-shell";
 import { PermissionGate } from "@/components/permission-gate";
 import { PageLoading } from "@/components/shared/page-loading";
@@ -31,6 +32,7 @@ import {
   buildReportsSalesPath,
   buildReportsSummaryPath,
   buildReportsSupplierActivityPath,
+  buildListPath,
 } from "@/lib/list-query";
 import type {
   ExpenseCategory,
@@ -46,6 +48,7 @@ import type {
   ReportInventoryAging,
   ReportInventoryAgingRow,
   ReportPurchases,
+  ProfitLossItem,
   ReportPurchasesByItem,
   ReportPurchasesByItemRow,
   ReportSales,
@@ -96,6 +99,30 @@ function periodParams(from: string, to: string) {
   return { from: from || undefined, to: to || undefined };
 }
 
+const REPORT_TABS = [
+  "summary",
+  "profit-loss",
+  "sales",
+  "purchases",
+  "expenses",
+  "sales-by-item",
+  "purchases-by-item",
+  "inventory-aging",
+  "customer-activity",
+  "supplier-activity",
+  "commissions",
+  "credits",
+  "cash-flow",
+] as const;
+
+interface PnlSummary {
+  revenue: string;
+  costOfGoodsSold: string;
+  grossProfit: string;
+  totalExpenses: string;
+  netProfit: string;
+}
+
 function SummaryCards({
   items,
 }: {
@@ -116,6 +143,12 @@ function SummaryCards({
 }
 
 export default function ReportsPage() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const requestedTab = searchParams.get("tab");
+  const tab = REPORT_TABS.includes(requestedTab as (typeof REPORT_TABS)[number])
+    ? requestedTab!
+    : "summary";
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
   const [tabSearch, setTabSearch] = useState<Record<string, string>>({});
@@ -179,6 +212,14 @@ export default function ReportsPage() {
     label: category.name,
   }));
 
+  function onTabChange(value: string) {
+    const params = new URLSearchParams(searchParams.toString());
+    if (value === "summary") params.delete("tab");
+    else params.set("tab", value);
+    const query = params.toString();
+    router.replace(query ? `/reports?${query}` : "/reports", { scroll: false });
+  }
+
   const { data: summary, loading: summaryLoading } = useFetch(
     () =>
       api<ReportsSummary>(buildReportsSummaryPath(filters)).then((res) => {
@@ -186,6 +227,27 @@ export default function ReportsPage() {
         return res;
       }),
     [from, to]
+  );
+  const { data: pnlSummary, loading: pnlLoading } = useFetch(
+    () =>
+      api<PnlSummary>(
+        buildListPath("/profit-loss/summary", { params: filters })
+      ).then((res) => {
+        applyCurrencyFromResponse(res);
+        return res;
+      }),
+    [from, to]
+  );
+  const { data: pnlByItem, loading: pnlItemsLoading } = useFetch(
+    () =>
+      api<ProfitLossItem[]>(
+        buildListPath("/profit-loss/by-item", { params: filters })
+      ),
+    [from, to]
+  );
+  const pnlRows = useMemo(
+    () => (pnlByItem ?? []).map((row) => ({ ...row, id: row.itemId })),
+    [pnlByItem]
   );
   const { data: salesReport, loading: salesReportLoading } = useFetch(
     () =>
@@ -466,9 +528,12 @@ export default function ReportsPage() {
           />
         </div>
 
-        <Tabs defaultValue="summary" className="gap-4">
+        <Tabs value={tab} onValueChange={onTabChange} className="gap-4">
           <TabsList className="flex h-auto flex-wrap justify-start">
             <TabsTrigger value="summary">Summary</TabsTrigger>
+            <PermissionGate permission="profit_loss.read">
+              <TabsTrigger value="profit-loss">Profit & loss</TabsTrigger>
+            </PermissionGate>
             <TabsTrigger value="sales">Sales</TabsTrigger>
             <TabsTrigger value="purchases">Purchases</TabsTrigger>
             <TabsTrigger value="expenses">Expenses</TabsTrigger>
@@ -497,6 +562,88 @@ export default function ReportsPage() {
                 ].map(([label, value]) => ({ label: label as string, value }))}
               />
             ) : null}
+          </TabsContent>
+
+          <TabsContent value="profit-loss" className="mt-2">
+            <PermissionGate permission="profit_loss.read">
+              {pnlLoading ? (
+                <PageLoading />
+              ) : pnlSummary ? (
+                <SummaryCards
+                  items={[
+                    { label: "Revenue", value: formatMoney(pnlSummary.revenue) },
+                    {
+                      label: "COGS",
+                      value: formatMoney(pnlSummary.costOfGoodsSold),
+                    },
+                    {
+                      label: "Gross profit",
+                      value: formatMoney(pnlSummary.grossProfit),
+                    },
+                    {
+                      label: "Expenses",
+                      value: formatMoney(pnlSummary.totalExpenses),
+                    },
+                    {
+                      label: "Net profit",
+                      value: formatMoney(pnlSummary.netProfit),
+                    },
+                  ]}
+                />
+              ) : null}
+              {pnlItemsLoading ? (
+                <PageLoading />
+              ) : (
+                <ReportPaginatedTable
+                  rows={pnlRows}
+                  emptyTitle="No sales data"
+                  search={getTabSearch("profit-loss")}
+                  onSearchChange={(value) =>
+                    setTabSearchValue("profit-loss", value)
+                  }
+                  searchPlaceholder="Search item…"
+                  searchKeys={["description"]}
+                  disabled={pnlItemsLoading}
+                  columns={[
+                    {
+                      key: "item",
+                      header: "Item",
+                      cell: (r) => r.description,
+                    },
+                    {
+                      key: "qty",
+                      header: "Qty sold",
+                      className: "text-right",
+                      cell: (r) => r.quantitySold,
+                    },
+                    {
+                      key: "revenue",
+                      header: "Revenue",
+                      className: "text-right",
+                      cell: (r) => formatMoney(r.revenue),
+                    },
+                    {
+                      key: "cost",
+                      header: "Cost",
+                      className: "text-right",
+                      cell: (r) => formatMoney(r.cost),
+                    },
+                    {
+                      key: "profit",
+                      header: "Profit",
+                      className: "text-right",
+                      cell: (r) => formatMoney(r.profit),
+                    },
+                    {
+                      key: "margin",
+                      header: "Margin %",
+                      className: "text-right",
+                      cell: (r) => `${r.marginPercent}%`,
+                    },
+                  ]}
+                />
+              )}
+            </PermissionGate>
           </TabsContent>
 
           <TabsContent value="sales" className="mt-2">

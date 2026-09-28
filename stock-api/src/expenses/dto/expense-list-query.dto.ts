@@ -1,4 +1,4 @@
-import { IsOptional, IsString, IsUUID } from 'class-validator';
+import { IsIn, IsOptional, IsString, IsUUID } from 'class-validator';
 import { DateRangeQueryDto } from '../../common/dto/date-range.dto';
 
 export class ExpenseListQueryDto extends DateRangeQueryDto {
@@ -13,4 +13,9 @@ export class ExpenseListQueryDto extends DateRangeQueryDto {
   @IsOptional()
   @IsString()
   search?: string;
+
+  /** NONE lists expenses that are not tied to a coffee market. */
+  @IsOptional()
+  @IsIn(['LOCAL', 'EXPORT', 'NONE'])
+  coffeeMarket?: 'LOCAL' | 'EXPORT' | 'NONE';
 }

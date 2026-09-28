@@ -2,17 +2,13 @@
 
 import Link from "next/link";
 import {
-  ArrowDownIcon,
-  ArrowUpIcon,
-  CheckCircle2Icon,
   FactoryIcon,
   PackageIcon,
   ScaleIcon,
+  ShoppingCartIcon,
   TrendingUpIcon,
   WalletIcon,
-  WorkflowIcon,
 } from "lucide-react";
-import { Badge } from "@/components/ui/badge";
 import {
   Card,
   CardContent,
@@ -29,517 +25,527 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import {
+  GroupedBarChart,
   InsightsGrid,
   KpiTile,
-  MetricLink,
   MiniBarChart,
-  severityIcon,
 } from "@/components/dashboard/dashboard-shared";
 import { formatMoney, formatQty } from "@/lib/format";
-import type { LocalDashboardData } from "@/lib/types";
+import type { LocalDashboardData, SalesStorePack } from "@/lib/types";
+
+const STEPS = [
+  { key: "purchase", label: "Purchase" },
+  { key: "inventory", label: "Inventory" },
+  { key: "cleaning", label: "Cleaning" },
+  { key: "roast", label: "Roast & Ground" },
+  { key: "store", label: "Sales store" },
+  { key: "sales", label: "Sales" },
+] as const;
 
 export function LocalDashboard({ data }: { data: LocalDashboardData }) {
-  const pulse = data.pulse;
-  const trace = data.traceability;
-  const commercial = data.commercial;
-  const links = data.links ?? {};
-  const pnl = data.profitAndLoss;
-  const fin = data.financialOverview;
-  const analytics = data.analytics;
+  const pipe = data.pipeline;
+  const activity = data.activity;
+  const finance = data.finance;
   const insights = data.executiveInsights ?? [];
 
   return (
     <div className="flex flex-col gap-6">
       <InsightsGrid
         insights={insights}
-        insightsHref={links.insights ?? "/insights"}
-        emptyHint="No local-market insights yet — add collections, process runs, or local sales."
+        insightsHref="/process-runs"
+        emptyHint="Local market is quiet for this period. Purchases, process runs, and local sales will show up here."
       />
 
-      {pulse ? (
-        <section>
-          <div className="mb-3 flex items-center gap-2">
-            <ScaleIcon className="size-4 text-[var(--csolve-moss)]" />
-            <h2 className="text-sm font-semibold uppercase tracking-wide text-[var(--frappe-text-muted)]">
-              Local pulse
-            </h2>
-          </div>
-          <div className="grid grid-cols-2 gap-3 md:grid-cols-4 xl:grid-cols-8">
-            <MetricLink
-              href={links.collectionsToday ?? "/collections"}
-              label="Intake"
-              value={`${formatQty(pulse.intakeKgToday)} kg`}
-            />
-            <MetricLink
-              href={links.processWip ?? "/process-runs"}
-              label="Process WIP"
-              value={`${formatQty(pulse.processWipKg)} kg`}
-              hint={`${pulse.processWipRuns} run(s)`}
-            />
-            <MetricLink
-              href="/lots?form=ROASTED"
-              label="Roast output"
-              value={`${formatQty(pulse.roastOutputKgToday)} kg`}
-            />
-            <MetricLink
-              href="/lots?form=ROASTED"
-              label="Roasted stock"
-              value={`${formatQty(pulse.roastedStockKg)} kg`}
-            />
-            <MetricLink
-              href={links.localSales ?? "/sales?channel=LOCAL"}
-              label="Local sales"
-              value={formatMoney(pulse.localSalesToday)}
-            />
-            <MetricLink
-              href={links.greenLots ?? "/lots?form=GREEN"}
-              label="Green stock"
-              value={`${formatQty(pulse.greenStockKg)} kg`}
-            />
-            <MetricLink
-              href={links.notifications ?? "/notifications"}
-              label="Open alerts"
-              value={String(pulse.openAlerts)}
-            />
-            <MetricLink
-              href="/inventory"
-              label="Inventory value"
-              value={formatMoney(data.totalInventoryValue)}
-            />
-          </div>
-        </section>
-      ) : null}
-
-      {analytics ? (
-        <section className="space-y-4">
+      <section>
+        <div className="mb-3 flex items-center gap-2">
+          <ScaleIcon className="size-4 text-[var(--csolve-moss)]" />
           <h2 className="text-sm font-semibold uppercase tracking-wide text-[var(--frappe-text-muted)]">
-            Local analytics
+            Local market flow
           </h2>
-          <div className="grid gap-4 xl:grid-cols-2">
-            <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2 text-base">
-                  <PackageIcon className="size-4" />
-                  Inventory
-                </CardTitle>
-                <CardDescription>
-                  Available stock and low-stock signals for local ops
-                </CardDescription>
-              </CardHeader>
-              <CardContent>
-                <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
-                  <KpiTile
-                    label="Total stock"
-                    value={`${formatQty(analytics.inventory.totalStockKg)} kg`}
-                    href="/inventory"
-                  />
-                  <KpiTile
-                    label="Stock value"
-                    value={formatMoney(analytics.inventory.stockValue)}
-                    href="/inventory"
-                  />
-                  <KpiTile
-                    label="Available"
-                    value={`${formatQty(analytics.inventory.availableKg)} kg`}
-                    href="/inventory"
-                  />
-                  <KpiTile
-                    label="Reserved"
-                    value={`${formatQty(analytics.inventory.reservedKg)} kg`}
-                    href="/inventory"
-                  />
-                  <KpiTile
-                    label="Low-stock items"
-                    value={String(analytics.inventory.lowStockItems)}
-                    href="/inventory?lowStock=1"
-                  />
-                </div>
-              </CardContent>
-            </Card>
+        </div>
+        <p className="mb-3 text-sm text-[var(--frappe-text-muted)]">
+          {flowNote(pipe)}
+        </p>
+        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+          {STEPS.map((step, index) => (
+            <FlowStep
+              key={step.key}
+              index={index + 1}
+              title={step.label}
+              step={step.key}
+              pipe={pipe}
+            />
+          ))}
+        </div>
+      </section>
 
-            <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2 text-base">
-                  <TrendingUpIcon className="size-4" />
-                  Trading
-                </CardTitle>
-                <CardDescription>
-                  Purchases vs local roasted / packaged sales
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
-                  <KpiTile
-                    label="Purchases"
-                    value={formatMoney(analytics.trading.totalPurchases)}
-                    href={links.localPurchases ?? "/purchases?purchaseType=LOCAL"}
-                  />
-                  <KpiTile
-                    label="Local sales"
-                    value={formatMoney(analytics.trading.localSalesValue)}
-                    href={links.localSales ?? "/sales?channel=LOCAL"}
-                  />
-                  <KpiTile
-                    label="Sales volume"
-                    value={`${formatQty(analytics.trading.salesVolumeKg)} kg`}
-                    href="/sales?channel=LOCAL"
-                  />
-                </div>
-                <MiniBarChart data={analytics.trading.chart} />
-              </CardContent>
-            </Card>
+      <SalesStoreAnalysis store={data.salesStore} />
 
-            <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2 text-base">
-                  <ScaleIcon className="size-4" />
-                  Quality
-                </CardTitle>
-                <CardDescription>
-                  Intake acceptance, rejection, and grade mix
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
-                  <KpiTile
-                    label="Accepted qty"
-                    value={`${formatQty(analytics.quality.acceptedQtyKg)} kg`}
-                    href={links.collectionsToday ?? "/collections"}
-                  />
-                  <KpiTile
-                    label="Rejected qty"
-                    value={`${formatQty(analytics.quality.rejectedQtyKg)} kg`}
-                    href="/collections"
-                  />
-                  <KpiTile
-                    label="Rejection %"
-                    value={`${analytics.quality.rejectionPercent}%`}
-                    href="/collections"
-                  />
-                </div>
-                <MiniBarChart
-                  data={analytics.quality.gradeDistribution.map((g) => ({
-                    label: g.grade,
-                    value: g.kg,
-                  }))}
-                />
-                {analytics.quality.supplierRanking.length > 0 ? (
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead>Supplier</TableHead>
-                        <TableHead className="text-right">Reject %</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {analytics.quality.supplierRanking.slice(0, 5).map((s) => (
-                        <TableRow key={s.supplierName}>
-                          <TableCell>{s.supplierName}</TableCell>
-                          <TableCell className="text-right tabular-nums">
-                            {s.rejectionPercent}%
-                          </TableCell>
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
-                ) : null}
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2 text-base">
-                  <WalletIcon className="size-4" />
-                  Finance
-                </CardTitle>
-                <CardDescription>
-                  Receivables, payables, and collection pressure
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
-                  <KpiTile
-                    label="Receivables"
-                    value={formatMoney(analytics.finance.totalReceivables)}
-                    href={links.credits ?? "/credits"}
-                  />
-                  <KpiTile
-                    label="Payables"
-                    value={formatMoney(analytics.finance.totalPayables)}
-                    href="/credits?tab=suppliers"
-                  />
-                  <KpiTile
-                    label="Overdue"
-                    value={formatMoney(analytics.finance.overdueBalances)}
-                    href="/credits?overdue=1"
-                  />
-                  <KpiTile
-                    label="Paid"
-                    value={formatMoney(analytics.finance.paidAmount)}
-                    href="/credits"
-                  />
-                  <KpiTile
-                    label="Unpaid"
-                    value={formatMoney(analytics.finance.unpaidAmount)}
-                    href="/credits"
-                  />
-                </div>
-                <MiniBarChart data={analytics.finance.chart} />
-              </CardContent>
-            </Card>
-
-            <Card className="xl:col-span-2">
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2 text-base">
-                  <FactoryIcon className="size-4" />
-                  Production
-                </CardTitle>
-                <CardDescription>
-                  Mill / roast / pack yield for the local chain
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
-                  <KpiTile
-                    label="Processing volume"
-                    value={`${formatQty(analytics.production.processingVolumeKg)} kg`}
-                    href={links.processWip ?? "/process-runs"}
-                  />
-                  <KpiTile
-                    label="Roasting volume"
-                    value={`${formatQty(analytics.production.roastingVolumeKg)} kg`}
-                    href="/process-runs"
-                  />
-                  <KpiTile
-                    label="Yield"
-                    value={`${analytics.production.productionYieldPercent}%`}
-                    href="/process-runs"
-                  />
-                  <KpiTile
-                    label="Processing loss"
-                    value={`${formatQty(analytics.production.processingLossKg)} kg`}
-                    href="/process-runs"
-                  />
-                  <KpiTile
-                    label="Wastage"
-                    value={`${formatQty(analytics.production.wastageKg)} kg`}
-                    href="/process-runs"
-                  />
-                </div>
-                <MiniBarChart data={analytics.production.chart} />
-              </CardContent>
-            </Card>
-          </div>
-        </section>
-      ) : null}
-
-      {trace ? (
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2 text-base">
-              <CheckCircle2Icon className="size-4" />
-              Traceability health
-            </CardTitle>
-            <CardDescription>
-              Lot-linked coffee stock and QC / yield signals
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-              <div>
-                <p className="text-xs text-muted-foreground">Lot-linked</p>
-                <p className="text-lg font-semibold tabular-nums">
-                  {trace.lotLinkedStockPercent}%
-                </p>
-              </div>
-              <div>
-                <p className="text-xs text-muted-foreground">Linked kg</p>
-                <p className="text-lg font-semibold tabular-nums">
-                  {formatQty(trace.lotLinkedStockKg)}
-                </p>
-              </div>
-              <div>
-                <p className="text-xs text-muted-foreground">Unlinked kg</p>
-                <p className="text-lg font-semibold tabular-nums">
-                  {formatQty(trace.unlinkedStockKg)}
-                </p>
-              </div>
-              <Link href={links.qcHoldLots ?? "/lots?status=HOLD"}>
-                <p className="text-xs text-muted-foreground">QC hold lots</p>
-                <p className="text-lg font-semibold tabular-nums">
-                  {trace.qcHoldLots}
-                </p>
-                <p className="text-xs text-muted-foreground">
-                  {formatQty(trace.qcHoldKg)} kg
-                </p>
-              </Link>
-            </div>
-            {trace.shrinkageSignals.length > 0 ? (
-              <ul className="space-y-1 text-sm">
-                {trace.shrinkageSignals.map((s) => (
-                  <li key={s.processRunId}>
-                    <Link
-                      href={`/process-runs/${s.processRunId}`}
-                      className="text-[var(--frappe-primary)] hover:underline"
-                    >
-                      {s.runNumber}
-                    </Link>
-                    <span className="text-muted-foreground">
-                      {" "}
-                      · {s.variancePercent}% vs expected
-                    </span>
-                  </li>
-                ))}
-              </ul>
-            ) : (
-              <p className="text-sm text-muted-foreground">
-                No significant yield shortfalls in recent runs.
-              </p>
-            )}
-          </CardContent>
-        </Card>
-      ) : null}
-
-      {data.recommendations && data.recommendations.length > 0 ? (
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2 text-base">
-              <WorkflowIcon className="size-4" />
-              Recommended local actions
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <ul className="divide-y divide-[var(--frappe-border)]">
-              {data.recommendations.map((r) => (
-                <li key={r.id} className="flex gap-3 py-3 first:pt-0 last:pb-0">
-                  <div className="mt-0.5">{severityIcon(r.severity)}</div>
-                  <div className="min-w-0 flex-1">
-                    <Link
-                      href={r.href}
-                      className="font-medium hover:text-[var(--frappe-primary)] hover:underline"
-                    >
-                      {r.title}
-                    </Link>
-                    <p className="text-sm text-muted-foreground">{r.detail}</p>
-                  </div>
-                  <Badge variant="outline" className="shrink-0 capitalize">
-                    {r.severity}
-                  </Badge>
-                </li>
-              ))}
-            </ul>
-          </CardContent>
-        </Card>
-      ) : null}
-
-      <div className="grid gap-4 lg:grid-cols-2">
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base">Local commercial</CardTitle>
-            <CardDescription>
-              Domestic revenue, credit exposure, and liquidity
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="grid grid-cols-2 gap-3">
-              <Link href={links.localSales ?? "/sales?channel=LOCAL"}>
-                <p className="text-xs text-muted-foreground">Local revenue</p>
-                <p className="text-lg font-semibold tabular-nums">
-                  {formatMoney(commercial?.localRevenue ?? "0")}
-                </p>
-              </Link>
-              <div>
-                <p className="text-xs text-muted-foreground">Customer credit</p>
-                <p className="text-lg font-semibold tabular-nums">
-                  {formatMoney(commercial?.customerCreditOutstanding ?? "0")}
-                </p>
-              </div>
-              <div>
-                <p className="text-xs text-muted-foreground">Supplier credit</p>
-                <p className="text-lg font-semibold tabular-nums">
-                  {formatMoney(commercial?.supplierCreditOutstanding ?? "0")}
-                </p>
-              </div>
-              <div>
-                <p className="text-xs text-muted-foreground">Liquidity</p>
-                <p className="text-lg font-semibold tabular-nums">
-                  {formatMoney(
-                    commercial?.totalLiquidity ??
-                      fin.totalLiquidity ??
-                      fin.totalBankBalance
-                  )}
-                </p>
-              </div>
-            </div>
-            <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-4">
-              <div className="rounded-md border p-3">
-                <p className="text-xs text-muted-foreground">Local sales</p>
-                <p className="font-semibold tabular-nums">
-                  {formatMoney(data.dailySales)}
-                </p>
-                <ArrowUpIcon className="mt-1 size-3 text-emerald-600" />
-              </div>
-              <div className="rounded-md border p-3">
-                <p className="text-xs text-muted-foreground">Purchases</p>
-                <p className="font-semibold tabular-nums">
-                  {formatMoney(data.dailyPurchases)}
-                </p>
-                <ArrowDownIcon className="mt-1 size-3 text-amber-600" />
-              </div>
-              <div className="rounded-md border p-3">
-                <p className="text-xs text-muted-foreground">Gross profit</p>
-                <p className="font-semibold tabular-nums">
-                  {formatMoney(pnl.grossProfit)}
-                </p>
-              </div>
-              <div className="rounded-md border p-3">
-                <p className="text-xs text-muted-foreground">Net profit</p>
-                <p className="font-semibold tabular-nums">
-                  {formatMoney(pnl.netProfit)}
-                </p>
-                <TrendingUpIcon className="mt-1 size-3" />
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-
+      <div className="grid gap-4 xl:grid-cols-2">
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2 text-base">
               <PackageIcon className="size-4" />
-              Stock by location
+              Where local coffee is now
             </CardTitle>
             <CardDescription>
-              {data.showroomCount} showroom
-              {data.showroomCount === 1 ? "" : "s"} ·{" "}
-              <Link
-                href={links.profitLoss ?? "/profit-loss"}
-                className="text-[var(--frappe-primary)] hover:underline"
-              >
-                Profit &amp; Loss
-              </Link>
+              Kilograms on hand, plus coffee sitting in an open local process
+              run. Reject from cleaning is kept separate.
             </CardDescription>
           </CardHeader>
-          <Table>
-            <TableHeader>
+          <CardContent className="space-y-4">
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+              <KpiTile
+                label="Available to process"
+                value={`${formatQty(pipe.inventoryKg)} kg`}
+                href="/inventory"
+              />
+              <KpiTile
+                label="Processing started"
+                value={`${formatQty(pipe.processingStartedKg)} kg`}
+                href="/process-runs"
+              />
+              <KpiTile
+                label="In cleaning"
+                value={`${formatQty(pipe.cleaningKg)} kg`}
+                href="/process-runs"
+              />
+              <KpiTile
+                label="Roast & ground"
+                value={`${formatQty(pipe.roastGroundKg)} kg`}
+                href="/process-runs"
+              />
+              <KpiTile
+                label="Sales store"
+                value={`${formatQty(pipe.salesStoreKg)} kg`}
+                href="/inventory"
+              />
+              <KpiTile
+                label="Reject held"
+                value={`${formatQty(pipe.rejectKg)} kg`}
+                href="/inventory"
+              />
+            </div>
+            <MiniBarChart data={data.onHandChart} />
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-base">
+              <ShoppingCartIcon className="size-4" />
+              Purchases and sales
+            </CardTitle>
+            <CardDescription>
+              Local-market purchases against local-channel sales for this period
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+              <KpiTile
+                label="Purchases"
+                value={formatMoney(pipe.purchaseValue)}
+                href="/purchases?purchaseType=LOCAL"
+              />
+              <KpiTile
+                label="Purchased kg"
+                value={`${formatQty(pipe.purchaseKg)} kg`}
+                href="/purchases?purchaseType=LOCAL"
+              />
+              <KpiTile
+                label="Local sales"
+                value={formatMoney(pipe.salesValue)}
+                href="/sales?channel=LOCAL"
+              />
+              <KpiTile
+                label="Sold kg"
+                value={`${formatQty(pipe.salesKg)} kg`}
+                href="/sales?channel=LOCAL"
+              />
+              <KpiTile
+                label="Sale documents"
+                value={String(pipe.salesCount)}
+                href="/sales?channel=LOCAL"
+              />
+              <KpiTile
+                label="Purchase documents"
+                value={String(pipe.purchaseCount)}
+                href="/purchases?purchaseType=LOCAL"
+              />
+            </div>
+            <MiniBarChart data={data.tradingChart} />
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-base">
+              <FactoryIcon className="size-4" />
+              Cleaning and roast
+            </CardTitle>
+            <CardDescription>
+              Completed local-market stages in this period. Normal cleaning
+              yield is 80% or more.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+              <KpiTile
+                label="Cleaned input"
+                value={`${formatQty(activity.cleaningInputKg)} kg`}
+                href="/process-runs"
+              />
+              <KpiTile
+                label="Cleaned output"
+                value={`${formatQty(activity.cleaningOutputKg)} kg`}
+                href="/process-runs"
+              />
+              <KpiTile
+                label="Yield"
+                value={`${activity.yieldPercent}%`}
+                href="/process-runs"
+              />
+              <KpiTile
+                label="Removed"
+                value={`${formatQty(activity.cleaningLossKg)} kg`}
+                href="/process-runs"
+              />
+              <KpiTile
+                label="High loss"
+                value={String(activity.highLossRuns)}
+                href="/process-runs"
+              />
+              <KpiTile
+                label="Under screen"
+                value={String(activity.underScreenRuns)}
+                href="/process-runs"
+              />
+              <KpiTile
+                label="Roast allocated"
+                value={`${formatQty(activity.roastKg)} kg`}
+                href="/process-runs"
+              />
+              <KpiTile
+                label="Ground allocated"
+                value={`${formatQty(activity.groundKg)} kg`}
+                href="/process-runs"
+              />
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-base">
+              <WalletIcon className="size-4" />
+              Local commercial
+            </CardTitle>
+            <CardDescription>
+              Margin and open credit from local sales and local purchases
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+              <KpiTile
+                label="Revenue"
+                value={formatMoney(finance.revenue)}
+                href="/sales?channel=LOCAL"
+              />
+              <KpiTile
+                label="Cost of goods"
+                value={formatMoney(finance.costOfGoodsSold)}
+                href="/reports?tab=profit-loss"
+              />
+              <KpiTile
+                label="Gross profit"
+                value={formatMoney(finance.grossProfit)}
+                href="/reports?tab=profit-loss"
+              />
+              <KpiTile
+                label="Customer credit"
+                value={formatMoney(finance.customerCredit)}
+                href="/credits"
+              />
+              <KpiTile
+                label="Supplier credit"
+                value={formatMoney(finance.supplierCredit)}
+                href="/credits"
+              />
+              <KpiTile
+                label="Sales store value"
+                value={formatMoney(pipe.salesStoreValue)}
+                href="/inventory"
+              />
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2 text-base">
+            <TrendingUpIcon className="size-4" />
+            Local coffee by location
+          </CardTitle>
+          <CardDescription>
+            Stock value of local-market coffee only, including the sales store
+            and reject held from cleaning
+          </CardDescription>
+        </CardHeader>
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Location</TableHead>
+              <TableHead className="text-right">Kg</TableHead>
+              <TableHead className="text-right">Value</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {data.stockByLocation.length === 0 ? (
               <TableRow>
-                <TableHead>Location</TableHead>
-                <TableHead className="text-right">Value</TableHead>
+                <TableCell colSpan={3} className="text-muted-foreground">
+                  No local-market coffee on hand.
+                </TableCell>
               </TableRow>
-            </TableHeader>
-            <TableBody>
-              {data.stockValueByLocation.map((row) => (
+            ) : (
+              data.stockByLocation.map((row) => (
                 <TableRow key={row.locationId}>
-                  <TableCell>{row.locationName}</TableCell>
+                  <TableCell>
+                    <Link
+                      href="/inventory"
+                      className="hover:text-[var(--frappe-primary)] hover:underline"
+                    >
+                      {row.locationName}
+                    </Link>
+                  </TableCell>
+                  <TableCell className="text-right tabular-nums">
+                    {formatQty(row.kg)}
+                  </TableCell>
                   <TableCell className="text-right tabular-nums">
                     {formatMoney(row.value)}
                   </TableCell>
                 </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        </Card>
+              ))
+            )}
+          </TableBody>
+        </Table>
+      </Card>
+    </div>
+  );
+}
+
+function FlowStep({
+  index,
+  title,
+  step,
+  pipe,
+}: {
+  index: number;
+  title: string;
+  step: (typeof STEPS)[number]["key"];
+  pipe: LocalDashboardData["pipeline"];
+}) {
+  const card = flowCard(step, pipe);
+  return (
+    <Link
+      href={card.href}
+      className="flex min-h-32 flex-col justify-between rounded-xl border border-[var(--frappe-border)] bg-[var(--frappe-surface)] p-5 transition hover:border-[var(--frappe-primary)]"
+    >
+      <div className="flex items-start justify-between gap-3">
+        <p className="text-sm font-semibold text-[var(--frappe-text)]">{title}</p>
+        <span className="rounded-full bg-[var(--csolve-moss-soft)] px-2 py-0.5 text-xs font-semibold tabular-nums text-[var(--csolve-moss)]">
+          {index}
+        </span>
+      </div>
+      <div className="mt-4">
+        <p className="text-2xl font-semibold tabular-nums tracking-tight text-[var(--frappe-text)]">
+          {card.value}
+        </p>
+        <p className="mt-1 text-sm text-[var(--frappe-text-muted)]">{card.caption}</p>
+        {card.detail ? (
+          <p className="text-sm font-medium tabular-nums text-[var(--frappe-text)]">
+            {card.detail}
+          </p>
+        ) : null}
+      </div>
+    </Link>
+  );
+}
+
+function SalesStoreAnalysis({
+  store,
+}: {
+  store: LocalDashboardData["salesStore"];
+}) {
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2 text-base">
+          <PackageIcon className="size-4" />
+          Sales store · Roast and ground
+        </CardTitle>
+        <CardDescription>
+          1 kg and 0.5 kg packs on hand now. The total also includes bulk roast
+          and ground still in the sales store. Sales follow the selected period.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-5">
+        <div className="grid gap-4 lg:grid-cols-2">
+          <PackGroup
+            title="Roast coffee"
+            oneKg={store.roast.kg1}
+            halfKg={store.roast.kg500}
+          />
+          <PackGroup
+            title="Ground coffee"
+            oneKg={store.ground.kg1}
+            halfKg={store.ground.kg500}
+          />
+        </div>
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+          <KpiTile
+            label="Available in sales store"
+            value={`${formatQty(store.availableKg)} kg`}
+            href="/inventory"
+          />
+          <KpiTile
+            label="Sales store value"
+            value={formatMoney(store.availableValue)}
+            href="/inventory"
+          />
+          <KpiTile
+            label="Sold this period"
+            value={`${formatQty(store.soldKg)} kg`}
+            href="/sales?channel=LOCAL"
+          />
+          <KpiTile
+            label="Sold amount"
+            value={formatMoney(store.soldValue)}
+            href="/sales?channel=LOCAL"
+          />
+        </div>
+        <div className="grid gap-2 sm:grid-cols-2">
+          <p className="text-sm text-[var(--frappe-text-muted)]">
+            Roast sold {formatQty(store.soldRoastKg)} kg ·{" "}
+            {formatMoney(store.soldRoastValue)}
+          </p>
+          <p className="text-sm text-[var(--frappe-text-muted)]">
+            Ground sold {formatQty(store.soldGroundKg)} kg ·{" "}
+            {formatMoney(store.soldGroundValue)}
+          </p>
+        </div>
+        <div>
+          <p className="mb-2 text-sm font-medium text-[var(--frappe-text)]">
+            Roast and ground sales
+          </p>
+          <GroupedBarChart
+            data={store.trend}
+            series={[
+              { key: "roastKg", name: "Roast kg", color: "#8b5e3c" },
+              { key: "groundKg", name: "Ground kg", color: "#2f6f4e" },
+            ]}
+          />
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+function PackGroup({
+  title,
+  oneKg,
+  halfKg,
+}: {
+  title: string;
+  oneKg: SalesStorePack;
+  halfKg: SalesStorePack;
+}) {
+  return (
+    <div className="rounded-xl border border-[var(--frappe-border)] p-4">
+      <p className="text-sm font-semibold text-[var(--frappe-text)]">{title}</p>
+      <div className="mt-3 grid grid-cols-2 gap-3">
+        <PackSize label="1 kg" pack={oneKg} />
+        <PackSize label="0.5 kg" pack={halfKg} />
       </div>
     </div>
   );
+}
+
+function PackSize({ label, pack }: { label: string; pack: SalesStorePack }) {
+  return (
+    <div>
+      <p className="text-xs text-[var(--frappe-text-muted)]">{label}</p>
+      <p className="mt-1 text-lg font-semibold tabular-nums text-[var(--frappe-text)]">
+        {formatQty(pack.packs)} packs
+      </p>
+      <p className="text-sm tabular-nums text-[var(--frappe-text-muted)]">
+        {formatQty(pack.kg)} kg
+      </p>
+    </div>
+  );
+}
+
+function flowNote(pipe: LocalDashboardData["pipeline"]) {
+  const purchased = parseFloat(pipe.purchaseKg);
+  const onHand = parseFloat(pipe.inventoryKg);
+  if (!Number.isFinite(purchased) || !Number.isFinite(onHand)) {
+    return "Purchase is coffee bought onto lots. Inventory is the part still waiting to be processed.";
+  }
+  const moved = Math.round((purchased - onHand) * 1000) / 1000;
+  if (moved >= 0) {
+    return `${formatQty(pipe.inventoryKg)} kg of the ${formatQty(pipe.purchaseKg)} kg purchased is still unprocessed. ${formatQty(String(moved))} kg has moved on to cleaning, the sales store, reject, or sales.`;
+  }
+  return "Inventory is the unprocessed coffee on hand now, including coffee bought outside this period. Purchase shows only coffee bought in the selected period.";
+}
+
+function flowCard(
+  step: (typeof STEPS)[number]["key"],
+  pipe: LocalDashboardData["pipeline"]
+) {
+  if (step === "purchase") {
+    return {
+      href: "/purchases?purchaseType=LOCAL",
+      value: `${formatQty(pipe.purchaseKg)} kg`,
+      caption: "Coffee bought this period",
+      detail: formatMoney(pipe.purchaseValue),
+    };
+  }
+  if (step === "inventory") {
+    return {
+      href: "/inventory",
+      value: `${formatQty(pipe.inventoryKg)} kg`,
+      caption: "Still unprocessed",
+      detail: formatMoney(pipe.inventoryValue),
+    };
+  }
+  if (step === "cleaning") {
+    return {
+      href: "/process-runs",
+      value: `${formatQty(pipe.cleaningKg)} kg`,
+      caption: "In cleaning",
+      detail: `${formatQty(pipe.processingStartedKg)} kg started`,
+    };
+  }
+  if (step === "roast") {
+    return {
+      href: "/process-runs",
+      value: `${formatQty(pipe.roastGroundKg)} kg`,
+      caption: "In roast and ground",
+      detail: null,
+    };
+  }
+  if (step === "store") {
+    return {
+      href: "/inventory",
+      value: `${formatQty(pipe.salesStoreKg)} kg`,
+      caption: "Ready to sell",
+      detail: formatMoney(pipe.salesStoreValue),
+    };
+  }
+  return {
+    href: "/sales?channel=LOCAL",
+    value: `${formatQty(pipe.salesKg)} kg`,
+    caption: "This period",
+    detail: formatMoney(pipe.salesValue),
+  };
 }

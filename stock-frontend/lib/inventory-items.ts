@@ -180,6 +180,37 @@ export function stockTransferOptions(stock: StockRecord[]) {
     }));
 }
 
+const SALE_COFFEE_FORMS = new Set(["ROASTED", "FLOUR", "PACKAGED", "REJECT"]);
+const SALE_PROCESS_METHODS = new Set([
+  "Roast & Ground",
+  "Roast coffee",
+  "Ground coffee",
+  "Reject",
+]);
+
+/** Processed or finished coffee, and reject stock. Raw purchased coffee stays out of sales. */
+export function isSaleStock(row: {
+  lot?: { form?: string | null; processMethod?: string | null; code?: string | null } | null;
+  item?: { sku?: string | null; itemType?: string | null } | null;
+}): boolean {
+  const sku = row.item?.sku?.trim().toUpperCase() ?? "";
+  const form = row.lot?.form ?? null;
+  const coffee =
+    isCoffeeSku(sku) || isCoffeeSku(row.lot?.code) || !!form;
+  if (!coffee) return false;
+  if (form && SALE_COFFEE_FORMS.has(form)) return true;
+  if (row.item?.itemType === "FINISHED") return true;
+  if (
+    sku.startsWith("COF-ROAST") ||
+    sku.startsWith("COF-GROUND") ||
+    sku === "COF-REJECT"
+  ) {
+    return true;
+  }
+  const method = row.lot?.processMethod ?? "";
+  return SALE_PROCESS_METHODS.has(method);
+}
+
 export function isCoffeeSku(sku: string | null | undefined): boolean {
   const value = sku?.trim().toUpperCase();
   return !!value && (value.startsWith("COF-") || value.startsWith("LOT-"));
@@ -236,4 +267,57 @@ export function isWarehouseProcessStock(row: {
   }
   if (row.item?.itemType === "FINISHED") return false;
   return true;
+}
+
+export type CoffeePosition = "available" | "sales" | "reject";
+
+/** Kilograms on a stock line. Packaged coffee is stored as a pack count. */
+export function coffeeLineKg(row: {
+  quantity: string;
+  item?: { sku?: string | null; unit?: string | null } | null;
+  lot?: { form?: string | null; processMethod?: string | null } | null;
+}): number {
+  const qty = parseFloat(row.quantity);
+  if (!Number.isFinite(qty) || qty <= 0) return 0;
+  const sku = row.item?.sku?.trim().toUpperCase() ?? "";
+  const method = row.lot?.processMethod ?? "";
+  const packaged =
+    row.lot?.form === "PACKAGED" ||
+    row.item?.unit?.toLowerCase() === "pcs" ||
+    sku.endsWith("-1KG") ||
+    sku.endsWith("-500");
+  if (!packaged) return qty;
+  let size = 1;
+  if (sku.endsWith("-500") || /^0\.5/.test(method)) size = 0.5;
+  else if (sku.endsWith("-250") || /250\s*g/i.test(method)) size = 0.25;
+  else {
+    const match = method.match(/([\d.]+)\s*kg/i);
+    if (match) {
+      const parsed = parseFloat(match[1]);
+      if (parsed > 0) size = parsed;
+    }
+  }
+  return Math.round((qty * size + Number.EPSILON) * 1000) / 1000;
+}
+
+/** Each coffee kilogram is counted once: raw stock, sales store, or reject. */
+export function coffeePosition(row: {
+  lot?: {
+    form?: string | null;
+    processMethod?: string | null;
+    code?: string | null;
+  } | null;
+  item?: { sku?: string | null; itemType?: string | null } | null;
+}): CoffeePosition | null {
+  const form = row.lot?.form ?? "";
+  const sku = row.item?.sku?.trim().toUpperCase() ?? "";
+  const method = row.lot?.processMethod ?? "";
+  const coffee = isCoffeeSku(sku) || isCoffeeSku(row.lot?.code) || !!form;
+  if (!coffee) return null;
+  if (form === "REJECT" || sku === "COF-REJECT" || method === "Reject") {
+    return "reject";
+  }
+  if (isWarehouseProcessStock(row)) return "available";
+  if (isSaleStock(row)) return "sales";
+  return null;
 }

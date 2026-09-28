@@ -21,6 +21,12 @@ import {
   paginatedQueryBuilder,
   sumFilteredQueryBuilder,
 } from '../common/utils/query.util';
+import {
+  PROCESS_AVAILABLE_STOCK_SQL,
+  REJECT_STOCK_SQL,
+  SALES_STORE_STOCK_SQL,
+  SELLABLE_STOCK_SQL,
+} from '../common/utils/sale-stock.util';
 import { Item } from '../database/entities/item.entity';
 import { Location } from '../database/entities/location.entity';
 import { Lot } from '../database/entities/lot.entity';
@@ -111,10 +117,21 @@ export class InventoryService {
         });
       }
       if (query.grade) {
-        qb.andWhere('lot_filter.grade ILIKE :grade', {
-          grade: `%${query.grade}%`,
+        qb.andWhere('UPPER(lot_filter.grade) = UPPER(:grade)', {
+          grade: query.grade.trim(),
         });
       }
+    }
+    if (query.stockGroup === 'process') {
+      qb.andWhere(PROCESS_AVAILABLE_STOCK_SQL);
+    } else if (query.stockGroup === 'sales') {
+      qb.andWhere(SALES_STORE_STOCK_SQL);
+    } else if (query.stockGroup === 'reject') {
+      qb.andWhere(REJECT_STOCK_SQL);
+    }
+    applyDateRangeToQb(qb, 'stock.updated_at', query.from, query.to);
+    if (query.forSale === 'true') {
+      qb.andWhere(SELLABLE_STOCK_SQL);
     }
     if (query.search?.trim()) {
       const term = `%${query.search.trim()}%`;
@@ -136,11 +153,7 @@ export class InventoryService {
     return qb;
   }
 
-  async findLowStock(query: {
-    locationId?: string;
-    page?: number;
-    limit?: number;
-  }) {
+  async findLowStock(query: InventoryListQueryDto) {
     return this.lowStockService.findAllLowStock(query);
   }
 

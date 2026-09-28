@@ -1,12 +1,15 @@
-import { Type } from 'class-transformer';
+import { Transform, Type } from 'class-transformer';
 import {
   IsDateString,
+  IsIn,
   IsNumber,
   IsOptional,
   IsString,
   IsUUID,
   Min,
 } from 'class-validator';
+
+const COFFEE_MARKETS = ['LOCAL', 'EXPORT'] as const;
 
 export class CreateExpenseCategoryDto {
   @IsString()
@@ -25,11 +28,20 @@ export class UpdateExpenseDto {
   @IsOptional()
   @IsUUID()
   categoryId?: string;
+
+  /** Null or an empty value clears the coffee market. */
+  @IsOptional()
+  @Transform(({ value }) => (value === '' || value === 'NONE' ? null : value))
+  @IsIn(COFFEE_MARKETS)
+  coffeeMarket?: 'LOCAL' | 'EXPORT' | null;
 }
 
 export class CreateExpenseDto {
   @IsUUID()
   categoryId: string;
+
+  @IsIn(['CASH', 'BANK'])
+  paymentMethod: 'CASH' | 'BANK';
 
   @IsUUID()
   bankAccountId: string;
@@ -45,4 +57,11 @@ export class CreateExpenseDto {
 
   @IsDateString()
   expenseDate: string;
+
+  @IsOptional()
+  @Transform(({ value }) =>
+    value === '' || value == null ? undefined : value,
+  )
+  @IsIn(COFFEE_MARKETS)
+  coffeeMarket?: 'LOCAL' | 'EXPORT';
 }

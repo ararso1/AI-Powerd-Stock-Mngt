@@ -25,18 +25,15 @@ import { api } from "@/lib/api";
 import { fetchAllPages } from "@/lib/fetch-all-pages";
 import { fetchInventoryForLocation } from "@/lib/inventory-fetch";
 import { isCoffeeSku, isWarehouseProcessStock } from "@/lib/inventory-items";
-import {
-  buildLotsListPath,
-  buildProcessRunsListPath,
-} from "@/lib/list-query";
+import { buildProcessRunsListPath } from "@/lib/list-query";
 import { errorMessage, formatQty } from "@/lib/format";
 import { coffeeFormLabel } from "@/lib/lots";
-import type { Lot, ProcessRun, ProcessTemplate, StockRecord } from "@/lib/types";
+import type { ProcessRun, ProcessTemplate, StockRecord } from "@/lib/types";
 import { useFetch } from "@/hooks/use-fetch";
 import { useLocations } from "@/hooks/use-locations";
 import { toast } from "sonner";
 
-type RunWorkflow = "LOCAL" | "EXPORT" | "MILL";
+export type ProcessRunWorkflow = "LOCAL" | "EXPORT";
 
 const SELECT = "__select__";
 
@@ -72,34 +69,30 @@ function heldByLot(runs: ProcessRun[]) {
   return held;
 }
 
-export function ProcessRunForm() {
+export function ProcessRunForm({
+  workflow,
+}: {
+  workflow: ProcessRunWorkflow;
+}) {
   const router = useRouter();
-  const [workflow, setWorkflow] = useState<RunWorkflow | "">("");
   const [templateId, setTemplateId] = useState("");
-  const [inputLotId, setInputLotId] = useState("");
   const [locationId, setLocationId] = useState("");
-  const [quantityInput, setQuantityInput] = useState("");
   const [processCost, setProcessCost] = useState("0");
   const [notes, setNotes] = useState("");
   const [selected, setSelected] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
-
-  const multiStock = workflow === "LOCAL" || workflow === "EXPORT";
 
   const { data: templates } = useFetch(
     () => api<ProcessTemplate[]>("/process-templates"),
     []
   );
   const { data: locations } = useLocations();
-  const workflowTemplates = (templates ?? []).filter((t) => {
-    if (workflow === "LOCAL" || workflow === "EXPORT") return t.workflow === workflow;
-    if (workflow === "MILL") return !t.workflow;
-    return false;
-  });
+  const workflowTemplates = (templates ?? []).filter(
+    (t) => t.workflow === workflow
+  );
   const template = workflowTemplates.find((t) => t.id === templateId);
 
   useEffect(() => {
-    if (workflow !== "LOCAL" && workflow !== "EXPORT") return;
     const matches = (templates ?? []).filter((t) => t.workflow === workflow);
     if (matches.length !== 1) return;
     setTemplateId((current) =>
@@ -107,39 +100,23 @@ export function ProcessRunForm() {
     );
   }, [workflow, templates]);
 
-  const { data: lotsPage } = useFetch(
-    () =>
-      workflow === "MILL" && template
-        ? api<{ data: Lot[] }>(
-            buildLotsListPath(
-              { form: template.inputForm, status: "ACTIVE" },
-              1,
-              100
-            )
-          )
-        : Promise.resolve({ data: [] as Lot[] }),
-    [workflow, template?.id, template?.inputForm]
-  );
-
   const { data: stockRows, loading: stockLoading } = useFetch(
     () =>
-      multiStock && locationId
+      locationId
         ? fetchInventoryForLocation(locationId)
         : Promise.resolve([] as StockRecord[]),
-    [multiStock, locationId]
+    [locationId]
   );
   const { data: locationRuns } = useFetch(
     () =>
-      multiStock && locationId
+      locationId
         ? fetchAllPages<ProcessRun>((page, limit) =>
             buildProcessRunsListPath({ locationId }, page, limit)
           )
         : Promise.resolve([] as ProcessRun[]),
-    [multiStock, locationId]
+    [locationId]
   );
 
-  const lots = lotsPage?.data ?? [];
-  const selectedLot = lots.find((l) => l.id === inputLotId);
   const held = useMemo(() => heldByLot(locationRuns ?? []), [locationRuns]);
   const freeKg = (row: StockRecord) =>
     Math.max(0, stockKg(row) - (row.lotId ? held.get(row.lotId) ?? 0 : 0));
@@ -164,31 +141,26 @@ export function ProcessRunForm() {
     }, 0);
   }, [eligible, selected]);
 
-  const normalLocalYield = workflow === "LOCAL" || workflow === "";
+  const normalLocalYield = workflow === "LOCAL";
   const expectedOut = useMemo(() => {
-    const q = multiStock ? selectedTotal : parseFloat(quantityInput);
     const y = normalLocalYield
       ? 80
       : template
         ? parseFloat(template.expectedYieldPercent)
         : 0;
-    if (!Number.isFinite(q) || q <= 0 || !Number.isFinite(y)) return null;
-    return (q * y) / 100;
-  }, [multiStock, selectedTotal, quantityInput, template, normalLocalYield]);
+    if (selectedTotal <= 0 || !Number.isFinite(y)) return null;
+    return (selectedTotal * y) / 100;
+  }, [selectedTotal, template, normalLocalYield]);
 
   const progressStages =
     workflow === "EXPORT"
       ? ["Processing Started", "Export processing"]
-      : workflow === "MILL"
-        ? template?.stages?.length
-          ? template.stages
-          : ["Input", "Processing"]
-        : [
-            "Processing Started",
-            "Cleaning",
-            "Roast & Ground",
-            "Sales Store",
-          ];
+      : [
+          "Processing Started",
+          "Cleaning",
+          "Roast & Ground",
+          "Sales Store",
+        ];
 
   function toggleLot(row: StockRecord, on: boolean) {
     const lotId = row.lotId;
@@ -203,8 +175,8 @@ export function ProcessRunForm() {
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (!workflow || !templateId || !locationId) {
-      toast.error("Select a workflow and warehouse");
+    if (!templateId || !locationId) {
+      toast.error("Select a warehouse");
       return;
     }
 
@@ -215,64 +187,33 @@ export function ProcessRunForm() {
       notes: notes.trim() || undefined,
     };
 
-    if (multiStock) {
-      const inputs: Array<{ lotId: string; quantity: number }> = [];
-      for (const row of eligible) {
-        const lotId = row.lotId;
-        if (!lotId || selected[lotId] == null) continue;
-        const quantity = parseFloat(selected[lotId]);
-        const available = freeKg(row);
-        if (!Number.isFinite(quantity) || quantity <= 0) {
-          toast.error(`${row.lot?.code ?? "Lot"} needs a quantity above 0`);
-          return;
-        }
-        if (quantity - available > 0.0001) {
-          toast.error(
-            `${row.lot?.code ?? "Lot"} has ${formatQty(available)} kg available`
-          );
-          return;
-        }
-        inputs.push({ lotId, quantity });
-      }
-      if (inputs.length === 0) {
-        toast.error("Select at least one stock lot");
+    const inputs: Array<{ lotId: string; quantity: number }> = [];
+    for (const row of eligible) {
+      const lotId = row.lotId;
+      if (!lotId || selected[lotId] == null) continue;
+      const quantity = parseFloat(selected[lotId]);
+      const available = freeKg(row);
+      if (!Number.isFinite(quantity) || quantity <= 0) {
+        toast.error(`${row.lot?.code ?? "Lot"} needs a quantity above 0`);
         return;
       }
-      setSaving(true);
-      try {
-        const run = await api<ProcessRun>("/process-runs", {
-          method: "POST",
-          body: { ...shared, inputs },
-        });
-        toast.success(`Created ${run.runNumber}`);
-        router.push(`/process-runs/${run.id}`);
-      } catch (err) {
-        toast.error(errorMessage(err));
-      } finally {
-        setSaving(false);
+      if (quantity - available > 0.0001) {
+        toast.error(
+          `${row.lot?.code ?? "Lot"} has ${formatQty(available)} kg available`
+        );
+        return;
       }
-      return;
+      inputs.push({ lotId, quantity });
     }
-
-    const qty = parseFloat(quantityInput);
-    if (!inputLotId) {
-      toast.error("Select an input lot");
-      return;
-    }
-    if (!Number.isFinite(qty) || qty <= 0) {
-      toast.error("Enter a valid input quantity");
-      return;
-    }
-    const available = selectedLot ? parseFloat(selectedLot.quantity) : 0;
-    if (selectedLot && qty - available > 0.0001) {
-      toast.error(`Only ${formatQty(available)} kg is available on this lot`);
+    if (inputs.length === 0) {
+      toast.error("Select at least one stock lot");
       return;
     }
     setSaving(true);
     try {
       const run = await api<ProcessRun>("/process-runs", {
         method: "POST",
-        body: { ...shared, inputLotId, quantityInput: qty },
+        body: { ...shared, inputs },
       });
       toast.success(`Created ${run.runNumber}`);
       router.push(`/process-runs/${run.id}`);
@@ -298,49 +239,16 @@ export function ProcessRunForm() {
         ) : null}
       </section>
 
-      <div className="flex flex-wrap gap-2">
-        <FrappeButtonSecondary type="button" onClick={() => router.back()}>
-          Cancel
-        </FrappeButtonSecondary>
-        <FrappeButtonPrimary type="submit" disabled={saving} className="ml-auto">
-          {saving ? "Saving…" : "Start Processing"}
-        </FrappeButtonPrimary>
-      </div>
-
       <FrappeDocument>
         <FrappeSection
           title="Process run"
           description={
-            workflow === "MILL"
-              ? "Choose the mill template, lot, and location."
-              : "Choose the warehouse, then pick the coffee stock for this run."
+            workflow === "EXPORT"
+              ? "Choose the warehouse, then the coffee for this export run."
+              : "Choose the warehouse, then the coffee for this local market run."
           }
         >
           <FrappeFormGrid columns={2}>
-            <FrappeField label="Workflow" required>
-              <Select
-                value={workflow || SELECT}
-                onValueChange={(v) => {
-                  const next = v === SELECT ? "" : (v as RunWorkflow);
-                  setWorkflow(next);
-                  setTemplateId("");
-                  setInputLotId("");
-                  setQuantityInput("");
-                  setSelected({});
-                }}
-              >
-                <SelectTrigger className="w-full">
-                  <SelectValue placeholder="Select" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value={SELECT}>Select</SelectItem>
-                  <SelectItem value="LOCAL">Local market processing</SelectItem>
-                  <SelectItem value="EXPORT">Export processing</SelectItem>
-                  <SelectItem value="MILL">Mill / other</SelectItem>
-                </SelectContent>
-              </Select>
-            </FrappeField>
-
             <FrappeField label="Warehouse" required>
               <Select
                 value={locationId || SELECT}
@@ -362,87 +270,10 @@ export function ProcessRunForm() {
                 </SelectContent>
               </Select>
             </FrappeField>
-
-            {workflow === "MILL" ? (
-              <>
-                <FrappeField label="Template" required>
-                  <Select
-                    value={templateId || SELECT}
-                    onValueChange={(v) => {
-                      setTemplateId(v === SELECT ? "" : v);
-                      setInputLotId("");
-                    }}
-                  >
-                    <SelectTrigger className="w-full">
-                      <SelectValue placeholder="Select" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value={SELECT}>Select</SelectItem>
-                      {workflowTemplates.map((t) => (
-                        <SelectItem key={t.id} value={t.id}>
-                          {t.name} ({coffeeFormLabel(t.inputForm)} →{" "}
-                          {coffeeFormLabel(t.outputForm)})
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </FrappeField>
-
-                <FrappeField label="Input lot" required>
-                  <Select
-                    value={inputLotId || SELECT}
-                    onValueChange={(v) => {
-                      if (v === SELECT) {
-                        setInputLotId("");
-                        setQuantityInput("");
-                        return;
-                      }
-                      setInputLotId(v);
-                      const lot = lots.find((l) => l.id === v);
-                      if (lot) {
-                        setQuantityInput(lot.quantity);
-                        if (!locationId && lot.locationId) {
-                          setLocationId(lot.locationId);
-                        }
-                      }
-                    }}
-                    disabled={!template}
-                  >
-                    <SelectTrigger className="w-full">
-                      <SelectValue placeholder="Select" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value={SELECT}>Select</SelectItem>
-                      {lots.map((lot) => (
-                        <SelectItem key={lot.id} value={lot.id}>
-                          {lot.code} · {formatQty(lot.quantity)} kg ·{" "}
-                          {lot.grade ?? "—"}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </FrappeField>
-
-                <FrappeField label="Input quantity (kg)" required>
-                  <Input
-                    type="number"
-                    min={0.001}
-                    step="0.001"
-                    max={
-                      selectedLot ? parseFloat(selectedLot.quantity) : undefined
-                    }
-                    value={quantityInput}
-                    onChange={(e) => setQuantityInput(e.target.value)}
-                    required
-                  />
-                </FrappeField>
-              </>
-            ) : null}
           </FrappeFormGrid>
         </FrappeSection>
 
-        {multiStock ? (
-          <FrappeSection
+        <FrappeSection
             title="Stock at this warehouse"
             description={
               workflow === "LOCAL"
@@ -545,7 +376,6 @@ export function ProcessRunForm() {
               </div>
             )}
           </FrappeSection>
-        ) : null}
 
         <FrappeSection title="Cost and notes">
           <FrappeFormGrid columns={2}>
@@ -595,6 +425,18 @@ export function ProcessRunForm() {
           </FrappeFormGrid>
         </FrappeSection>
       </FrappeDocument>
+
+      <div className="flex flex-wrap gap-2">
+        <FrappeButtonSecondary
+          type="button"
+          onClick={() => router.push("/process-runs/new")}
+        >
+          Cancel
+        </FrappeButtonSecondary>
+        <FrappeButtonPrimary type="submit" disabled={saving} className="ml-auto">
+          {saving ? "Saving…" : "Start Processing"}
+        </FrappeButtonPrimary>
+      </div>
     </form>
   );
 }

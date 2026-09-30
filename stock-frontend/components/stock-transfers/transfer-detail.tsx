@@ -50,11 +50,11 @@ export function TransferDetail({ transfer }: { transfer: StockTransfer }) {
         >
           <FrappeFormGrid columns={2}>
             <DetailField
-              label="From"
+              label="Transferer"
               value={transfer.fromLocation?.name ?? "—"}
             />
             <DetailField
-              label="To"
+              label="Transferee"
               value={transfer.toLocation?.name ?? "—"}
             />
             <DetailField

@@ -1,19 +1,20 @@
 "use client";
 
 import { AppShell } from "@/components/app-shell";
-import { ProcessRunChoice } from "@/components/process-runs/process-run-choice";
+import { ProcessRunForm } from "@/components/process-runs/process-run-form";
 import { PermissionGate } from "@/components/permission-gate";
 
-export default function NewProcessRunPage() {
+export default function NewLocalProcessRunPage() {
   return (
     <AppShell
-      title="New process run"
-      subtitle="Choose local market or export"
+      title="Local market processing"
+      subtitle="Cleaning, roast and ground, then the sales store"
       variant="form"
       breadcrumbs={[
         { label: "Operations", href: "/dashboard" },
         { label: "Processing", href: "/process-runs" },
-        { label: "New run" },
+        { label: "New run", href: "/process-runs/new" },
+        { label: "Local market" },
       ]}
     >
       <PermissionGate
@@ -24,7 +25,7 @@ export default function NewProcessRunPage() {
           </p>
         }
       >
-        <ProcessRunChoice />
+        <ProcessRunForm workflow="LOCAL" />
       </PermissionGate>
     </AppShell>
   );

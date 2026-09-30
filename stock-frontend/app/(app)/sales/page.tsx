@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from "react";
 import Link from "next/link";
-import { useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { AppShell } from "@/components/app-shell";
 import { DataCardTable } from "@/components/shared/data-card-table";
 import { PageLoading } from "@/components/shared/page-loading";
@@ -13,7 +13,9 @@ import {
   FrappeButtonPrimary,
   FrappeButtonLink,
 } from "@/components/frappe";
+import { SalesAnalysis } from "@/components/sales/sales-analysis";
 import { Badge } from "@/components/ui/badge";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import {
@@ -61,7 +63,9 @@ type SaleRow = Pick<
 const ALL = "__all__";
 
 export default function SalesPage() {
+  const router = useRouter();
   const searchParams = useSearchParams();
+  const tab = searchParams.get("tab") === "analysis" ? "analysis" : "invoices";
   const { user } = useAuth();
   const canOnBehalf = hasPermission(user, "sales.on_behalf");
 
@@ -87,6 +91,14 @@ export default function SalesPage() {
     [users]
   );
 
+  function onTabChange(next: string) {
+    const params = new URLSearchParams(searchParams.toString());
+    if (next === "analysis") params.set("tab", "analysis");
+    else params.delete("tab");
+    const query = params.toString();
+    router.replace(query ? `/sales?${query}` : "/sales", { scroll: false });
+  }
+
   const { rows, meta, totals, setPage, setLimit, loading } = usePaginatedList<
     SaleRow,
     SaleListTotals
@@ -109,11 +121,11 @@ export default function SalesPage() {
 
   return (
     <AppShell
-      title="Sales Invoice"
-      subtitle="List of sales transactions"
+      title="Sales"
+      subtitle="Invoices and sales analysis"
       breadcrumbs={[
         { label: "Stock", href: "/dashboard" },
-        { label: "Sales Invoice" },
+        { label: "Sales" },
       ]}
       actions={
         <div className="flex flex-wrap gap-2">
@@ -132,6 +144,15 @@ export default function SalesPage() {
       }
     >
       <PermissionGate permission="sales.read">
+        <Tabs value={tab} onValueChange={onTabChange}>
+          <TabsList className="mb-3 flex h-auto flex-wrap justify-start">
+            <TabsTrigger value="invoices">Invoices</TabsTrigger>
+            <TabsTrigger value="analysis">Sales analysis</TabsTrigger>
+          </TabsList>
+          <TabsContent value="analysis">
+            <SalesAnalysis />
+          </TabsContent>
+          <TabsContent value="invoices">
         <FrappeFilterBar>
           <ListSearchField
             value={search}
@@ -311,6 +332,8 @@ export default function SalesPage() {
             ]}
           />
         )}
+          </TabsContent>
+        </Tabs>
       </PermissionGate>
     </AppShell>
   );

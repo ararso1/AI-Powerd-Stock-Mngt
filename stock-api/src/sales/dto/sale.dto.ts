@@ -76,6 +76,16 @@ export class CreateSaleDto {
   @IsUUID()
   bankAccountId?: string;
 
+  /**
+   * Amount paid now. Required for PARTIAL (must be greater than 0 and less than the total).
+   * Ignored for CASH/BANK (full) and CREDIT (zero).
+   */
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0.01)
+  amountPaid?: number;
+
   @IsOptional()
   @IsBoolean()
   allowNegativeStock?: boolean;

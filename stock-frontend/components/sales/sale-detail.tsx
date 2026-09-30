@@ -11,7 +11,8 @@ import {
 import { SaleDocumentActions } from "@/components/transactions/document-actions";
 import { SaleReturnDialog } from "@/components/sales/sale-return-dialog";
 import { formatMoney, formatDate, formatQty } from "@/lib/format";
-import { documentTotal } from "@/lib/document-utils";
+import { documentTotal, paymentMethodLabel } from "@/lib/document-utils";
+import { formatBankAccountLabel } from "@/lib/bank-accounts";
 import {
   formatCommissionBasis,
   formatCommissionRate,
@@ -141,16 +142,24 @@ export function SaleDetail({
                 label="Bank account"
                 value={sale.bankAccount?.name ?? "—"}
               />
-            ) : (
+            ) : null}
+            {sale.paymentMethod === "CREDIT" ||
+            sale.paymentMethod === "PARTIAL" ? (
               <DetailField
-                label="Credit due date"
+                label={
+                  sale.paymentMethod === "PARTIAL"
+                    ? "Remaining credit due date"
+                    : "Credit due date"
+                }
                 value={
-                  sale.creditDueDate
-                    ? formatDate(sale.creditDueDate)
+                  sale.creditDueDate || sale.credit?.dueDate
+                    ? formatDate(
+                        sale.creditDueDate ?? sale.credit?.dueDate ?? ""
+                      )
                     : "—"
                 }
               />
-            )}
+            ) : null}
             {soldBy ? (
               <DetailField label="Sales rep" value={soldBy.fullName} />
             ) : null}
@@ -257,6 +266,52 @@ export function SaleDetail({
             </div>
           )}
         </FrappeSection>
+
+        {(sale.returns ?? []).length > 0 ? (
+          <FrappeSection
+            title="Returns"
+            description={`${sale.returns?.length ?? 0} posted`}
+          >
+            <div className="space-y-3">
+              {(sale.returns ?? []).map((row) => (
+                <div
+                  key={row.id}
+                  className="rounded-lg border border-[var(--frappe-border)] p-3"
+                >
+                  <div className="flex flex-wrap items-baseline justify-between gap-2">
+                    <p className="font-medium">{row.returnNumber}</p>
+                    <p className="tabular-nums font-medium">
+                      {formatMoney(row.totalAmount)}
+                    </p>
+                  </div>
+                  <p className="mt-1 text-xs text-[var(--frappe-text-muted)]">
+                    {row.refundedAt ? formatDate(row.refundedAt) : "—"}
+                    {" · "}
+                    {paymentMethodLabel(row.refundMethod)}
+                    {row.refundMethod === "BANK" && row.bankAccount
+                      ? ` · ${formatBankAccountLabel(row.bankAccount)}`
+                      : ""}
+                  </p>
+                  <ul className="mt-2 space-y-1 text-sm">
+                    {(row.lines ?? []).map((line) => (
+                      <li
+                        key={line.id}
+                        className="flex justify-between gap-3 tabular-nums"
+                      >
+                        <span>
+                          {line.item?.description ?? line.item?.sku ?? "Item"}
+                        </span>
+                        <span>
+                          {formatQty(line.quantity)} · {formatMoney(line.lineTotal)}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ))}
+            </div>
+          </FrappeSection>
+        ) : null}
       </FrappeDocument>
     </div>
   );

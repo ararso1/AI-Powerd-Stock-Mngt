@@ -1,19 +1,20 @@
 "use client";
 
 import { AppShell } from "@/components/app-shell";
-import { ProcessRunChoice } from "@/components/process-runs/process-run-choice";
+import { ProcessRunForm } from "@/components/process-runs/process-run-form";
 import { PermissionGate } from "@/components/permission-gate";
 
-export default function NewProcessRunPage() {
+export default function NewExportProcessRunPage() {
   return (
     <AppShell
-      title="New process run"
-      subtitle="Choose local market or export"
+      title="Export processing"
+      subtitle="Coffee stays in the warehouse until export steps are added"
       variant="form"
       breadcrumbs={[
         { label: "Operations", href: "/dashboard" },
         { label: "Processing", href: "/process-runs" },
-        { label: "New run" },
+        { label: "New run", href: "/process-runs/new" },
+        { label: "Export" },
       ]}
     >
       <PermissionGate
@@ -24,7 +25,7 @@ export default function NewProcessRunPage() {
           </p>
         }
       >
-        <ProcessRunChoice />
+        <ProcessRunForm workflow="EXPORT" />
       </PermissionGate>
     </AppShell>
   );

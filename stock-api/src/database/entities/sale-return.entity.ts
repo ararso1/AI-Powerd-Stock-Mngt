@@ -41,6 +41,10 @@ export class SaleReturn extends UuidBaseEntity {
   @Column({ name: 'bank_account_id', type: 'uuid', nullable: true })
   bankAccountId: string | null;
 
+  /** Calendar date the refund was given to the customer. */
+  @Column({ name: 'refunded_at', type: 'date' })
+  refundedAt: string;
+
   @Column({ type: 'text', nullable: true })
   notes: string | null;
 

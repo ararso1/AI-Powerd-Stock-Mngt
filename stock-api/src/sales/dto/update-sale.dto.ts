@@ -34,6 +34,12 @@ export class UpdateSaleDto {
   bankAccountId?: string;
 
   @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0.01)
+  amountPaid?: number;
+
+  @IsOptional()
   @IsBoolean()
   allowNegativeStock?: boolean;
 

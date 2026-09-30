@@ -148,7 +148,7 @@ export function SaleForm({ sale }: { sale?: Sale }) {
   const router = useRouter();
   const { user } = useAuth();
   const isEdit = !!sale?.id;
-  const notesOnly = isEdit && creditHasPayments(sale?.customerCredit);
+  const notesOnly = isEdit && saleNotesOnly(sale);
 
   const [customerId, setCustomerId] = useState(sale?.customerId ?? "");
   const [locationId, setLocationId] = useState(sale?.locationId ?? "");
@@ -162,14 +162,25 @@ export function SaleForm({ sale }: { sale?: Sale }) {
   );
   const [bankAccountId, setBankAccountId] = useState(sale?.bankAccountId ?? "");
   const [creditDueDate, setCreditDueDate] = useState(
-    sale?.creditDueDate?.slice(0, 10) ?? ""
+    sale?.creditDueDate?.slice(0, 10) ??
+      sale?.credit?.dueDate?.slice(0, 10) ??
+      sale?.customerCredit?.dueDate?.slice(0, 10) ??
+      ""
+  );
+  const [amountPaid, setAmountPaid] = useState(() =>
+    sale?.paymentMethod === "PARTIAL" && sale.paidAmount
+      ? String(sale.paidAmount)
+      : ""
   );
   const [creditStanding, setCreditStanding] =
     useState<CustomerCreditProfile | null>(null);
   const [creditStandingLoading, setCreditStandingLoading] = useState(false);
 
   useEffect(() => {
-    if (paymentMethod !== "CREDIT" || !customerId) {
+    if (
+      (paymentMethod !== "CREDIT" && paymentMethod !== "PARTIAL") ||
+      !customerId
+    ) {
       setCreditStanding(null);
       setCreditStandingLoading(false);
       return;
@@ -421,7 +432,13 @@ export function SaleForm({ sale }: { sale?: Sale }) {
         bankAccountId
       );
     }
-    if (paymentMethod === "CREDIT" && creditDueDate) {
+    if (paymentMethod === "PARTIAL") {
+      body.amountPaid = parseFloat(amountPaid);
+    }
+    if (
+      (paymentMethod === "CREDIT" || paymentMethod === "PARTIAL") &&
+      creditDueDate
+    ) {
       body.creditDueDate = creditDueDate;
     }
     if (allowNegativeStock) body.allowNegativeStock = true;
@@ -443,17 +460,47 @@ export function SaleForm({ sale }: { sale?: Sale }) {
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (paymentMethod === "CREDIT" && !customerId) {
-      toast.error("Customer is required for credit sales");
+    if (
+      (paymentMethod === "CREDIT" || paymentMethod === "PARTIAL") &&
+      !customerId
+    ) {
+      toast.error(
+        paymentMethod === "PARTIAL"
+          ? "Customer is required when part of the sale stays on credit"
+          : "Customer is required for credit sales"
+      );
       return;
     }
-    if (paymentMethod === "CREDIT" && customerId && !notesOnly) {
+    if (paymentMethod === "PARTIAL" && !notesOnly) {
+      const paid = parseFloat(amountPaid);
+      if (Number.isNaN(paid) || paid <= 0) {
+        toast.error("Enter the amount paid");
+        return;
+      }
+      if (!(paid < summary.subtotal)) {
+        toast.error("Amount paid must be less than the sale total");
+        return;
+      }
+      if (!creditDueDate) {
+        toast.error("Enter the due date for the remaining credit");
+        return;
+      }
+    }
+    const creditCharge =
+      paymentMethod === "PARTIAL"
+        ? Math.max(0, summary.subtotal - (parseFloat(amountPaid) || 0))
+        : summary.subtotal;
+    if (
+      (paymentMethod === "CREDIT" || paymentMethod === "PARTIAL") &&
+      customerId &&
+      !notesOnly
+    ) {
       if (creditStandingLoading) {
         toast.error("Customer credit is still loading");
         return;
       }
       const standing = creditStanding;
-      const saleCredit = summary.subtotal;
+      const saleCredit = creditCharge;
       let available =
         standing?.availableCredit != null
           ? parseFloat(standing.availableCredit)
@@ -583,7 +630,10 @@ export function SaleForm({ sale }: { sale?: Sale }) {
           <FrappeFormGrid columns={2}>
             <EntitySelectField
               label="Customer"
-              required={paymentMethod === "CREDIT" && !notesOnly}
+              required={
+                (paymentMethod === "CREDIT" || paymentMethod === "PARTIAL") &&
+                !notesOnly
+              }
               fullWidth
               value={customerId}
               onValueChange={setCustomerId}
@@ -633,13 +683,15 @@ export function SaleForm({ sale }: { sale?: Sale }) {
             <FrappeField label="Payment method" required={!notesOnly}>
               <SearchSelect
                 value={paymentMethod}
-                onValueChange={(v) =>
+                onValueChange={(v) => {
+                  const method = v as PaymentMethod;
                   onPaymentMethodChange(
-                    v as PaymentMethod,
+                    method,
                     setPaymentMethod,
                     setBankAccountId
-                  )
-                }
+                  );
+                  if (method !== "PARTIAL") setAmountPaid("");
+                }}
                 options={PAYMENT_METHOD_OPTIONS}
                 searchPlaceholder="Search payment method…"
                 disabled={notesOnly}
@@ -683,6 +735,35 @@ export function SaleForm({ sale }: { sale?: Sale }) {
             ) : (
               <div className="hidden md:block" />
             )}
+            {paymentMethod === "PARTIAL" ? (
+              <>
+                <FrappeField
+                  label="Amount paid"
+                  required={!notesOnly}
+                  hint="The rest stays on customer credit"
+                >
+                  <Input
+                    type="number"
+                    min="0.01"
+                    step="0.01"
+                    value={amountPaid}
+                    onChange={(e) => setAmountPaid(e.target.value)}
+                    placeholder="0.00"
+                    disabled={notesOnly}
+                    required={!notesOnly}
+                  />
+                </FrappeField>
+                <FrappeField label="Remaining credit due date" required={!notesOnly}>
+                  <Input
+                    type="date"
+                    value={creditDueDate}
+                    onChange={(e) => setCreditDueDate(e.target.value)}
+                    disabled={notesOnly}
+                    required={!notesOnly}
+                  />
+                </FrappeField>
+              </>
+            ) : null}
             {canOnBehalf && !notesOnly ? (
               <FrappeField label="Sales rep" required>
                 <SearchSelect
@@ -757,11 +838,19 @@ export function SaleForm({ sale }: { sale?: Sale }) {
           </FrappeFormGrid>
         </FrappeSection>
 
-        {paymentMethod === "CREDIT" && customerId ? (
+        {(paymentMethod === "CREDIT" || paymentMethod === "PARTIAL") &&
+        customerId ? (
           <CustomerCreditStanding
             standing={creditStanding}
             loading={creditStandingLoading}
-            saleTotal={summary.subtotal}
+            saleTotal={
+              paymentMethod === "PARTIAL"
+                ? Math.max(0, summary.subtotal - (parseFloat(amountPaid) || 0))
+                : summary.subtotal
+            }
+            chargeLabel={
+              paymentMethod === "PARTIAL" ? "Remaining credit" : "This sale"
+            }
             heldBalance={
               sale?.customerId === customerId
                 ? parseFloat(sale?.customerCredit?.balance ?? "")
@@ -980,16 +1069,30 @@ export function SaleForm({ sale }: { sale?: Sale }) {
   );
 }
 
+function saleNotesOnly(sale?: Sale): boolean {
+  if (!sale) return false;
+  const credit = sale.credit ?? sale.customerCredit;
+  const creditPaid = parseFloat(credit?.paidAmount ?? "0");
+  if (!Number.isFinite(creditPaid) || creditPaid <= 0) return false;
+  if (sale.paymentMethod === "PARTIAL") {
+    const deposit = parseFloat(sale.paidAmount ?? "0");
+    return creditPaid > deposit + 0.009;
+  }
+  return creditHasPayments(credit);
+}
+
 function CustomerCreditStanding({
   standing,
   loading,
   saleTotal,
   heldBalance,
+  chargeLabel = "This sale",
 }: {
   standing: CustomerCreditProfile | null;
   loading: boolean;
   saleTotal: number;
   heldBalance: number;
+  chargeLabel?: string;
 }) {
   if (loading && !standing) {
     return (
@@ -1099,7 +1202,7 @@ function CustomerCreditStanding({
         ) : null}
         {over ? (
           <p className="text-[var(--frappe-red)]">
-            This sale ({formatMoney(saleTotal)}) is above available credit.
+            {chargeLabel} ({formatMoney(saleTotal)}) is above available credit.
           </p>
         ) : null}
         {standing.creditLimit == null ? (

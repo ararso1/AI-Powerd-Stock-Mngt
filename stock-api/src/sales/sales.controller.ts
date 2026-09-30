@@ -19,6 +19,7 @@ import { PermissionsGuard } from '../common/guards/permissions.guard';
 import { CommissionSummaryQueryDto } from './dto/commission-summary-query.dto';
 import { CreateSaleDto } from './dto/sale.dto';
 import { CreateSaleReturnDto } from './dto/sale-return.dto';
+import { SalesAnalysisQueryDto } from './dto/sales-analysis-query.dto';
 import { SalesListQueryDto } from './dto/sales-list-query.dto';
 import { UpdateSaleDto } from './dto/update-sale.dto';
 import { SalesService } from './sales.service';
@@ -38,6 +39,12 @@ export class SalesController {
   @RequirePermissions('sales.read')
   commissionSummary(@Query() query: CommissionSummaryQueryDto) {
     return this.service.commissionSummary(query);
+  }
+
+  @Get('analysis')
+  @RequirePermissions('sales.read')
+  analysis(@Query() query: SalesAnalysisQueryDto) {
+    return this.service.analysis(query);
   }
 
   @Get(':id')

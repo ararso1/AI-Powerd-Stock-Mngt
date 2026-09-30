@@ -41,7 +41,8 @@ import { Badge } from "@/components/ui/badge";
 import { api } from "@/lib/api";
 import { fetchInventoryForLocation } from "@/lib/inventory-fetch";
 import { buildStockTransfersListPath } from "@/lib/list-query";
-import { errorMessage } from "@/lib/format";
+import { errorMessage, formatQty } from "@/lib/format";
+import { coffeeFormLabel } from "@/lib/lots";
 import { requestNotificationsRefresh } from "@/lib/notification-events";
 import {
   isCoffeeSku,
@@ -152,12 +153,12 @@ export default function StockTransfersPage() {
               },
               {
                 key: "from",
-                header: "From",
+                header: "Transferer",
                 cell: (r) => r.fromLocation?.name ?? "—",
               },
               {
                 key: "to",
-                header: "To",
+                header: "Transferee",
                 cell: (r) => r.toLocation?.name ?? "—",
               },
               {
@@ -181,14 +182,64 @@ export default function StockTransfersPage() {
   );
 }
 
+function availableQty(row: StockRecord) {
+  const onHand = parseFloat(row.quantity);
+  const reserved = parseFloat(row.reservedQuantity ?? "0");
+  const held = Number.isFinite(reserved) && reserved > 0 ? reserved : 0;
+  return Math.max(0, (Number.isFinite(onHand) ? onHand : 0) - held);
+}
+
+function selectedItemDetails(row: StockRecord) {
+  const unit = row.item?.unit?.trim() || "kg";
+  return [
+    row.item?.sku ? `SKU ${row.item.sku}` : null,
+    row.lot?.code ? `Lot ${row.lot.code}` : null,
+    row.lot?.grade ? `Grade ${row.lot.grade}` : null,
+    row.lot?.form ? coffeeFormLabel(row.lot.form) : null,
+    `${formatQty(availableQty(row))} ${unit} available`,
+  ].filter((part): part is string => Boolean(part));
+}
+
+function SelectedStockDetails({
+  row,
+  quantity,
+}: {
+  row: StockRecord;
+  quantity: string;
+}) {
+  const entered = parseFloat(quantity);
+  const available = availableQty(row);
+  const over = Number.isFinite(entered) && entered - available > 0.0001;
+  return (
+    <div className="mt-2 rounded-md border border-[var(--frappe-border)] bg-[var(--frappe-section-head)] px-3 py-2">
+      <p className="text-sm font-medium text-[var(--frappe-text)]">
+        {row.item?.description ?? "Item"}
+      </p>
+      <p className="mt-1 text-xs text-[var(--frappe-text-muted)]">
+        {selectedItemDetails(row).join(" · ")}
+      </p>
+      {over ? (
+        <p className="mt-1 text-xs text-red-600">
+          Exceeds {formatQty(available)} available
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
+const EMPTY_LINE = {
+  stockId: "",
+  itemId: "",
+  lotId: null as string | null,
+  quantity: "1",
+};
+
 function TransferDialog({ onSuccess }: { onSuccess: () => void }) {
   const [open, setOpen] = useState(false);
   const [fromLocationId, setFromLocationId] = useState("");
   const [toLocationId, setToLocationId] = useState("");
   const [notes, setNotes] = useState("");
-  const [lines, setLines] = useState([
-    { stockId: "", itemId: "", lotId: null as string | null, quantity: "1" },
-  ]);
+  const [lines, setLines] = useState([EMPTY_LINE]);
   const [saving, setSaving] = useState(false);
 
   const {
@@ -213,6 +264,9 @@ function TransferDialog({ onSuccess }: { onSuccess: () => void }) {
     id: l.id,
     label: `${l.name} (${l.type})`,
   }));
+  const transfereeOptions = locationOptions.filter(
+    (location) => location.id !== fromLocationId
+  );
 
   const stockOptions = stockTransferOptions(stock ?? []);
 
@@ -240,6 +294,12 @@ function TransferDialog({ onSuccess }: { onSuccess: () => void }) {
     );
   }
 
+  function onTransfererChange(id: string) {
+    setFromLocationId(id);
+    if (toLocationId === id) setToLocationId("");
+    setLines([{ ...EMPTY_LINE }]);
+  }
+
   function selectStockRow(index: number, stockId: string) {
     const row = (stock ?? []).find((s) => s.id === stockId);
     setLines((prev) =>
@@ -258,6 +318,14 @@ function TransferDialog({ onSuccess }: { onSuccess: () => void }) {
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+    if (!fromLocationId || !toLocationId) {
+      toast.error("Select a transferer and a transferee");
+      return;
+    }
+    if (fromLocationId === toLocationId) {
+      toast.error("The transferer cannot also be the transferee");
+      return;
+    }
     for (const line of lines) {
       if (!line.stockId) continue;
       const row = (stock ?? []).find((s) => s.id === line.stockId);
@@ -266,6 +334,16 @@ function TransferDialog({ onSuccess }: { onSuccess: () => void }) {
           `${row.item.description} is coffee stock without a lot — cannot transfer`
         );
         return;
+      }
+      if (row) {
+        const quantity = parseFloat(line.quantity);
+        const available = availableQty(row);
+        if (Number.isFinite(quantity) && quantity - available > 0.0001) {
+          toast.error(
+            `${row.item?.description ?? "Item"} has ${formatQty(available)} available`
+          );
+          return;
+        }
       }
     }
     const parsedLines = parseTransferLines(lines);
@@ -300,9 +378,7 @@ function TransferDialog({ onSuccess }: { onSuccess: () => void }) {
     setFromLocationId("");
     setToLocationId("");
     setNotes("");
-    setLines([
-      { stockId: "", itemId: "", lotId: null, quantity: "1" },
-    ]);
+    setLines([{ ...EMPTY_LINE }]);
   }
 
   function handleOpenChange(nextOpen: boolean) {
@@ -313,10 +389,10 @@ function TransferDialog({ onSuccess }: { onSuccess: () => void }) {
   }
 
   const itemsHint = !fromLocationId
-    ? "Select a source location first"
+    ? "Select the transferer first"
     : stockLoading
       ? "Loading stock…"
-      : `${stockOptions.length} stock line(s) at source`;
+      : `${stockOptions.length} stock line(s) at the transferer`;
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
@@ -333,47 +409,55 @@ function TransferDialog({ onSuccess }: { onSuccess: () => void }) {
               Stock transfer
             </DialogTitle>
             <DialogDescription className="text-xs text-[var(--frappe-text-muted)]">
-              Move inventory between locations. Coffee lines must pick a lot-linked
-              stock row. Stock is deducted from the source when created.
+              Move inventory from the transferer to a different transferee. Coffee
+              lines must pick a lot-linked stock row. Stock leaves the transferer
+              when the transfer is created.
             </DialogDescription>
           </DialogHeader>
 
           <div className="min-h-0 flex-1 space-y-5 overflow-y-auto overflow-x-hidden p-5">
             <FrappeFormGrid className="gap-5">
               <EntitySelectField
-                label="From"
+                label="Transferer"
                 required
                 stackedActions
                 value={fromLocationId}
-                onValueChange={setFromLocationId}
+                onValueChange={onTransfererChange}
                 options={locationOptions}
+                placeholder="Select transferer"
                 listHref="/locations"
                 listLabel="All locations"
-                emptyMessage="Create a source location."
+                emptyMessage="Create a transferer location."
                 quickCreate={
                   <QuickLocationDialog
                     onCreated={(loc) => {
                       onLocationCreated(loc);
-                      setFromLocationId(loc.id);
+                      onTransfererChange(loc.id);
                     }}
                   />
                 }
               />
               <EntitySelectField
-                label="To"
+                label="Transferee"
                 required
                 stackedActions
                 value={toLocationId}
                 onValueChange={setToLocationId}
-                options={locationOptions}
+                options={transfereeOptions}
+                placeholder="Select transferee"
+                disabled={!fromLocationId}
                 listHref="/locations"
                 listLabel="All locations"
-                emptyMessage="Create a destination location."
+                emptyMessage={
+                  fromLocationId
+                    ? "Create another location. The transferer is not listed here."
+                    : "Select the transferer first."
+                }
                 quickCreate={
                   <QuickLocationDialog
                     onCreated={(loc) => {
                       onLocationCreated(loc);
-                      setToLocationId(loc.id);
+                      if (loc.id !== fromLocationId) setToLocationId(loc.id);
                     }}
                   />
                 }
@@ -420,10 +504,14 @@ function TransferDialog({ onSuccess }: { onSuccess: () => void }) {
               </div>
 
               <div className="divide-y divide-[var(--frappe-border)]">
-                {lines.map((line, i) => (
+                {lines.map((line, i) => {
+                  const selectedRow = (stock ?? []).find(
+                    (record) => record.id === line.stockId
+                  );
+                  return (
                   <div
                     key={i}
-                    className="grid grid-cols-1 gap-2 px-4 py-3 sm:grid-cols-[minmax(0,1fr)_88px_40px] sm:items-center sm:gap-3"
+                    className="grid grid-cols-1 gap-2 px-4 py-3 sm:grid-cols-[minmax(0,1fr)_88px_40px] sm:items-start sm:gap-3"
                   >
                     <div className="min-w-0">
                       <p className="mb-1 text-xs text-[var(--frappe-text-muted)] sm:hidden">
@@ -432,14 +520,28 @@ function TransferDialog({ onSuccess }: { onSuccess: () => void }) {
                       <ItemSearchSelect
                         value={line.stockId}
                         onValueChange={(v) => selectStockRow(i, v)}
-                        options={stockOptions.map((o) => ({
-                          id: o.id,
-                          label: o.label,
-                        }))}
+                        options={stockOptions
+                          .filter(
+                            (option) =>
+                              !lines.some(
+                                (other, index) =>
+                                  index !== i && other.stockId === option.id
+                              )
+                          )
+                          .map((option) => ({
+                            itemId: option.id,
+                            label: option.label,
+                          }))}
                         disabled={!fromLocationId || stockLoading}
                         placeholder="Select stock line…"
                         className="min-w-0"
                       />
+                      {selectedRow ? (
+                        <SelectedStockDetails
+                          row={selectedRow}
+                          quantity={line.quantity}
+                        />
+                      ) : null}
                     </div>
                     <div>
                       <p className="mb-1 text-xs text-[var(--frappe-text-muted)] sm:hidden">
@@ -481,7 +583,8 @@ function TransferDialog({ onSuccess }: { onSuccess: () => void }) {
                       </Button>
                     </div>
                   </div>
-                ))}
+                  );
+                })}
               </div>
 
               <div className="border-t border-[var(--frappe-border)] bg-[var(--frappe-section-head)]/40 px-4 py-2">
@@ -491,15 +594,7 @@ function TransferDialog({ onSuccess }: { onSuccess: () => void }) {
                   size="sm"
                   className="h-8 text-xs text-[var(--frappe-primary)] hover:text-[var(--frappe-primary-hover)]"
                   onClick={() =>
-                    setLines((prev) => [
-                      ...prev,
-                      {
-                        stockId: "",
-                        itemId: "",
-                        lotId: null,
-                        quantity: "1",
-                      },
-                    ])
+                    setLines((prev) => [...prev, { ...EMPTY_LINE }])
                   }
                 >
                   <PlusIcon className="size-3.5" />

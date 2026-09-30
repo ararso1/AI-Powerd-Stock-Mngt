@@ -935,6 +935,7 @@ export interface Sale {
   credit?: LinkedCredit;
   customerCredit?: LinkedCredit;
   lines?: SaleLine[];
+  returns?: SaleReturn[];
 }
 
 export interface SalesCommissionSummaryRow {
@@ -1800,6 +1801,8 @@ export interface SaleReturn {
   totalAmount: string;
   refundMethod: PaymentMethod | string;
   bankAccountId?: string | null;
+  bankAccount?: BankAccount | null;
+  refundedAt?: string | null;
   notes?: string | null;
   status: string;
   lines?: SaleReturnLine[];

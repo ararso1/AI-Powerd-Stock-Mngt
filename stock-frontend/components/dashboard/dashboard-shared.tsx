@@ -118,21 +118,25 @@ export function MiniBarChart({
 export function GroupedBarChart({
   data,
   series,
+  emptyMessage = "No roast or ground sales in this period.",
+  margin = { top: 8, right: 8, left: -12, bottom: 0 },
 }: {
   data: Array<Record<string, string | number>>;
   series: Array<{ key: string; name: string; color: string }>;
+  emptyMessage?: string;
+  margin?: { top: number; right: number; left: number; bottom: number };
 }) {
   if (!data.length) {
     return (
       <p className="flex h-56 items-center justify-center text-sm text-muted-foreground">
-        No roast or ground sales in this period.
+        {emptyMessage}
       </p>
     );
   }
   return (
     <div className="h-56 w-full">
       <ResponsiveContainer width="100%" height="100%">
-        <BarChart data={data} margin={{ top: 8, right: 8, left: -12, bottom: 0 }}>
+        <BarChart data={data} margin={margin}>
           <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e5e7eb" />
           <XAxis dataKey="label" tick={{ fontSize: 11 }} />
           <YAxis tick={{ fontSize: 11 }} />

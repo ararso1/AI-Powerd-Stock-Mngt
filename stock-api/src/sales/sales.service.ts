@@ -7,6 +7,7 @@ import {
 import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
 import { DataSource, EntityManager, Repository } from 'typeorm';
 import {
+  BankAccountType,
   BankTransactionType,
   CommissionBasis,
   CreditStatus,
@@ -27,9 +28,12 @@ import {
   paginatedQueryBuilder,
   sumFilteredQueryBuilder,
 } from '../common/utils/query.util';
+import { SalesAnalysisQueryDto } from './dto/sales-analysis-query.dto';
 import { SalesListQueryDto } from './dto/sales-list-query.dto';
 import { BankLedgerService } from '../banks/bank-ledger.service';
 import { BanksService } from '../banks/banks.service';
+import { BankAccount } from '../database/entities/bank-account.entity';
+import { BankTransaction } from '../database/entities/bank-transaction.entity';
 import { CustomerCredit } from '../database/entities/customer-credit.entity';
 import { Item } from '../database/entities/item.entity';
 import { Lot } from '../database/entities/lot.entity';
@@ -108,6 +112,126 @@ export class SalesService {
     return { ...page, totals };
   }
 
+  async analysis(query: SalesAnalysisQueryDto) {
+    const paymentMethod =
+      query.paymentStatus === 'CASH' ||
+      query.paymentStatus === 'BANK' ||
+      query.paymentStatus === 'CREDIT' ||
+      query.paymentStatus === 'PARTIAL'
+        ? query.paymentStatus
+        : undefined;
+
+    const sales = await this.buildSalesFilterQb({
+      from: query.from,
+      to: query.to,
+      customerId: query.customerId,
+      channel: query.channel,
+      paymentMethod,
+    } as SalesListQueryDto)
+      .leftJoinAndSelect('sale.lines', 'lines')
+      .leftJoinAndSelect('lines.item', 'item')
+      .leftJoinAndSelect('lines.lot', 'lot')
+      .leftJoinAndSelect('sale.credit', 'credit')
+      .getMany();
+
+    const included =
+      query.paymentStatus === 'OUTSTANDING'
+        ? sales.filter((sale) => saleCreditBalance(sale) > 0)
+        : sales;
+
+    const buckets = emptyCoffeeBuckets();
+    const trendBucket = salesTrendBucket(query.from, query.to);
+    const trendMap = new Map<string, TrendPoint>();
+    let totalAmount = 0;
+    let totalQuantityKg = 0;
+    let outstandingAmount = 0;
+    let outstandingCount = 0;
+
+    for (const sale of included) {
+      const amount = parseFloat(sale.total) || 0;
+      totalAmount += amount;
+      const balance = saleCreditBalance(sale);
+      if (balance > 0) {
+        outstandingAmount += balance;
+        outstandingCount += 1;
+      }
+
+      const key = trendKey(new Date(sale.createdAt), trendBucket);
+      const point = trendMap.get(key) ?? emptyTrendPoint();
+      point.amount += amount;
+
+      for (const line of sale.lines ?? []) {
+        const sku = line.item?.sku ?? line.lot?.item?.sku ?? '';
+        const method = line.lot?.processMethod ?? null;
+        const form = line.lot?.form ?? null;
+        const unit = line.item?.unit ?? null;
+        const qty = parseFloat(line.quantity) || 0;
+        const lineAmount = parseFloat(line.lineTotal) || 0;
+        const kg = coffeeQuantityKg(qty, sku, form, method, unit);
+        const kind = saleCoffeeKind(sku, method, form);
+        buckets[kind].amount += lineAmount;
+        buckets[kind].quantityKg += kg;
+        totalQuantityKg += kg;
+        point.quantityKg += kg;
+        if (kind === 'roast') {
+          point.roastAmount += lineAmount;
+          point.roastKg += kg;
+        } else if (kind === 'ground') {
+          point.groundAmount += lineAmount;
+          point.groundKg += kg;
+        }
+      }
+
+      trendMap.set(key, point);
+    }
+
+    const ids = included.map((sale) => sale.id);
+    let returnsAmount = 0;
+    if (ids.length) {
+      const row = await this.dataSource
+        .getRepository(SaleReturn)
+        .createQueryBuilder('ret')
+        .select('COALESCE(SUM(ret.total_amount::numeric), 0)', 'total')
+        .where('ret.sale_id IN (:...ids)', { ids })
+        .andWhere('ret.status = :returnStatus', {
+          returnStatus: DocumentStatus.ACTIVE,
+        })
+        .getRawOne<{ total: string }>();
+      returnsAmount = parseFloat(row?.total ?? '0') || 0;
+    }
+
+    const coffeeOrder: CoffeeKind[] = ['roast', 'ground', 'reject', 'other'];
+    const trend = [...trendMap.entries()]
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([key, point]) => ({
+        label: trendLabel(key, trendBucket),
+        amount: round2(point.amount),
+        quantityKg: round3(point.quantityKg),
+        roastAmount: round2(point.roastAmount),
+        groundAmount: round2(point.groundAmount),
+        roastKg: round3(point.roastKg),
+        groundKg: round3(point.groundKg),
+      }));
+
+    return {
+      saleCount: included.length,
+      totalAmount: round2(totalAmount),
+      totalQuantityKg: round3(totalQuantityKg),
+      returnsAmount: round2(returnsAmount),
+      netAmount: round2(totalAmount - returnsAmount),
+      outstandingAmount: round2(outstandingAmount),
+      outstandingCount,
+      trendBucket,
+      byCoffee: coffeeOrder.map((kind) => ({
+        type: kind,
+        label: COFFEE_LABELS[kind],
+        quantityKg: round3(buckets[kind].quantityKg),
+        amount: round2(buckets[kind].amount),
+      })),
+      trend,
+    };
+  }
+
   private buildSalesFilterQb(query: SalesListQueryDto) {
     const includeVoided = query.includeVoided === 'true';
     const qb = this.saleRepo.createQueryBuilder('sale');
@@ -169,10 +293,20 @@ export class SalesService {
       ? parseFloat(sale.credit.balance)
       : Math.max(0, total - paid);
     const outstanding =
-      sale.paymentMethod === PaymentMethod.CREDIT ? creditBalance : 0;
+      sale.paymentMethod === PaymentMethod.CREDIT ||
+      sale.paymentMethod === PaymentMethod.PARTIAL
+        ? creditBalance
+        : 0;
+    const returns = await this.dataSource.getRepository(SaleReturn).find({
+      where: { saleId: id, status: DocumentStatus.ACTIVE },
+      relations: { lines: { item: true }, bankAccount: true },
+      order: { refundedAt: 'DESC', createdAt: 'DESC' },
+    });
     return {
       ...sale,
       outstandingAmount: outstanding.toFixed(2),
+      creditDueDate: sale.credit?.dueDate ?? null,
+      returns,
     };
   }
 
@@ -220,6 +354,7 @@ export class SalesService {
     'locationId',
     'paymentMethod',
     'bankAccountId',
+    'amountPaid',
     'allowNegativeStock',
     'creditDueDate',
     'lines',
@@ -354,7 +489,69 @@ export class SalesService {
   }
 
   private paysViaBank(method: PaymentMethod): boolean {
-    return method === PaymentMethod.BANK || method === PaymentMethod.CASH;
+    return (
+      method === PaymentMethod.BANK ||
+      method === PaymentMethod.CASH ||
+      method === PaymentMethod.PARTIAL
+    );
+  }
+
+  private createsCustomerCredit(method: PaymentMethod): boolean {
+    return method === PaymentMethod.CREDIT || method === PaymentMethod.PARTIAL;
+  }
+
+  private resolveAmountPaid(
+    method: PaymentMethod,
+    total: number,
+    amountPaid?: number,
+  ): number {
+    if (method === PaymentMethod.CREDIT) return 0;
+    if (method === PaymentMethod.CASH || method === PaymentMethod.BANK) {
+      return total;
+    }
+    if (method === PaymentMethod.PARTIAL) {
+      if (amountPaid === undefined || amountPaid === null || Number.isNaN(amountPaid)) {
+        throw new BadRequestException(
+          'Enter the amount paid for a partially paid sale',
+        );
+      }
+      if (!(amountPaid > 0) || !(amountPaid < total)) {
+        throw new BadRequestException(
+          'Amount paid must be greater than 0 and less than the sale total',
+        );
+      }
+      return amountPaid;
+    }
+    return total;
+  }
+
+  /** Later collections lock the sale. The original partial deposit does not. */
+  private async creditIsLocked(
+    sale: {
+      paymentMethod: PaymentMethod;
+      credit?: { id: string; paidAmount: string } | null;
+    },
+    manager?: EntityManager,
+  ): Promise<boolean> {
+    if (!sale.credit) return false;
+    if (await this.hasSubsequentCreditPayments(sale.credit.id, manager)) {
+      return true;
+    }
+    if (sale.paymentMethod === PaymentMethod.PARTIAL) return false;
+    return parseFloat(sale.credit.paidAmount) > 0;
+  }
+
+  private async hasSubsequentCreditPayments(
+    creditId: string,
+    manager?: EntityManager,
+  ): Promise<boolean> {
+    const repo = manager
+      ? manager.getRepository(BankTransaction)
+      : this.dataSource.getRepository(BankTransaction);
+    const count = await repo.count({
+      where: { refType: 'customer_credit_payment', refId: creditId },
+    });
+    return count > 0;
   }
 
   async update(
@@ -369,17 +566,14 @@ export class SalesService {
       if (sale.status === DocumentStatus.VOIDED) {
         throw new BadRequestException('Cannot update a voided sale');
       }
-      if (sale.credit) {
-        const paid = parseFloat(sale.credit.paidAmount);
-        if (paid > 0) {
-          const keys = (Object.keys(dto) as (keyof UpdateSaleDto)[]).filter(
-            (k) => dto[k] !== undefined,
+      if (sale.credit && (await this.creditIsLocked(sale))) {
+        const keys = (Object.keys(dto) as (keyof UpdateSaleDto)[]).filter(
+          (k) => dto[k] !== undefined,
+        );
+        if (keys.some((k) => k !== 'notes')) {
+          throw new BadRequestException(
+            'Cannot change sale after customer credit payments; only notes may be updated',
           );
-          if (keys.some((k) => k !== 'notes')) {
-            throw new BadRequestException(
-              'Cannot change sale after customer credit payments; only notes may be updated',
-            );
-          }
         }
       }
 
@@ -446,13 +640,10 @@ export class SalesService {
         throw new BadRequestException('Cannot update a voided sale');
       }
 
-      if (sale.credit) {
-        const paid = parseFloat(sale.credit.paidAmount);
-        if (paid > 0) {
-          throw new BadRequestException(
-            'Cannot change sale after customer credit payments; only notes may be updated',
-          );
-        }
+      if (sale.credit && (await this.creditIsLocked(sale, manager))) {
+        throw new BadRequestException(
+          'Cannot change sale after customer credit payments; only notes may be updated',
+        );
       }
 
       const customerId =
@@ -474,11 +665,20 @@ export class SalesService {
 
       if (this.paysViaBank(paymentMethod) && !bankAccountId) {
         throw new BadRequestException(
-          'bankAccountId required for BANK and CASH payments',
+          paymentMethod === PaymentMethod.PARTIAL
+            ? 'bankAccountId required for partially paid sales'
+            : 'bankAccountId required for BANK and CASH payments',
         );
       }
-      if (paymentMethod === PaymentMethod.CREDIT && !customerId) {
-        throw new BadRequestException('customerId required for credit sales');
+      if (this.createsCustomerCredit(paymentMethod) && !customerId) {
+        throw new BadRequestException(
+          'customerId required when the sale leaves a credit balance',
+        );
+      }
+      if (paymentMethod === PaymentMethod.PARTIAL && !creditDueDate) {
+        throw new BadRequestException(
+          'Credit due date is required for the remaining balance',
+        );
       }
       if (this.paysViaBank(paymentMethod) && bankAccountId) {
         await this.banksService.assertPaymentAccount(
@@ -493,10 +693,21 @@ export class SalesService {
         0,
       );
 
-      if (paymentMethod === PaymentMethod.CREDIT && customerId) {
+      const amountPaid = this.resolveAmountPaid(
+        paymentMethod,
+        subtotal,
+        dto.amountPaid !== undefined
+          ? dto.amountPaid
+          : paymentMethod === PaymentMethod.PARTIAL
+            ? parseFloat(sale.paidAmount)
+            : undefined,
+      );
+      const creditBalance = Math.max(0, subtotal - amountPaid);
+
+      if (this.createsCustomerCredit(paymentMethod) && customerId) {
         await this.creditsService.assertCustomerWithinLimit(
           customerId,
-          subtotal,
+          creditBalance,
           { excludeCreditId: sale.credit?.id },
         );
       }
@@ -569,6 +780,7 @@ export class SalesService {
       sale.allowNegativeStock = allowNeg;
       sale.subtotal = subtotal.toFixed(2);
       sale.total = subtotal.toFixed(2);
+      sale.paidAmount = amountPaid.toFixed(2);
       sale.notes = notes;
       sale.stockWarnings = stockWarnings.length ? stockWarnings : null;
       sale.lines = saleLines.map((l) => Object.assign(new SaleLine(), l));
@@ -611,14 +823,17 @@ export class SalesService {
         });
       }
 
-      if (this.paysViaBank(paymentMethod) && bankAccountId) {
+      if (this.paysViaBank(paymentMethod) && bankAccountId && amountPaid > 0) {
         await this.bankLedger.recordTransaction(
           {
             bankAccountId,
             type: BankTransactionType.SALE,
-            amount: subtotal,
+            amount: amountPaid,
             direction: 'in',
-            description: `Sale ${sale.id}`,
+            description:
+              paymentMethod === PaymentMethod.PARTIAL
+                ? `Sale ${sale.id} (partial payment)`
+                : `Sale ${sale.id}`,
             refType: 'sale',
             refId: sale.id,
             createdById: userId,
@@ -627,15 +842,16 @@ export class SalesService {
         );
       }
 
-      if (paymentMethod === PaymentMethod.CREDIT && customerId) {
+      if (this.createsCustomerCredit(paymentMethod) && customerId) {
         await creditRepo.save(
           creditRepo.create({
             customerId,
             saleId: sale.id,
             amount: subtotal.toFixed(2),
-            paidAmount: '0',
-            balance: subtotal.toFixed(2),
-            status: CreditStatus.OPEN,
+            paidAmount: amountPaid.toFixed(2),
+            balance: creditBalance.toFixed(2),
+            status:
+              amountPaid > 0 ? CreditStatus.PARTIAL : CreditStatus.OPEN,
             dueDate: creditDueDate ?? null,
           }),
         );
@@ -673,8 +889,7 @@ export class SalesService {
       }
 
       if (sale.credit) {
-        const paid = parseFloat(sale.credit.paidAmount);
-        if (paid > 0) {
+        if (await this.creditIsLocked(sale, manager)) {
           throw new BadRequestException(
             'Cannot void sale with customer credit payments applied',
           );
@@ -693,10 +908,7 @@ export class SalesService {
         );
       }
 
-      const paysViaBank =
-        sale.paymentMethod === PaymentMethod.BANK ||
-        sale.paymentMethod === PaymentMethod.CASH;
-      if (paysViaBank && sale.bankAccountId) {
+      if (this.paysViaBank(sale.paymentMethod) && sale.bankAccountId) {
         await this.bankLedger.reverseByReference(
           'sale',
           sale.id,
@@ -727,16 +939,23 @@ export class SalesService {
       );
     }
 
-    const paysViaBank =
-      dto.paymentMethod === PaymentMethod.BANK ||
-      dto.paymentMethod === PaymentMethod.CASH;
+    const paysViaBank = this.paysViaBank(dto.paymentMethod);
     if (paysViaBank && !dto.bankAccountId) {
       throw new BadRequestException(
-        'bankAccountId required for BANK and CASH payments',
+        dto.paymentMethod === PaymentMethod.PARTIAL
+          ? 'bankAccountId required for partially paid sales'
+          : 'bankAccountId required for BANK and CASH payments',
       );
     }
-    if (dto.paymentMethod === PaymentMethod.CREDIT && !dto.customerId) {
-      throw new BadRequestException('customerId required for credit sales');
+    if (this.createsCustomerCredit(dto.paymentMethod) && !dto.customerId) {
+      throw new BadRequestException(
+        'customerId required when the sale leaves a credit balance',
+      );
+    }
+    if (dto.paymentMethod === PaymentMethod.PARTIAL && !dto.creditDueDate) {
+      throw new BadRequestException(
+        'Credit due date is required for the remaining balance',
+      );
     }
 
     const stockChanges: StockQuantityChange[] = [];
@@ -746,10 +965,15 @@ export class SalesService {
       (sum, l) => sum + l.quantity * l.unitPrice,
       0,
     );
-    if (dto.paymentMethod === PaymentMethod.CREDIT && dto.customerId) {
+    const estimatedPaid = this.resolveAmountPaid(
+      dto.paymentMethod,
+      estimatedTotal,
+      dto.amountPaid,
+    );
+    if (this.createsCustomerCredit(dto.paymentMethod) && dto.customerId) {
       await this.creditsService.assertCustomerWithinLimit(
         dto.customerId,
-        estimatedTotal,
+        Math.max(0, estimatedTotal - estimatedPaid),
       );
     }
 
@@ -831,10 +1055,11 @@ export class SalesService {
           allowNegativeStock: allowNegative,
           subtotal: subtotal.toFixed(2),
           total: subtotal.toFixed(2),
-          paidAmount:
-            dto.paymentMethod === PaymentMethod.CREDIT
-              ? '0.00'
-              : subtotal.toFixed(2),
+          paidAmount: this.resolveAmountPaid(
+            dto.paymentMethod,
+            subtotal,
+            dto.amountPaid,
+          ).toFixed(2),
           notes: dto.notes ?? null,
           stockWarnings: stockWarnings.length ? stockWarnings : null,
           status: DocumentStatus.ACTIVE,
@@ -909,14 +1134,18 @@ export class SalesService {
         });
       }
 
-      if (paysViaBank && dto.bankAccountId) {
+      const amountPaid = parseFloat(sale.paidAmount);
+      if (paysViaBank && dto.bankAccountId && amountPaid > 0) {
         await this.bankLedger.recordTransaction(
           {
             bankAccountId: dto.bankAccountId,
             type: BankTransactionType.SALE,
-            amount: subtotal,
+            amount: amountPaid,
             direction: 'in',
-            description: `Sale ${sale.id}`,
+            description:
+              dto.paymentMethod === PaymentMethod.PARTIAL
+                ? `Sale ${sale.id} (partial payment)`
+                : `Sale ${sale.id}`,
             refType: 'sale',
             refId: sale.id,
             createdById: userId,
@@ -925,15 +1154,17 @@ export class SalesService {
         );
       }
 
-      if (dto.paymentMethod === PaymentMethod.CREDIT && dto.customerId) {
+      if (this.createsCustomerCredit(dto.paymentMethod) && dto.customerId) {
+        const balance = Math.max(0, subtotal - amountPaid);
         await creditRepo.save(
           creditRepo.create({
             customerId: dto.customerId,
             saleId: sale.id,
             amount: subtotal.toFixed(2),
-            paidAmount: '0',
-            balance: subtotal.toFixed(2),
-            status: CreditStatus.OPEN,
+            paidAmount: amountPaid.toFixed(2),
+            balance: balance.toFixed(2),
+            status:
+              amountPaid > 0 ? CreditStatus.PARTIAL : CreditStatus.OPEN,
             dueDate: dto.creditDueDate ?? null,
           }),
         );
@@ -966,42 +1197,53 @@ export class SalesService {
   }
 
   async createReturn(saleId: string, dto: CreateSaleReturnDto, userId?: string) {
-    const sale = await this.findOne(saleId);
-    if (sale.status === DocumentStatus.VOIDED) {
+    const existing = await this.saleRepo.findOne({
+      where: { id: saleId },
+      select: { id: true, status: true, channel: true },
+    });
+    if (!existing) throw new NotFoundException('Sale not found');
+    if (existing.status === DocumentStatus.VOIDED) {
       throw new BadRequestException('Cannot return a voided sale');
     }
-    if (sale.channel !== SaleChannel.LOCAL) {
+    if (existing.channel !== SaleChannel.LOCAL) {
       throw new BadRequestException('Sales returns are for local sales only');
     }
 
-    const paysViaBank =
-      dto.refundMethod === PaymentMethod.BANK ||
-      dto.refundMethod === PaymentMethod.CASH;
-    if (paysViaBank && !dto.bankAccountId) {
-      throw new BadRequestException(
-        'bankAccountId required for BANK and CASH refunds',
-      );
-    }
+    const refundDate = dto.refundDate.slice(0, 10);
 
     const returnId = await this.dataSource.transaction(async (manager) => {
-      if (paysViaBank && dto.bankAccountId) {
-        await this.banksService.assertPaymentAccount(
-          dto.refundMethod,
-          dto.bankAccountId,
-          manager,
-        );
-      }
-
       const returnRepo = manager.getRepository(SaleReturn);
       const lineRepo = manager.getRepository(SaleReturnLine);
       const lotRepo = manager.getRepository(Lot);
       const eventRepo = manager.getRepository(LotEvent);
-      const creditRepo = manager.getRepository(CustomerCredit);
       const saleRepo = manager.getRepository(Sale);
 
+      const sale = await saleRepo.findOne({
+        where: { id: saleId },
+        relations: { lines: { item: true }, credit: true },
+      });
+      if (!sale) throw new NotFoundException('Sale not found');
+
+      const prior = await returnRepo.find({
+        where: { saleId: sale.id, status: DocumentStatus.ACTIVE },
+        relations: { lines: true },
+      });
+      const returnedByLine = new Map<string, number>();
+      for (const row of prior) {
+        for (const line of row.lines ?? []) {
+          if (!line.saleLineId) continue;
+          returnedByLine.set(
+            line.saleLineId,
+            (returnedByLine.get(line.saleLineId) ?? 0) +
+              (parseFloat(line.quantity) || 0),
+          );
+        }
+      }
+
+      const seen = new Set<string>();
       let total = 0;
       const lineDrafts: Array<{
-        saleLineId: string | null;
+        saleLineId: string;
         itemId: string;
         lotId: string | null;
         quantity: string;
@@ -1010,16 +1252,72 @@ export class SalesService {
       }> = [];
 
       for (const line of dto.lines) {
-        const lineTotal = line.quantity * line.unitPrice;
+        if (seen.has(line.saleLineId)) {
+          throw new BadRequestException(
+            'Each sale item can only appear once on a return',
+          );
+        }
+        seen.add(line.saleLineId);
+        const saleLine = (sale.lines ?? []).find(
+          (row) => row.id === line.saleLineId,
+        );
+        if (!saleLine) {
+          throw new BadRequestException(
+            'A return line does not belong to this sale',
+          );
+        }
+        const sold = parseFloat(saleLine.quantity) || 0;
+        const already = returnedByLine.get(saleLine.id) ?? 0;
+        const remaining = round3(sold - already);
+        if (line.quantity - remaining > 0.0005) {
+          const label = saleLine.item?.description ?? 'this item';
+          throw new BadRequestException(
+            `Cannot return more than ${remaining} of ${label}`,
+          );
+        }
+        const unitPrice = parseFloat(saleLine.unitPrice) || 0;
+        const lineTotal = round2(line.quantity * unitPrice);
         total += lineTotal;
         lineDrafts.push({
-          saleLineId: line.saleLineId ?? null,
-          itemId: line.itemId,
-          lotId: line.lotId ?? null,
+          saleLineId: saleLine.id,
+          itemId: saleLine.itemId,
+          lotId: saleLine.lotId ?? null,
           quantity: line.quantity.toFixed(3),
-          unitPrice: line.unitPrice.toFixed(2),
+          unitPrice: unitPrice.toFixed(2),
           lineTotal: lineTotal.toFixed(2),
         });
+      }
+
+      total = round2(total);
+      const paidNow = Math.max(0, parseFloat(sale.paidAmount ?? '0') || 0);
+      const cashRefund = round2(Math.min(total, paidNow));
+      const creditReduction = round2(total - cashRefund);
+      if (creditReduction > 0.009 && !sale.credit) {
+        throw new BadRequestException(
+          'This return is larger than the amount collected on the sale',
+        );
+      }
+
+      let refundAccountId: string | null = null;
+      if (cashRefund > 0.009) {
+        refundAccountId = await this.resolveRefundAccount(
+          manager,
+          dto.refundMethod,
+          dto.bankAccountId,
+          sale.paymentMethod === PaymentMethod.CASH
+            ? sale.bankAccountId
+            : null,
+        );
+      } else if (
+        dto.refundMethod === PaymentMethod.BANK &&
+        dto.bankAccountId
+      ) {
+        await this.banksService.assertPaymentAccount(
+          PaymentMethod.BANK,
+          dto.bankAccountId,
+          manager,
+        );
+        refundAccountId = dto.bankAccountId;
       }
 
       const returnNumber = `SR-${new Date().getFullYear()}-${String((await returnRepo.count()) + 1).padStart(5, '0')}`;
@@ -1030,9 +1328,10 @@ export class SalesService {
           locationId: sale.locationId,
           totalAmount: total.toFixed(2),
           refundMethod: dto.refundMethod,
-          bankAccountId: dto.bankAccountId ?? null,
+          bankAccountId: refundAccountId,
+          refundedAt: refundDate,
           notes: dto.notes ?? null,
-          status: 'ACTIVE',
+          status: DocumentStatus.ACTIVE,
           createdById: userId ?? null,
         }),
       );
@@ -1089,12 +1388,33 @@ export class SalesService {
         }
       }
 
-      if (paysViaBank && dto.bankAccountId) {
+      const nextPaid = round2(paidNow - cashRefund);
+      await saleRepo.update(sale.id, { paidAmount: nextPaid.toFixed(2) });
+
+      if (sale.credit) {
+        const nextAmount = round2(
+          Math.max(0, (parseFloat(sale.credit.amount) || 0) - total),
+        );
+        const held = round2(Math.min(nextPaid, nextAmount));
+        const nextBalance = round2(Math.max(0, nextAmount - held));
+        sale.credit.amount = nextAmount.toFixed(2);
+        sale.credit.paidAmount = held.toFixed(2);
+        sale.credit.balance = nextBalance.toFixed(2);
+        sale.credit.status =
+          nextBalance <= 0.009
+            ? CreditStatus.PAID
+            : nextPaid > 0.009
+              ? CreditStatus.PARTIAL
+              : CreditStatus.OPEN;
+        await manager.getRepository(CustomerCredit).save(sale.credit);
+      }
+
+      if (cashRefund > 0.009 && refundAccountId) {
         await this.bankLedger.recordTransaction(
           {
-            bankAccountId: dto.bankAccountId,
+            bankAccountId: refundAccountId,
             type: BankTransactionType.ADJUSTMENT,
-            amount: total,
+            amount: cashRefund,
             direction: 'out',
             description: `Sale return ${returnNumber}`,
             refType: 'sale_return',
@@ -1103,32 +1423,6 @@ export class SalesService {
           },
           manager,
         );
-        const paid = Math.max(0, parseFloat(sale.paidAmount) - total);
-        sale.paidAmount = paid.toFixed(2);
-        await saleRepo.save(sale);
-      } else if (
-        dto.refundMethod === PaymentMethod.CREDIT &&
-        sale.customerId
-      ) {
-        const credit = await creditRepo.findOne({
-          where: { saleId: sale.id },
-        });
-        if (credit) {
-          const newBalance = Math.max(
-            0,
-            parseFloat(credit.balance) - total,
-          );
-          const newAmount = Math.max(0, parseFloat(credit.amount) - total);
-          credit.amount = newAmount.toFixed(2);
-          credit.balance = newBalance.toFixed(2);
-          credit.status =
-            newBalance <= 0.001
-              ? CreditStatus.PAID
-              : parseFloat(credit.paidAmount) > 0
-                ? CreditStatus.PARTIAL
-                : CreditStatus.OPEN;
-          await creditRepo.save(credit);
-        }
       }
 
       return saleReturn.id;
@@ -1136,6 +1430,201 @@ export class SalesService {
 
     return managerFindReturn(this.dataSource, returnId);
   }
+
+  private async resolveRefundAccount(
+    manager: EntityManager,
+    method: PaymentMethod.CASH | PaymentMethod.BANK,
+    requestedId: string | undefined,
+    fallbackCashId: string | null,
+  ): Promise<string> {
+    if (method === PaymentMethod.BANK) {
+      if (!requestedId) {
+        throw new BadRequestException(
+          'Select the bank account for the transfer',
+        );
+      }
+      await this.banksService.assertPaymentAccount(
+        PaymentMethod.BANK,
+        requestedId,
+        manager,
+      );
+      return requestedId;
+    }
+
+    if (requestedId) {
+      await this.banksService.assertPaymentAccount(
+        PaymentMethod.CASH,
+        requestedId,
+        manager,
+      );
+      return requestedId;
+    }
+
+    if (fallbackCashId) {
+      const fallback = await manager.getRepository(BankAccount).findOne({
+        where: { id: fallbackCashId, isActive: true },
+      });
+      if (fallback?.accountType === BankAccountType.CASH) return fallback.id;
+    }
+
+    const cash = await manager.getRepository(BankAccount).findOne({
+      where: { accountType: BankAccountType.CASH, isActive: true },
+      order: { name: 'ASC' },
+    });
+    if (!cash) {
+      throw new BadRequestException(
+        'No cash account is available for this refund',
+      );
+    }
+    return cash.id;
+  }
+}
+
+type CoffeeKind = 'roast' | 'ground' | 'reject' | 'other';
+
+const COFFEE_LABELS: Record<CoffeeKind, string> = {
+  roast: 'Roast coffee',
+  ground: 'Ground coffee',
+  reject: 'Reject',
+  other: 'Other',
+};
+
+type TrendPoint = {
+  amount: number;
+  quantityKg: number;
+  roastAmount: number;
+  groundAmount: number;
+  roastKg: number;
+  groundKg: number;
+};
+
+function emptyCoffeeBuckets(): Record<
+  CoffeeKind,
+  { quantityKg: number; amount: number }
+> {
+  return {
+    roast: { quantityKg: 0, amount: 0 },
+    ground: { quantityKg: 0, amount: 0 },
+    reject: { quantityKg: 0, amount: 0 },
+    other: { quantityKg: 0, amount: 0 },
+  };
+}
+
+function emptyTrendPoint(): TrendPoint {
+  return {
+    amount: 0,
+    quantityKg: 0,
+    roastAmount: 0,
+    groundAmount: 0,
+    roastKg: 0,
+    groundKg: 0,
+  };
+}
+
+function saleCreditBalance(sale: Sale): number {
+  const balance = parseFloat(sale.credit?.balance ?? '0');
+  return Number.isFinite(balance) && balance > 0.009 ? balance : 0;
+}
+
+function saleCoffeeKind(
+  sku: string | null | undefined,
+  method: string | null | undefined,
+  form: string | null | undefined,
+): CoffeeKind {
+  const code = (sku ?? '').toUpperCase();
+  if (
+    code === 'COF-REJECT' ||
+    method === 'Reject' ||
+    form === CoffeeForm.REJECT
+  ) {
+    return 'reject';
+  }
+  if (code.startsWith('COF-GROUND') || method === 'Ground coffee') {
+    return 'ground';
+  }
+  if (
+    code.startsWith('COF-ROAST') ||
+    method === 'Roast coffee' ||
+    method === 'Roast & Ground'
+  ) {
+    return 'roast';
+  }
+  return 'other';
+}
+
+function coffeeQuantityKg(
+  qty: number,
+  sku: string,
+  form: string | null,
+  method: string | null,
+  unit: string | null | undefined,
+): number {
+  if (!Number.isFinite(qty) || qty <= 0) return 0;
+  const packaged =
+    form === CoffeeForm.PACKAGED ||
+    (unit ?? '').toLowerCase() === 'pcs' ||
+    sku.endsWith('-1KG') ||
+    sku.endsWith('-500') ||
+    sku.endsWith('-250');
+  if (!packaged) return qty;
+  let size = 1;
+  if (sku.endsWith('-500') || /^0\.5/.test(method ?? '')) size = 0.5;
+  else if (sku.endsWith('-250') || /250\s*g/i.test(method ?? '')) size = 0.25;
+  else {
+    const match = (method ?? '').match(/([\d.]+)\s*kg/i);
+    if (match) {
+      const parsed = parseFloat(match[1]);
+      if (parsed > 0) size = parsed;
+    }
+  }
+  return round3(qty * size);
+}
+
+function salesTrendBucket(from?: string, to?: string): 'day' | 'month' {
+  if (!from || !to) return 'month';
+  const start = new Date(from).getTime();
+  const end = new Date(to).getTime();
+  if (!Number.isFinite(start) || !Number.isFinite(end)) return 'month';
+  return end - start <= 62 * 24 * 60 * 60 * 1000 ? 'day' : 'month';
+}
+
+function trendKey(date: Date, bucket: 'day' | 'month'): string {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  if (bucket === 'month') return `${year}-${month}`;
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+const TREND_MONTHS = [
+  'Jan',
+  'Feb',
+  'Mar',
+  'Apr',
+  'May',
+  'Jun',
+  'Jul',
+  'Aug',
+  'Sep',
+  'Oct',
+  'Nov',
+  'Dec',
+];
+
+function trendLabel(key: string, bucket: 'day' | 'month'): string {
+  const [, month, day] = key.split('-');
+  const year = key.slice(0, 4);
+  const monthName = TREND_MONTHS[Number(month) - 1] ?? month;
+  if (bucket === 'day') return `${Number(day)} ${monthName}`;
+  return `${monthName} ${year}`;
+}
+
+function round3(value: number): number {
+  return Math.round((value + Number.EPSILON) * 1000) / 1000;
+}
+
+function round2(value: number): number {
+  return Math.round((value + Number.EPSILON) * 100) / 100;
 }
 
 async function managerFindReturn(ds: DataSource, id: string) {

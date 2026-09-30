@@ -163,7 +163,7 @@ export class BanksService {
       account.accountType !== BankAccountType.BANK
     ) {
       throw new BadRequestException(
-        'Partially paid purchases must use a bank account (accountType BANK)',
+        'Partially paid documents must use a bank account (accountType BANK)',
       );
     }
 

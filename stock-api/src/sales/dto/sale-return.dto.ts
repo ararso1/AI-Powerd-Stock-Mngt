@@ -2,7 +2,8 @@ import { Type } from 'class-transformer';
 import {
   ArrayMinSize,
   IsArray,
-  IsEnum,
+  IsDateString,
+  IsIn,
   IsNumber,
   IsOptional,
   IsString,
@@ -13,9 +14,8 @@ import {
 import { PaymentMethod } from '../../common/enums';
 
 export class CreateSaleReturnLineDto {
-  @IsOptional()
   @IsUUID()
-  saleLineId?: string;
+  saleLineId: string;
 
   @IsUUID()
   itemId: string;
@@ -42,12 +42,16 @@ export class CreateSaleReturnDto {
   @Type(() => CreateSaleReturnLineDto)
   lines: CreateSaleReturnLineDto[];
 
-  @IsEnum(PaymentMethod)
-  refundMethod: PaymentMethod;
+  @IsIn([PaymentMethod.CASH, PaymentMethod.BANK])
+  refundMethod: PaymentMethod.CASH | PaymentMethod.BANK;
 
+  /** Required when the refund is a bank transfer. */
   @IsOptional()
   @IsUUID()
   bankAccountId?: string;
+
+  @IsDateString()
+  refundDate: string;
 
   @IsOptional()
   @IsString()

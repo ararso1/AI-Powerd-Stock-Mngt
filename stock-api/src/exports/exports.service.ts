@@ -32,6 +32,7 @@ import { Item } from '../database/entities/item.entity';
 import { Location } from '../database/entities/location.entity';
 import { Lot } from '../database/entities/lot.entity';
 import { LotEvent } from '../database/entities/lot-event.entity';
+import { ProcessRun } from '../database/entities/process-run.entity';
 import { SaleLine } from '../database/entities/sale-line.entity';
 import { Sale } from '../database/entities/sale.entity';
 import { StockService } from '../inventory/stock.service';
@@ -41,6 +42,7 @@ import {
   ExportContractListQueryDto,
   ShipExportContractDto,
   UpdateDocChecklistDto,
+  AttachExportLotDto,
   UpdateExportContractDto,
 } from './dto/export-contract.dto';
 
@@ -49,6 +51,28 @@ const OPEN_RESERVE_STATUSES = [
   ExportContractStatus.ALLOCATED,
   ExportContractStatus.STAGED,
 ];
+
+type ExportLotStage = {
+  stage?: string;
+  outputLotId?: string | null;
+  kgPerDoniya?: string | null;
+  doniyaCount?: number | null;
+  remainderKg?: string | null;
+  documents?: Array<{
+    key: string;
+    label: string;
+    reference?: string | null;
+    notes?: string | null;
+  }>;
+  postEcta?: {
+    grade?: string | null;
+    certificateNumber?: string | null;
+    moisturePercent?: string | null;
+    cuppingScore?: string | null;
+    testedAt?: string | null;
+    notes?: string | null;
+  } | null;
+};
 
 const DEFAULT_DOC_CHECKLIST: ExportDocCheckItem[] = [
   { key: 'COO', label: 'Certificate of Origin', done: false },
@@ -71,6 +95,8 @@ export class ExportsService {
     private readonly lotRepo: Repository<Lot>,
     @InjectRepository(Location)
     private readonly locationRepo: Repository<Location>,
+    @InjectRepository(ProcessRun)
+    private readonly runRepo: Repository<ProcessRun>,
     @InjectDataSource()
     private readonly dataSource: DataSource,
     private readonly stockService: StockService,
@@ -115,6 +141,211 @@ export class ExportsService {
                 : 'NONE',
       })),
     };
+  }
+
+  async exportStore() {
+    const lots = await this.lotRepo
+      .createQueryBuilder('lot')
+      .leftJoinAndSelect('lot.location', 'location')
+      .leftJoinAndSelect('lot.item', 'item')
+      .where('lot.process_method = :method', { method: 'Export store' })
+      .orderBy('lot.created_at', 'DESC')
+      .getMany();
+    if (lots.length === 0) return [];
+    const runs = await this.runsForLots(lots.map((lot) => lot.id));
+    const allocations = await this.allocationRepo.find({
+      where: { lotId: In(lots.map((lot) => lot.id)) },
+      relations: { contract: true },
+    });
+    return lots.map((lot) => {
+      const rows = allocations.filter((row) => row.lotId === lot.id);
+      const trace = this.traceForLot(runs, lot.id);
+      const onHand = parseFloat(lot.quantity);
+      const reserved = rows
+        .filter((row) =>
+          [
+            ExportContractStatus.DRAFT,
+            ExportContractStatus.ALLOCATED,
+            ExportContractStatus.STAGED,
+          ].includes(row.contract?.status),
+        )
+        .reduce((sum, row) => sum + parseFloat(row.quantityKg), 0);
+      const shipped = rows
+        .filter((row) =>
+          [
+            ExportContractStatus.SHIPPED,
+            ExportContractStatus.DELIVERED,
+            ExportContractStatus.CLOSED,
+          ].includes(row.contract?.status),
+        )
+        .reduce((sum, row) => sum + parseFloat(row.quantityKg), 0);
+      return {
+        lotId: lot.id,
+        lotCode: lot.code,
+        grade: lot.grade,
+        quantityKg: lot.quantity,
+        locationName: lot.location?.name ?? null,
+        itemDescription: lot.item?.description ?? null,
+        parentLotId: lot.parentLotId,
+        ectaGrade: lot.ectaGrade,
+        ectaCertificateNumber: lot.ectaCertificateNumber,
+        ectaMoisturePercent: lot.ectaMoisturePercent,
+        ectaCuppingScore: lot.ectaCuppingScore,
+        ectaTestedAt: lot.ectaTestedAt,
+        runId: trace?.run.id ?? null,
+        runNumber: trace?.run.runNumber ?? null,
+        kgPerDoniya: trace?.stage.kgPerDoniya ?? null,
+        doniyaCount: trace?.stage.doniyaCount ?? null,
+        remainderKg: trace?.stage.remainderKg ?? null,
+        documents: trace?.stage.documents ?? [],
+        status:
+          onHand <= 0.0005 && shipped > 0
+            ? 'SHIPPED'
+            : reserved > 0.0005
+              ? 'RESERVED'
+              : 'IN_STORE',
+        reservedKg: reserved.toFixed(3),
+        shippedKg: shipped.toFixed(3),
+        contracts: rows.map((row) => ({
+          id: row.contractId,
+          contractNumber: row.contract?.contractNumber ?? null,
+          status: row.contract?.status ?? null,
+          quantityKg: row.quantityKg,
+        })),
+      };
+    }).filter(
+      (row) =>
+        parseFloat(row.quantityKg) > 0.0005 ||
+        parseFloat(row.reservedKg) > 0.0005 ||
+        parseFloat(row.shippedKg) > 0.0005,
+    );
+  }
+
+  async attachLot(lotId: string, dto: AttachExportLotDto, userId?: string) {
+    const lot = await this.lotRepo.findOne({ where: { id: lotId } });
+    if (!lot || lot.processMethod !== 'Export store') {
+      throw new NotFoundException('Export lot not found');
+    }
+    if (!dto.contractId && !dto.postEcta && !dto.documents) {
+      throw new BadRequestException('Choose a contract, documents, or an ECTA result');
+    }
+    if (dto.contractId) {
+      const quantityKg = dto.quantityKg ?? parseFloat(lot.quantity);
+      if (!(quantityKg > 0)) {
+        throw new BadRequestException('This lot has no kilograms left to attach');
+      }
+      await this.allocate(
+        dto.contractId,
+        { lotId, quantityKg, notes: dto.notes },
+        userId,
+      );
+    }
+    if (dto.postEcta) {
+      await this.lotRepo.update(lotId, {
+        ectaGrade: dto.postEcta.grade?.trim() || null,
+        ectaCertificateNumber: dto.postEcta.certificateNumber?.trim() || null,
+        ectaMoisturePercent:
+          dto.postEcta.moisturePercent != null
+            ? dto.postEcta.moisturePercent.toFixed(2)
+            : null,
+        ectaCuppingScore:
+          dto.postEcta.cuppingScore != null
+            ? dto.postEcta.cuppingScore.toFixed(2)
+            : null,
+        ectaTestedAt: dto.postEcta.testedAt?.trim() || null,
+        ectaNotes: dto.postEcta.notes?.trim() || null,
+      });
+    }
+    if (dto.documents || dto.postEcta) {
+      await this.saveLotTrace(lotId, dto);
+    }
+    const rows = await this.exportStore();
+    return rows.find((row) => row.lotId === lotId) ?? null;
+  }
+
+  private async runsForLots(lotIds: string[]) {
+    if (lotIds.length === 0) return [];
+    return this.runRepo
+      .createQueryBuilder('run')
+      .where('run.output_lot_id IN (:...lotIds)', { lotIds })
+      .orWhere(
+        `EXISTS (
+          SELECT 1
+          FROM jsonb_array_elements(COALESCE(run.stage_results, '[]'::jsonb)) elem
+          WHERE elem->>'outputLotId' IN (:...lotIds)
+        )`,
+        { lotIds },
+      )
+      .getMany();
+  }
+
+  private traceForLot(runs: ProcessRun[], lotId: string) {
+    for (const run of runs) {
+      const stages = (run.stageResults ?? []) as ExportLotStage[];
+      const stage =
+        stages.find(
+          (row) =>
+            row.outputLotId === lotId &&
+            (row.stage === 'Export Store' || row.stage === 'Packaging & Export Store'),
+        ) ??
+        stages.find((row) => row.outputLotId === lotId) ??
+        (run.outputLotId === lotId ? stages.find((row) => row.stage === 'Export Store') : undefined);
+      if (stage || run.outputLotId === lotId) {
+        return { run, stage: stage ?? ({} as ExportLotStage) };
+      }
+    }
+    return null;
+  }
+
+  private async saveLotTrace(lotId: string, dto: AttachExportLotDto) {
+    const runs = await this.runsForLots([lotId]);
+    const trace = this.traceForLot(runs, lotId);
+    if (!trace) {
+      if (dto.documents?.length) {
+        throw new BadRequestException(
+          'Documents need the process run that created this export lot',
+        );
+      }
+      return;
+    }
+    const stages = [...((trace.run.stageResults ?? []) as ExportLotStage[])];
+    const index = stages.findIndex(
+      (row) =>
+        row.outputLotId === lotId ||
+        row.stage === 'Export Store' ||
+        row.stage === 'Packaging & Export Store',
+    );
+    if (index < 0) return;
+    const current = stages[index];
+    stages[index] = {
+      ...current,
+      postEcta: dto.postEcta
+        ? {
+            grade: dto.postEcta.grade?.trim() || null,
+            certificateNumber: dto.postEcta.certificateNumber?.trim() || null,
+            moisturePercent:
+              dto.postEcta.moisturePercent != null
+                ? dto.postEcta.moisturePercent.toFixed(2)
+                : null,
+            cuppingScore:
+              dto.postEcta.cuppingScore != null
+                ? dto.postEcta.cuppingScore.toFixed(2)
+                : null,
+            testedAt: dto.postEcta.testedAt?.trim() || null,
+            notes: dto.postEcta.notes?.trim() || null,
+          }
+        : current.postEcta,
+      documents: dto.documents
+        ? dto.documents.map((doc) => ({
+            key: doc.key,
+            label: doc.label,
+            reference: doc.reference?.trim() || null,
+            notes: doc.notes?.trim() || null,
+          }))
+        : current.documents,
+    };
+    trace.run.stageResults = stages as ProcessRun['stageResults'];
+    await this.runRepo.save(trace.run);
   }
 
   async findOne(id: string) {

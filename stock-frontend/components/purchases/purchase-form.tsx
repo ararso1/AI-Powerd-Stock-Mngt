@@ -61,6 +61,7 @@ import {
   farasulaKgLabel,
   formatFarasulaInput,
   fromStoredPurchaseLine,
+  KG_PER_FARASULA,
   toStoredPurchaseLine,
 } from "@/lib/farasula";
 import { fetchSuppliers, partySelectOptions } from "@/lib/party-fetch";
@@ -843,8 +844,8 @@ export function PurchaseForm({ purchase }: { purchase?: Purchase }) {
               : locationId
                 ? lotsLoading
                   ? "Loading lots at this warehouse…"
-                  : `${purchasableLots.length} lot(s) at this warehouse · quantity is in Farasula (1 Farasula = 18 kg)`
-                : "Select our warehouse first. Quantity is in Farasula (1 Farasula = 18 kg)."
+                  : `${purchasableLots.length} lot(s) at this warehouse · quantity is in Farasula (1 Farasula = ${KG_PER_FARASULA} kg)`
+                : `Select our warehouse first. Quantity is in Farasula (1 Farasula = ${KG_PER_FARASULA} kg).`
           }
         >
           {!notesOnly ? (

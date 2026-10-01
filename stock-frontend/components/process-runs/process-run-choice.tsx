@@ -11,7 +11,8 @@ const CHOICES = [
   {
     href: "/process-runs/new/export",
     title: "Export",
-    detail: "Coffee stays in the warehouse until export steps are added.",
+    detail:
+      "Processing, cleaning, and packaging move coffee into the export store.",
   },
 ] as const;
 

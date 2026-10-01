@@ -5,6 +5,7 @@ import { ExportAllocation } from '../database/entities/export-allocation.entity'
 import { ExportContract } from '../database/entities/export-contract.entity';
 import { Location } from '../database/entities/location.entity';
 import { Lot } from '../database/entities/lot.entity';
+import { ProcessRun } from '../database/entities/process-run.entity';
 import { InventoryModule } from '../inventory/inventory.module';
 import { ExportsController } from './exports.controller';
 import { ExportsService } from './exports.service';
@@ -16,6 +17,7 @@ import { ExportsService } from './exports.service';
       ExportAllocation,
       Lot,
       Location,
+      ProcessRun,
     ]),
     InventoryModule,
     BanksModule,

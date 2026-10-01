@@ -15,6 +15,7 @@ import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { PermissionsGuard } from '../common/guards/permissions.guard';
 import {
   AllocateExportLotDto,
+  AttachExportLotDto,
   CreateExportContractDto,
   ExportContractListQueryDto,
   ShipExportContractDto,
@@ -32,6 +33,22 @@ export class ExportsController {
   @RequirePermissions('export.read')
   findAll(@Query() query: ExportContractListQueryDto) {
     return this.service.findAll(query);
+  }
+
+  @Get('store')
+  @RequirePermissions('export.read')
+  store() {
+    return this.service.exportStore();
+  }
+
+  @Post('store/:lotId/attach')
+  @RequirePermissions('export.write')
+  attachLot(
+    @Param('lotId') lotId: string,
+    @Body() dto: AttachExportLotDto,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.service.attachLot(lotId, dto, user.sub);
   }
 
   @Get(':id')

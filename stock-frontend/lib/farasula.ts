@@ -1,5 +1,5 @@
 /** Coffee purchases are priced by Farasula. Stock and lots stay in kilograms. */
-export const KG_PER_FARASULA = 18;
+export const KG_PER_FARASULA = 17;
 
 function roundTo(value: number, decimals: number): number {
   const factor = 10 ** decimals;
@@ -14,7 +14,7 @@ export function kgToFarasula(kg: number): number {
   return roundTo(kg / KG_PER_FARASULA, 3);
 }
 
-/** "10 Farasula = 180 kg" */
+/** "10 Farasula = 170 kg" */
 export function farasulaKgLabel(farasula: number): string | null {
   if (!Number.isFinite(farasula) || farasula < 0) return null;
   return `${formatFarasulaInput(farasula, 3)} Farasula = ${formatFarasulaInput(farasulaToKg(farasula), 3)} kg`;

@@ -52,6 +52,9 @@ export const PROCESS_STAGE_OPTIONS = [
   { value: "Cleaning", label: "Cleaning" },
   { value: "Roast & Ground", label: "Roast & ground" },
   { value: "Sales Store", label: "Sales store" },
+  { value: "Packaging", label: "Packaging" },
+  { value: "Export Store", label: "Export store" },
+  { value: "Packaging & Export Store", label: "Packaging & export store" },
 ] as const;
 
 export function processStageLabel(stage?: string | null): string {

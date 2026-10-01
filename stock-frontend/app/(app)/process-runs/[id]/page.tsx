@@ -30,6 +30,7 @@ import { api } from "@/lib/api";
 import { errorMessage, formatDate, formatMoney, formatQty } from "@/lib/format";
 import { coffeeFormLabel } from "@/lib/lots";
 import { processStatusLabel, processWorkflowLabel } from "@/lib/process-runs";
+import { ExportMarketWorkflow } from "@/components/process-runs/export-market-workflow";
 import { LocalMarketWorkflow } from "@/components/process-runs/local-market-workflow";
 import type { ProcessRun } from "@/lib/types";
 import { useFetch } from "@/hooks/use-fetch";
@@ -172,6 +173,8 @@ export default function ProcessRunDetailPage() {
           </div>
         ) : run.workflow === "LOCAL" ? (
           <LocalMarketWorkflow run={run} onReload={reload} />
+        ) : run.workflow === "EXPORT" ? (
+          <ExportMarketWorkflow run={run} onReload={reload} />
         ) : (
           <div className="mx-auto max-w-5xl space-y-4">
             <div className="flex flex-wrap items-center gap-2">

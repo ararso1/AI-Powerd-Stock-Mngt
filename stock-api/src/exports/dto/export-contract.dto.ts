@@ -267,6 +267,84 @@ export class UpdateDocChecklistDto {
   docChecklist: DocCheckItemDto[];
 }
 
+export class AttachExportDocumentDto {
+  @IsString()
+  @MaxLength(40)
+  key: string;
+
+  @IsString()
+  @MaxLength(120)
+  label: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(160)
+  reference?: string;
+
+  @IsOptional()
+  @IsString()
+  notes?: string;
+}
+
+export class AttachExportEctaDto {
+  @IsOptional()
+  @IsString()
+  @MaxLength(80)
+  grade?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  certificateNumber?: string;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0)
+  moisturePercent?: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0)
+  cuppingScore?: number;
+
+  @IsOptional()
+  @IsString()
+  testedAt?: string;
+
+  @IsOptional()
+  @IsString()
+  notes?: string;
+}
+
+export class AttachExportLotDto {
+  @IsOptional()
+  @IsUUID()
+  contractId?: string;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0.001)
+  quantityKg?: number;
+
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => AttachExportEctaDto)
+  postEcta?: AttachExportEctaDto;
+
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => AttachExportDocumentDto)
+  documents?: AttachExportDocumentDto[];
+
+  @IsOptional()
+  @IsString()
+  notes?: string;
+}
+
 export class ShipExportContractDto {
   @IsOptional()
   @IsBoolean()

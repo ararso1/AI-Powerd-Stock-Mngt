@@ -8,7 +8,7 @@ export default function NewExportProcessRunPage() {
   return (
     <AppShell
       title="Export processing"
-      subtitle="Coffee stays in the warehouse until export steps are added"
+      subtitle="Processing, cleaning, then packaging into the export store"
       variant="form"
       breadcrumbs={[
         { label: "Operations", href: "/dashboard" },

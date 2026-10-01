@@ -44,6 +44,7 @@ export interface LocalStageResult {
   unallocatedKg?: string;
   roastRemainderKg?: string;
   groundRemainderKg?: string;
+  remainderLotId?: string | null;
 }
 
 export function lossPercent(input: number, removed: number): number {

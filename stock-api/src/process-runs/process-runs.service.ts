@@ -35,6 +35,7 @@ import { RoastProfile } from '../database/entities/roast-profile.entity';
 import { StockMovement } from '../database/entities/stock-movement.entity';
 import { StockService } from '../inventory/stock.service';
 import { ProcessRunListQueryDto } from './dto/process-run-list-query.dto';
+import { EXPORT_MARKET_STAGES } from './export-market.stages';
 import { LOCAL_MARKET_STAGES } from './local-market.stages';
 import { summarizeProcessRuns } from './process-summary';
 import {
@@ -340,7 +341,9 @@ export class ProcessRunsService implements OnModuleInit {
     }
 
     const total = picked.reduce((sum, line) => sum + line.quantity, 0);
-    const commitStock = template.workflow === PurchaseType.LOCAL;
+    const commitStock =
+      template.workflow === PurchaseType.LOCAL ||
+      template.workflow === PurchaseType.EXPORT;
     const count = await this.runRepo.count();
     const runNumber = `PR-${new Date().getFullYear()}-${String(count + 1).padStart(4, '0')}`;
     const first = picked[0].lot;
@@ -360,7 +363,9 @@ export class ProcessRunsService implements OnModuleInit {
           expectedYieldPercent:
             template.workflow === PurchaseType.LOCAL
               ? '80.00'
-              : template.expectedYieldPercent,
+              : template.workflow === PurchaseType.EXPORT
+                ? '87.00'
+                : template.expectedYieldPercent,
           status: commitStock
             ? ProcessRunStatus.IN_PROGRESS
             : ProcessRunStatus.DRAFT,
@@ -369,9 +374,11 @@ export class ProcessRunsService implements OnModuleInit {
           stages:
             template.workflow === PurchaseType.LOCAL
               ? [...LOCAL_MARKET_STAGES]
-              : Array.isArray(template.stages)
-                ? template.stages
-                : [],
+              : template.workflow === PurchaseType.EXPORT
+                ? [...EXPORT_MARKET_STAGES]
+                : Array.isArray(template.stages)
+                  ? template.stages
+                  : [],
           stagesCompleted: [],
           stageResults: [],
           inputLines: picked.map((line) => ({
@@ -459,7 +466,8 @@ export class ProcessRunsService implements OnModuleInit {
     if (
       lot.processMethod === 'Roast & Ground' ||
       lot.processMethod === 'Roast coffee' ||
-      lot.processMethod === 'Ground coffee'
+      lot.processMethod === 'Ground coffee' ||
+      lot.processMethod === 'Packaging'
     ) {
       return true;
     }
@@ -1247,7 +1255,11 @@ export class ProcessRunsService implements OnModuleInit {
       const hadConsumption = movements.some(
         (movement) => movement.direction === StockMovementDirection.OUT,
       );
-      if (run.workflow === PurchaseType.LOCAL && hadConsumption) {
+      if (
+        (run.workflow === PurchaseType.LOCAL ||
+          run.workflow === PurchaseType.EXPORT) &&
+        hadConsumption
+      ) {
         for (const line of run.inputLines ?? []) {
           const expected = parseFloat(line.quantity);
           const already = restored.get(line.lotId) ?? 0;
@@ -1285,6 +1297,7 @@ export class ProcessRunsService implements OnModuleInit {
       for (const lotId of [
         result.outputLotId,
         result.rejectLotId,
+        result.remainderLotId,
         result.roastLotId,
         result.groundLotId,
       ]) {
@@ -1586,6 +1599,11 @@ export class ProcessRunsService implements OnModuleInit {
         'Local market runs move through Cleaning, Roast & Ground, and Sales Store',
       );
     }
+    if (run.workflow === PurchaseType.EXPORT) {
+      throw new BadRequestException(
+        'Export runs move through Processing Started, Cleaning, Packaging, and Export Store',
+      );
+    }
   }
 
   private async openReservedKg(manager: EntityManager, lotId: string) {
@@ -1597,7 +1615,7 @@ export class ProcessRunsService implements OnModuleInit {
       .andWhere('run.status IN (:...open)', { open: OPEN_RUN_STATUSES })
       .andWhere(`COALESCE(jsonb_array_length(run.input_lines), 0) = 0`)
       .andWhere(
-        `(run.workflow IS DISTINCT FROM 'LOCAL' OR COALESCE(jsonb_array_length(run.stage_results), 0) = 0)`,
+        `(run.workflow IS DISTINCT FROM 'LOCAL' AND run.workflow IS DISTINCT FROM 'EXPORT' OR COALESCE(jsonb_array_length(run.stage_results), 0) = 0)`,
       )
       .getRawOne<{ reserved: string }>();
 
@@ -1609,6 +1627,7 @@ export class ProcessRunsService implements OnModuleInit {
       WHERE line->>'lotId' = $1
         AND run.status::text = ANY($2::text[])
         AND run.workflow IS DISTINCT FROM 'LOCAL'
+        AND run.workflow IS DISTINCT FROM 'EXPORT'
       `,
       [lotId, OPEN_RUN_STATUSES],
     );

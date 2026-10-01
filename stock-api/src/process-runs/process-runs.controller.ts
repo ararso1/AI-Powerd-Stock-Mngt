@@ -21,7 +21,12 @@ import {
   CreateProcessTemplateDto,
   SubmitQcDto,
 } from './dto/process-run.dto';
+import {
+  SubmitExportStageDto,
+  UpdateExportDocumentsDto,
+} from './dto/export-stage.dto';
 import { SubmitLocalStageDto } from './dto/local-stage.dto';
+import { ExportMarketWorkflowService } from './export-market-workflow.service';
 import { LocalMarketWorkflowService } from './local-market-workflow.service';
 import { ProcessRunsService } from './process-runs.service';
 
@@ -31,6 +36,7 @@ export class ProcessRunsController {
   constructor(
     private readonly service: ProcessRunsService,
     private readonly localMarket: LocalMarketWorkflowService,
+    private readonly exportMarket: ExportMarketWorkflowService,
   ) {}
 
   @Get('process-templates')
@@ -86,13 +92,42 @@ export class ProcessRunsController {
     return this.present(id);
   }
 
+  @Post('process-runs/:id/export-stage')
+  @RequirePermissions('process.write')
+  async submitExportStage(
+    @Param('id') id: string,
+    @Body() dto: SubmitExportStageDto,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    await this.exportMarket.submit(id, dto, user.sub);
+    return this.present(id);
+  }
+
+  @Post('process-runs/:id/export-documents')
+  @RequirePermissions('process.write')
+  async updateExportDocuments(
+    @Param('id') id: string,
+    @Body() dto: UpdateExportDocumentsDto,
+  ) {
+    await this.exportMarket.updateDocuments(id, dto);
+    return this.present(id);
+  }
+
   private async present(id: string) {
     const run = await this.service.findOne(id);
-    if (run.workflow !== PurchaseType.LOCAL) return run;
-    return {
-      ...run,
-      localMarket: await this.localMarket.view(run),
-    };
+    if (run.workflow === PurchaseType.LOCAL) {
+      return {
+        ...run,
+        localMarket: await this.localMarket.view(run),
+      };
+    }
+    if (run.workflow === PurchaseType.EXPORT) {
+      return {
+        ...run,
+        exportMarket: await this.exportMarket.view(run),
+      };
+    }
+    return run;
   }
 
   @Post('process-runs/:id/complete-stage')

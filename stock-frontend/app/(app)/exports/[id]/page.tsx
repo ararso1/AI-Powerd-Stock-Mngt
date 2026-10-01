@@ -19,9 +19,8 @@ import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { api } from "@/lib/api";
-import { buildLotsListPath } from "@/lib/list-query";
 import { errorMessage, formatDate, formatMoney, formatQty } from "@/lib/format";
-import type { ExportContract, Lot } from "@/lib/types";
+import type { ExportContract, ExportStoreLot } from "@/lib/types";
 import { useFetch } from "@/hooks/use-fetch";
 import { toast } from "sonner";
 
@@ -36,14 +35,13 @@ export default function ExportDetailPage() {
   const [qty, setQty] = useState("");
   const [busy, setBusy] = useState(false);
 
-  const { data: lotsPage } = useFetch(
-    () =>
-      api<{ data: Lot[] }>(
-        buildLotsListPath({ status: "ACTIVE", form: "GREEN" }, 1, 100)
-      ),
+  const { data: storeLots } = useFetch(
+    () => api<ExportStoreLot[]>("/exports/store"),
     []
   );
-  const lots = lotsPage?.data ?? [];
+  const lots = (storeLots ?? []).filter(
+    (lot) => lot.status !== "SHIPPED" && parseFloat(lot.quantityKg) > 0
+  );
 
   const checklist = useMemo(
     () => contract?.docChecklist ?? [],
@@ -381,10 +379,10 @@ export default function ExportDetailPage() {
                         value={lotId}
                         onChange={(e) => setLotId(e.target.value)}
                       >
-                        <option value="">Select green lot…</option>
+                        <option value="">Select export store lot…</option>
                         {lots.map((l) => (
-                          <option key={l.id} value={l.id}>
-                            {l.code} · {l.grade ?? "—"} · {l.quantity} kg
+                          <option key={l.lotId} value={l.lotId}>
+                            {l.lotCode} · {l.grade ?? "—"} · {formatQty(l.quantityKg)} kg
                           </option>
                         ))}
                       </select>

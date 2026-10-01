@@ -1731,6 +1731,88 @@ export interface LocalMarketView {
   } | null;
 }
 
+export interface ExportPostEcta {
+  grade?: string | null;
+  certificateNumber?: string | null;
+  moisturePercent?: string | null;
+  cuppingScore?: string | null;
+  testedAt?: string | null;
+  notes?: string | null;
+}
+
+export interface ExportDocumentRecord {
+  key: string;
+  label: string;
+  reference?: string | null;
+  notes?: string | null;
+}
+
+export interface ExportStageResult extends LocalStageResult {
+  expectedGrade?: string | null;
+  kgPerDoniya?: string | null;
+  doniyaCount?: number | null;
+  packagedKg?: string | null;
+  remainderKg?: string | null;
+  remainderLotId?: string | null;
+  remainderLotCode?: string | null;
+  exportStoreLocationId?: string | null;
+  exportStoreLocationName?: string | null;
+  postEcta?: ExportPostEcta | null;
+  documents?: ExportDocumentRecord[];
+}
+
+export interface ExportSourceLot {
+  id: string;
+  code: string;
+  grade?: string | null;
+  form?: string | null;
+  quantity: string;
+  ectaGrade?: string | null;
+  ectaCertificateNumber?: string | null;
+  ectaMoisturePercent?: string | null;
+  ectaCuppingScore?: string | null;
+  ectaTestedAt?: string | null;
+  ectaNotes?: string | null;
+}
+
+export interface ExportMarketView {
+  stages: string[];
+  nextStage: string | null;
+  availableInputKg: string;
+  maxLossPercent: number;
+  sourceLots: ExportSourceLot[];
+}
+
+export interface ExportStoreLot {
+  lotId: string;
+  lotCode: string;
+  grade?: string | null;
+  quantityKg: string;
+  locationName?: string | null;
+  itemDescription?: string | null;
+  parentLotId?: string | null;
+  ectaGrade?: string | null;
+  ectaCertificateNumber?: string | null;
+  ectaMoisturePercent?: string | null;
+  ectaCuppingScore?: string | null;
+  ectaTestedAt?: string | null;
+  runId?: string | null;
+  runNumber?: string | null;
+  kgPerDoniya?: string | null;
+  doniyaCount?: number | null;
+  remainderKg?: string | null;
+  documents?: ExportDocumentRecord[];
+  status: "IN_STORE" | "RESERVED" | "SHIPPED";
+  reservedKg: string;
+  shippedKg: string;
+  contracts: Array<{
+    id: string;
+    contractNumber?: string | null;
+    status?: string | null;
+    quantityKg: string;
+  }>;
+}
+
 export interface ProcessRun {
   id: string;
   runNumber: string;
@@ -1752,9 +1834,10 @@ export interface ProcessRun {
   currentStageIndex: number;
   stages: string[];
   stagesCompleted: string[];
-  stageResults?: LocalStageResult[];
+  stageResults?: Array<LocalStageResult | ExportStageResult>;
   inputLines?: ProcessInputLine[];
   localMarket?: LocalMarketView;
+  exportMarket?: ExportMarketView;
   processCost?: string;
   roastProfileId?: string | null;
   notes?: string | null;

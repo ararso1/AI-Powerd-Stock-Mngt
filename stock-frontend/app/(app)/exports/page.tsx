@@ -20,6 +20,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { ExportLotsPanel } from "@/components/exports/export-lots-panel";
 import { buildExportsListPath } from "@/lib/list-query";
 import { formatMoney, formatQty } from "@/lib/format";
 import type { ExportContract, ExportContractStatus } from "@/lib/types";
@@ -29,6 +31,7 @@ import { PlusIcon } from "lucide-react";
 const ALL = "__all__";
 
 export default function ExportsPage() {
+  const [tab, setTab] = useState("lots");
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState<ExportContractStatus | "">("");
   const debouncedSearch = useDebouncedValue(search);
@@ -50,7 +53,7 @@ export default function ExportsPage() {
   return (
     <AppShell
       title="Exports"
-      subtitle="Export order → allocate → stage → ship → deliver"
+      subtitle="Export-ready coffee, then contracts, shipment, and delivery"
       breadcrumbs={[
         { label: "Operations", href: "/dashboard" },
         { label: "Exports" },
@@ -67,6 +70,15 @@ export default function ExportsPage() {
       }
     >
       <PermissionGate permission="export.read">
+        <Tabs value={tab} onValueChange={setTab}>
+          <TabsList className="mb-4">
+            <TabsTrigger value="lots">Coffee / Export lots</TabsTrigger>
+            <TabsTrigger value="contracts">Contracts</TabsTrigger>
+          </TabsList>
+          <TabsContent value="lots">
+            <ExportLotsPanel />
+          </TabsContent>
+          <TabsContent value="contracts">
         <FrappeFilterBar>
           <ListSearchField
             value={search}
@@ -176,7 +188,10 @@ export default function ExportsPage() {
             ]}
           />
         )}
+          </TabsContent>
+        </Tabs>
       </PermissionGate>
     </AppShell>
   );
 }
+

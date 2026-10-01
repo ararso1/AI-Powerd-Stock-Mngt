@@ -27,7 +27,7 @@ import { fetchInventoryForLocation } from "@/lib/inventory-fetch";
 import { isCoffeeSku, isWarehouseProcessStock } from "@/lib/inventory-items";
 import { buildProcessRunsListPath } from "@/lib/list-query";
 import { errorMessage, formatQty } from "@/lib/format";
-import { coffeeFormLabel } from "@/lib/lots";
+import { COFFEE_GRADE_OPTIONS, coffeeFormLabel } from "@/lib/lots";
 import type { ProcessRun, ProcessTemplate, StockRecord } from "@/lib/types";
 import { useFetch } from "@/hooks/use-fetch";
 import { useLocations } from "@/hooks/use-locations";
@@ -55,13 +55,14 @@ function heldByLot(runs: ProcessRun[]) {
     if (!OPEN_RUN.has(run.status)) continue;
     const lines = run.inputLines ?? [];
     if (lines.length > 0) {
-      if (run.workflow === "LOCAL") continue;
+      if (run.workflow === "LOCAL" || run.workflow === "EXPORT") continue;
       for (const line of lines) add(line.lotId, parseFloat(line.quantity));
       continue;
     }
     if (
       run.inputLotId &&
-      (run.workflow !== "LOCAL" || (run.stageResults ?? []).length === 0)
+      ((run.workflow !== "LOCAL" && run.workflow !== "EXPORT") ||
+        (run.stageResults ?? []).length === 0)
     ) {
       add(run.inputLotId, parseFloat(run.quantityInput));
     }
@@ -80,6 +81,7 @@ export function ProcessRunForm({
   const [processCost, setProcessCost] = useState("0");
   const [notes, setNotes] = useState("");
   const [selected, setSelected] = useState<Record<string, string>>({});
+  const [expectedGrade, setExpectedGrade] = useState("");
   const [saving, setSaving] = useState(false);
 
   const { data: templates } = useFetch(
@@ -141,20 +143,19 @@ export function ProcessRunForm({
     }, 0);
   }, [eligible, selected]);
 
-  const normalLocalYield = workflow === "LOCAL";
+  const yieldFloor =
+    workflow === "LOCAL" ? 80 : workflow === "EXPORT" ? 87 : null;
   const expectedOut = useMemo(() => {
-    const y = normalLocalYield
-      ? 80
-      : template
-        ? parseFloat(template.expectedYieldPercent)
-        : 0;
+    const y =
+      yieldFloor ??
+      (template ? parseFloat(template.expectedYieldPercent) : 0);
     if (selectedTotal <= 0 || !Number.isFinite(y)) return null;
     return (selectedTotal * y) / 100;
-  }, [selectedTotal, template, normalLocalYield]);
+  }, [selectedTotal, template, yieldFloor]);
 
   const progressStages =
     workflow === "EXPORT"
-      ? ["Processing Started", "Export processing"]
+      ? ["Processing Started", "Cleaning", "Packaging", "Export Store"]
       : [
           "Processing Started",
           "Cleaning",
@@ -209,19 +210,47 @@ export function ProcessRunForm({
       toast.error("Select at least one stock lot");
       return;
     }
+    const exportStart =
+      workflow === "EXPORT" ? exportProcessingStart(expectedGrade) : null;
+    if (workflow === "EXPORT" && !exportStart) return;
     setSaving(true);
+    let run: ProcessRun;
     try {
-      const run = await api<ProcessRun>("/process-runs", {
+      run = await api<ProcessRun>("/process-runs", {
         method: "POST",
         body: { ...shared, inputs },
       });
-      toast.success(`Created ${run.runNumber}`);
-      router.push(`/process-runs/${run.id}`);
     } catch (err) {
       toast.error(errorMessage(err));
-    } finally {
       setSaving(false);
+      return;
     }
+    if (exportStart) {
+      try {
+        await api(`/process-runs/${run.id}/export-stage`, {
+          method: "POST",
+          body: {
+            inputQty: selectedTotal,
+            removedQty: exportStart.removedQty,
+            lossPercent: exportStart.lossPercent,
+            expectedGrade: exportStart.expectedGrade,
+            notes: notes.trim() || undefined,
+          },
+        });
+      } catch (err) {
+        toast.error(errorMessage(err));
+        router.push(`/process-runs/${run.id}`);
+        setSaving(false);
+        return;
+      }
+    }
+    toast.success(
+      workflow === "EXPORT"
+        ? `${run.runNumber} is ready for cleaning`
+        : `Created ${run.runNumber}`
+    );
+    router.push(`/process-runs/${run.id}`);
+    setSaving(false);
   }
 
   return (
@@ -233,8 +262,7 @@ export function ProcessRunForm({
         <StageProgress stages={progressStages} currentIndex={0} />
         {workflow === "EXPORT" ? (
           <p className="mt-4 text-center text-xs text-[var(--frappe-text-muted)]">
-            Export steps are added separately. Selected kilograms stay in the
-            warehouse until those steps exist.
+            Start Processing records the expected grade and opens Cleaning. Loss is entered when cleaning ends.
           </p>
         ) : null}
       </section>
@@ -276,9 +304,9 @@ export function ProcessRunForm({
         <FrappeSection
             title="Stock at this warehouse"
             description={
-              workflow === "LOCAL"
-                ? "Select one or more warehouse lots. The entered kilograms leave this warehouse when the run is created and enter Processing Started."
-                : "Select one or more warehouse lots and set how much each one will contribute. Quantities are checked against what is on hand."
+              workflow === "EXPORT"
+                ? "Select the coffee and the processing quantity. Start Processing takes those kilograms and opens Cleaning."
+                : "Select one or more warehouse lots. The entered kilograms leave this warehouse when the run is created and enter Processing Started."
             }
           >
             {!locationId ? (
@@ -377,33 +405,66 @@ export function ProcessRunForm({
             )}
           </FrappeSection>
 
+        {workflow === "EXPORT" ? (
+          <FrappeSection
+            title="Processing result"
+            description="Expected grade after machine processing, and the yield if loss stays at 13% or less."
+          >
+            <FrappeFormGrid columns={2}>
+              <FrappeField label="Expected output grade" required>
+                <Select
+                  value={expectedGrade || SELECT}
+                  onValueChange={(value) =>
+                    setExpectedGrade(value === SELECT ? "" : value)
+                  }
+                >
+                  <SelectTrigger className="w-full">
+                    <SelectValue placeholder="Select grade" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value={SELECT}>Select grade</SelectItem>
+                    {COFFEE_GRADE_OPTIONS.map((option) => (
+                      <SelectItem key={option} value={option}>
+                        {option}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </FrappeField>
+              <FrappeField
+                label="Expected yield"
+                hint="Expected processing loss is 13% or less. Enter the actual loss when cleaning ends."
+              >
+                <Input
+                  readOnly
+                  value={
+                    expectedOut != null
+                      ? `87% or more ≈ ${formatQty(expectedOut)} kg`
+                      : "87% or more"
+                  }
+                />
+              </FrappeField>
+            </FrappeFormGrid>
+          </FrappeSection>
+        ) : null}
+
         <FrappeSection title="Cost and notes">
           <FrappeFormGrid columns={2}>
+            {workflow === "LOCAL" ? (
             <FrappeField
               label="Expected yield"
-              hint={
-                normalLocalYield
-                  ? "Normal operation is a yield of 80% or more."
-                  : undefined
-              }
+              hint="Normal operation is a yield of 80% or more."
             >
               <Input
                 readOnly
                 value={
-                  normalLocalYield
-                    ? `80% or more${
-                        expectedOut != null
-                          ? ` ≈ ${formatQty(expectedOut)} kg`
-                          : ""
-                      }`
-                    : template
-                      ? `${template.expectedYieldPercent}% ≈ ${
-                          expectedOut != null ? formatQty(expectedOut) : "—"
-                        } kg`
-                      : "—"
+                  expectedOut != null
+                    ? `80% or more ≈ ${formatQty(expectedOut)} kg`
+                    : "80% or more"
                 }
               />
             </FrappeField>
+            ) : null}
 
             <FrappeField label="Process cost (ETB)">
               <Input
@@ -439,4 +500,13 @@ export function ProcessRunForm({
       </div>
     </form>
   );
+}
+
+function exportProcessingStart(expectedGrade: string) {
+  const grade = expectedGrade.trim();
+  if (!grade) {
+    toast.error("Enter the expected output grade");
+    return null;
+  }
+  return { expectedGrade: grade, removedQty: 0, lossPercent: 0 };
 }

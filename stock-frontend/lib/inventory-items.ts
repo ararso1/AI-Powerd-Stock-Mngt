@@ -253,7 +253,8 @@ export function isWarehouseProcessStock(row: {
   if (
     row.lot?.processMethod === "Roast & Ground" ||
     row.lot?.processMethod === "Roast coffee" ||
-    row.lot?.processMethod === "Ground coffee"
+    row.lot?.processMethod === "Ground coffee" ||
+    row.lot?.processMethod === "Packaging"
   ) {
     return false;
   }

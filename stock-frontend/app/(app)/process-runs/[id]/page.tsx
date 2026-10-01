@@ -29,13 +29,27 @@ import {
 import { api } from "@/lib/api";
 import { errorMessage, formatDate, formatMoney, formatQty } from "@/lib/format";
 import { coffeeFormLabel } from "@/lib/lots";
-import { processStatusLabel, processWorkflowLabel } from "@/lib/process-runs";
+import {
+  exportRunYieldPercent,
+  processStatusLabel,
+  processWorkflowLabel,
+} from "@/lib/process-runs";
 import { ExportMarketWorkflow } from "@/components/process-runs/export-market-workflow";
 import { LocalMarketWorkflow } from "@/components/process-runs/local-market-workflow";
 import type { ProcessRun } from "@/lib/types";
 import { useFetch } from "@/hooks/use-fetch";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
+
+function actualYieldLabel(run: ProcessRun): string {
+  if (run.workflow === "EXPORT") {
+    const percent = exportRunYieldPercent(run);
+    return percent == null ? "—" : `${formatQty(percent)}%`;
+  }
+  return run.actualYieldPercent
+    ? `${formatQty(run.actualYieldPercent)}%`
+    : "—";
+}
 
 function DetailField({
   label,
@@ -321,11 +335,7 @@ export default function ProcessRunDetailPage() {
                   />
                   <DetailField
                     label="Actual yield"
-                    value={
-                      run.actualYieldPercent
-                        ? `${formatQty(run.actualYieldPercent)}%`
-                        : "—"
-                    }
+                    value={actualYieldLabel(run)}
                   />
                   <DetailField
                     label="Output lot"

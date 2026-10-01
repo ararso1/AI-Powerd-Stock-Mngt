@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from "react";
 import Link from "next/link";
+import { ChevronDownIcon } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -18,12 +19,18 @@ import {
   FrappeButtonPrimary,
 } from "@/components/frappe";
 import { StageProgress } from "@/components/process-runs/stage-progress";
+import {
+  DoniyaLabelPreview,
+  EMPTY_DONIYA_LABEL,
+  monthYearNow,
+  type DoniyaLabelDraft,
+} from "@/components/process-runs/doniya-label-preview";
 import { PermissionGate } from "@/components/permission-gate";
 import { api } from "@/lib/api";
 import { errorMessage, formatDate, formatQty } from "@/lib/format";
 import { COFFEE_GRADE_OPTIONS } from "@/lib/lots";
 import { processStatusLabel } from "@/lib/process-runs";
-import type { ExportStageResult, ProcessRun } from "@/lib/types";
+import type { ExportDoniyaLabel, ExportStageResult, ProcessRun } from "@/lib/types";
 import { toast } from "sonner";
 
 const DEFAULT_FLOW = [
@@ -79,7 +86,7 @@ export function ExportMarketWorkflow({
       <Traceability run={run} results={results} />
 
       {results.map((stage) => (
-        <StageRecord key={stage.stage} stage={stage} />
+        <StageRecord key={stage.stage} stage={stage} runId={run.id} />
       ))}
 
       <PermissionGate permission="process.write">
@@ -136,6 +143,8 @@ function ReadySummary({
   const each = stored.kgPerDoniya ?? packaging?.kgPerDoniya;
   const remainder = stored.remainderKg ?? packaging?.remainderKg ?? "0";
   const total = stored.packagedKg ?? stored.outputQty;
+  const label =
+    stored.doniyaLabel ?? packaging?.doniyaLabel ?? null;
 
   return (
     <section className="overflow-hidden rounded-xl border border-[var(--frappe-border)] bg-[var(--frappe-surface)]">
@@ -148,17 +157,37 @@ function ReadySummary({
           Ready
         </Badge>
       </div>
-      <dl className="grid gap-4 px-4 py-4 sm:grid-cols-3">
-        <Stat label="Total quantity" value={`${formatQty(total)} kg`} />
-        <Stat
-          label="Full Doniya"
-          value={each ? `${full} × ${formatQty(each)} kg` : String(full)}
-        />
-        <Stat label="Remaining" value={`${formatQty(remainder)} kg`} />
-        <Stat label="Grade" value={grade} />
-        <Stat label="Batch" value={run.runNumber} />
-        <Stat label="Export lot" value={stored.outputLotCode ?? "—"} />
-      </dl>
+      <div className="grid gap-4 px-4 py-4 lg:grid-cols-[minmax(0,1fr)_240px]">
+        <dl className="grid gap-4 sm:grid-cols-3">
+          <Stat label="Total quantity" value={`${formatQty(total)} kg`} />
+          <Stat
+            label="Full Doniya"
+            value={each ? `${full} × ${formatQty(each)} kg` : String(full)}
+          />
+          <Stat label="Remaining" value={`${formatQty(remainder)} kg`} />
+          <Stat label="Grade" value={grade} />
+          <Stat label="Batch" value={run.runNumber} />
+          <Stat label="Export lot" value={stored.outputLotCode ?? "—"} />
+          {label ? (
+            <>
+              <Stat label="Coffee name" value={label.coffeeName} />
+              <Stat label="Certificate" value={label.certificateNumber} />
+              <Stat label="Destination" value={label.destination} />
+            </>
+          ) : null}
+        </dl>
+        {label ? (
+          <div className="flex flex-col items-start gap-3">
+            <DoniyaLabelPreview label={label} className="max-w-[200px]" />
+            <Link
+              href={`/process-runs/${run.id}/doniya-label`}
+              className="text-sm font-medium text-[var(--frappe-primary)] hover:underline"
+            >
+              View Doniya label
+            </Link>
+          </div>
+        ) : null}
+      </div>
       <p className="border-t border-[var(--frappe-border)] px-4 py-3 text-sm text-[var(--frappe-text-muted)]">
         This coffee is export-ready
         {stored.exportStoreLocationName ? ` at ${stored.exportStoreLocationName}` : ""}.
@@ -252,7 +281,13 @@ function Traceability({
   );
 }
 
-function StageRecord({ stage }: { stage: ExportStageResult }) {
+function StageRecord({
+  stage,
+  runId,
+}: {
+  stage: ExportStageResult;
+  runId: string;
+}) {
   const highLoss = (stage.warnings ?? []).includes("HIGH_LOSS");
   return (
     <section className="rounded-xl border border-[var(--frappe-border)] bg-[var(--frappe-surface)] p-4">
@@ -280,6 +315,12 @@ function StageRecord({ stage }: { stage: ExportStageResult }) {
         ) : null}
         {stage.remainderKg ? (
           <Stat label="Remaining" value={`${formatQty(stage.remainderKg)} kg`} />
+        ) : null}
+        {stage.doniyaLabel ? (
+          <Stat label="Doniya coffee" value={stage.doniyaLabel.coffeeName} />
+        ) : null}
+        {stage.doniyaLabel ? (
+          <Stat label="Certificate" value={stage.doniyaLabel.certificateNumber} />
         ) : null}
         {stage.outputLotCode ? (
           <Stat
@@ -318,6 +359,20 @@ function StageRecord({ stage }: { stage: ExportStageResult }) {
             : ""}
           .
         </p>
+      ) : null}
+      {stage.doniyaLabel ? (
+        <div className="mt-4 flex flex-wrap items-center gap-3">
+          <DoniyaLabelPreview
+            label={stage.doniyaLabel}
+            className="max-w-[160px]"
+          />
+          <Link
+            href={`/process-runs/${runId}/doniya-label`}
+            className="text-sm font-medium text-[var(--frappe-primary)] hover:underline"
+          >
+            View Doniya label
+          </Link>
+        </div>
       ) : null}
       {stage.postEcta ? (
         <p className="mt-2 text-xs text-[var(--frappe-text-muted)]">
@@ -555,14 +610,38 @@ function PackagingForm({
   inputKg: number;
   onReload: () => Promise<unknown>;
 }) {
-  const [kgPerDoniya, setKgPerDoniya] = useState("");
+  const [kgPerDoniya, setKgPerDoniya] = useState("50");
   const [notes, setNotes] = useState("");
   const [saving, setSaving] = useState(false);
+  const [label, setLabel] = useState<DoniyaLabelDraft>(() => ({
+    ...EMPTY_DONIYA_LABEL,
+    netWeight: "50 kg",
+    productionDate: monthYearNow(0),
+    expiryDate: monthYearNow(2),
+  }));
   const each = parseFloat(kgPerDoniya);
   const split = useMemo(
     () => doniyaSplit(inputKg, Number.isFinite(each) ? each : 0),
     [inputKg, each]
   );
+
+  function setLabelField<K extends keyof DoniyaLabelDraft>(
+    key: K,
+    value: DoniyaLabelDraft[K]
+  ) {
+    setLabel((prev) => ({ ...prev, [key]: value }));
+  }
+
+  function onKgPerDoniyaChange(value: string) {
+    setKgPerDoniya(value);
+    const n = parseFloat(value);
+    if (Number.isFinite(n) && n > 0) {
+      setLabel((prev) => ({
+        ...prev,
+        netWeight: `${formatQty(n)} kg`,
+      }));
+    }
+  }
 
   async function save(e: React.FormEvent) {
     e.preventDefault();
@@ -574,13 +653,41 @@ function PackagingForm({
       toast.error("Kilograms per Doniya is higher than the coffee ready for packaging");
       return;
     }
+    const required: Array<keyof DoniyaLabelDraft> = [
+      "businessName",
+      "location",
+      "coffeeName",
+      "origin",
+      "certificateNumber",
+      "icoNumber",
+      "productionDate",
+      "expiryDate",
+      "destination",
+    ];
+    if (required.some((key) => !label[key].trim())) {
+      toast.error("Complete every Doniya label field");
+      return;
+    }
     setSaving(true);
     try {
+      const doniyaLabel: ExportDoniyaLabel = {
+        businessName: label.businessName.trim(),
+        location: label.location.trim(),
+        coffeeName: label.coffeeName.trim(),
+        origin: label.origin.trim(),
+        netWeight: label.netWeight.trim() || `${formatQty(each)} kg`,
+        certificateNumber: label.certificateNumber.trim(),
+        icoNumber: label.icoNumber.trim(),
+        productionDate: label.productionDate.trim(),
+        expiryDate: label.expiryDate.trim(),
+        destination: label.destination.trim(),
+      };
       await api(`/process-runs/${runId}/export-stage`, {
         method: "POST",
         body: {
           inputQty: inputKg,
           kgPerDoniya: each,
+          doniyaLabel,
           notes: notes.trim() || undefined,
         },
       });
@@ -601,7 +708,7 @@ function PackagingForm({
       <h2 className="text-sm font-semibold">Packaging</h2>
       <p className="mt-1 text-xs text-[var(--frappe-text-muted)]">
         {formatQty(inputKg)} kg is ready for packaging. Enter kilograms per
-        Doniya. Full Doniya and the leftover kilograms update as you type.
+        Doniya, then fill the label that prints on each sack.
       </p>
       <div className="mt-3 grid gap-3 sm:grid-cols-2">
         <Field label="Ready for packaging">
@@ -613,7 +720,7 @@ function PackagingForm({
             min={0.001}
             step="0.001"
             value={kgPerDoniya}
-            onChange={(e) => setKgPerDoniya(e.target.value)}
+            onChange={(e) => onKgPerDoniyaChange(e.target.value)}
           />
         </Field>
         <Field label="Full Doniya">
@@ -629,6 +736,116 @@ function PackagingForm({
           <Textarea value={notes} onChange={(e) => setNotes(e.target.value)} />
         </Field>
       </div>
+
+      <details className="group mt-6 overflow-hidden rounded-xl border-2 border-[var(--frappe-primary)]/35 bg-[var(--frappe-primary)]/[0.04] shadow-sm ring-1 ring-[var(--frappe-primary)]/15 open:bg-[var(--frappe-primary)]/[0.06]">
+        <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-4 py-3 [&::-webkit-details-marker]:hidden hover:bg-[var(--frappe-primary)]/[0.06]">
+          <div>
+            <h3 className="text-sm font-semibold text-[var(--frappe-primary)]">
+              Doniya label information
+            </h3>
+            <p className="mt-1 text-xs text-[var(--frappe-text-muted)]">
+              This prints on each Doniya and stays with the export lot and
+              process run. Certificate number and ICO No. must be unique. Click
+              to expand.
+            </p>
+          </div>
+          <ChevronDownIcon className="size-4 shrink-0 text-[var(--frappe-primary)] transition-transform group-open:rotate-180" />
+        </summary>
+        <div className="border-t border-[var(--frappe-primary)]/20 px-4 pb-4 pt-3">
+          <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_260px]">
+            <div className="grid gap-3 sm:grid-cols-2">
+              <Field label="Business name">
+                <Input
+                  value={label.businessName}
+                  onChange={(e) => setLabelField("businessName", e.target.value)}
+                  placeholder="Efnan Business PLC"
+                />
+              </Field>
+              <Field label="Location">
+                <Input
+                  value={label.location}
+                  onChange={(e) => setLabelField("location", e.target.value)}
+                  placeholder="Dire Dawa, Ethiopia"
+                />
+              </Field>
+              <Field label="Coffee name">
+                <Input
+                  value={label.coffeeName}
+                  onChange={(e) => setLabelField("coffeeName", e.target.value)}
+                  placeholder="Harar Coffee"
+                />
+              </Field>
+              <Field label="Origin">
+                <Input
+                  value={label.origin}
+                  onChange={(e) => setLabelField("origin", e.target.value)}
+                  placeholder="Produce of Ethiopia"
+                />
+              </Field>
+              <Field label="Net weight">
+                <Input
+                  value={label.netWeight}
+                  onChange={(e) => setLabelField("netWeight", e.target.value)}
+                  placeholder="50 kg"
+                />
+              </Field>
+              <Field label="Certificate number">
+                <Input
+                  value={label.certificateNumber}
+                  onChange={(e) =>
+                    setLabelField("certificateNumber", e.target.value)
+                  }
+                  placeholder="0011"
+                />
+              </Field>
+              <Field label="ICO No.">
+                <Input
+                  value={label.icoNumber}
+                  onChange={(e) => setLabelField("icoNumber", e.target.value)}
+                  placeholder="010/0462/0011"
+                />
+              </Field>
+              <Field label="Production date">
+                <Input
+                  value={label.productionDate}
+                  onChange={(e) =>
+                    setLabelField("productionDate", e.target.value)
+                  }
+                  placeholder="07/2026"
+                />
+              </Field>
+              <Field label="Expiry date">
+                <Input
+                  value={label.expiryDate}
+                  onChange={(e) => setLabelField("expiryDate", e.target.value)}
+                  placeholder="07/2028"
+                />
+              </Field>
+              <Field label="Destination">
+                <Input
+                  value={label.destination}
+                  onChange={(e) => setLabelField("destination", e.target.value)}
+                  placeholder="Jiddah, Saudi Arabia"
+                />
+              </Field>
+            </div>
+            <div>
+              <p className="mb-2 text-xs font-medium text-[var(--frappe-text-muted)]">
+                Doniya preview
+              </p>
+              <DoniyaLabelPreview label={label} />
+              <p className="mt-2 text-xs text-[var(--frappe-text-muted)]">
+                After saving, open{" "}
+                <span className="font-medium text-[var(--frappe-text)]">
+                  View Doniya label
+                </span>{" "}
+                on the run to see the full page.
+              </p>
+            </div>
+          </div>
+        </div>
+      </details>
+
       <FrappeButtonPrimary type="submit" className="mt-4" disabled={saving}>
         Save packaging
       </FrappeButtonPrimary>

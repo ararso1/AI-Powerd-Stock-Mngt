@@ -58,6 +58,18 @@ type ExportLotStage = {
   kgPerDoniya?: string | null;
   doniyaCount?: number | null;
   remainderKg?: string | null;
+  doniyaLabel?: {
+    businessName?: string;
+    location?: string;
+    coffeeName?: string;
+    origin?: string;
+    netWeight?: string;
+    certificateNumber?: string;
+    icoNumber?: string;
+    productionDate?: string;
+    expiryDate?: string;
+    destination?: string;
+  } | null;
   documents?: Array<{
     key: string;
     label: string;
@@ -197,6 +209,12 @@ export class ExportsService {
         kgPerDoniya: trace?.stage.kgPerDoniya ?? null,
         doniyaCount: trace?.stage.doniyaCount ?? null,
         remainderKg: trace?.stage.remainderKg ?? null,
+        doniyaLabel:
+          trace?.stage.doniyaLabel ??
+          (
+            (trace?.run.stageResults ?? []) as ExportLotStage[]
+          ).find((row) => row.stage === 'Packaging')?.doniyaLabel ??
+          null,
         documents: trace?.stage.documents ?? [],
         status:
           onHand <= 0.0005 && shipped > 0

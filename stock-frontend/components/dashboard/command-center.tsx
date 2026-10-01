@@ -91,8 +91,8 @@ export function CommandCenter() {
           setLocalData(res);
         } else {
           const res = await api<ExportDashboardData>(path);
-          if (cancelled) return;
-          applyCurrencyFromResponse(res);
+        if (cancelled) return;
+        applyCurrencyFromResponse(res);
           setExportData(res);
         }
       } catch (e) {
@@ -139,8 +139,8 @@ export function CommandCenter() {
             Local
           </TabsTrigger>
           <TabsTrigger value="export" className="gap-1.5 px-4 py-2">
-            <ShipIcon className="size-4" />
-            Export
+                  <ShipIcon className="size-4" />
+                  Export
           </TabsTrigger>
           <TabsTrigger value="import" className="gap-1.5 px-4 py-2">
             <PackageOpenIcon className="size-4" />
@@ -153,7 +153,7 @@ export function CommandCenter() {
             <PageLoading />
           ) : localData ? (
             <LocalDashboard data={localData} />
-          ) : null}
+      ) : null}
         </TabsContent>
 
         <TabsContent value="export" className="mt-2">
@@ -161,7 +161,7 @@ export function CommandCenter() {
             <PageLoading />
           ) : exportData ? (
             <ExportDashboard data={exportData} />
-          ) : null}
+        ) : null}
         </TabsContent>
 
         <TabsContent value="import" className="mt-2">

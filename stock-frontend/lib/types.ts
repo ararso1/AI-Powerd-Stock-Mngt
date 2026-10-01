@@ -1747,6 +1747,19 @@ export interface ExportDocumentRecord {
   notes?: string | null;
 }
 
+export interface ExportDoniyaLabel {
+  businessName: string;
+  location: string;
+  coffeeName: string;
+  origin: string;
+  netWeight: string;
+  certificateNumber: string;
+  icoNumber: string;
+  productionDate: string;
+  expiryDate: string;
+  destination: string;
+}
+
 export interface ExportStageResult extends LocalStageResult {
   expectedGrade?: string | null;
   kgPerDoniya?: string | null;
@@ -1757,6 +1770,7 @@ export interface ExportStageResult extends LocalStageResult {
   remainderLotCode?: string | null;
   exportStoreLocationId?: string | null;
   exportStoreLocationName?: string | null;
+  doniyaLabel?: ExportDoniyaLabel | null;
   postEcta?: ExportPostEcta | null;
   documents?: ExportDocumentRecord[];
 }
@@ -1801,6 +1815,7 @@ export interface ExportStoreLot {
   kgPerDoniya?: string | null;
   doniyaCount?: number | null;
   remainderKg?: string | null;
+  doniyaLabel?: ExportDoniyaLabel | null;
   documents?: ExportDocumentRecord[];
   status: "IN_STORE" | "RESERVED" | "SHIPPED";
   reservedKg: string;

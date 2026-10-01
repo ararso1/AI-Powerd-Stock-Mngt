@@ -14,6 +14,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { PageLoading } from "@/components/shared/page-loading";
+import { DoniyaLabelPreview } from "@/components/process-runs/doniya-label-preview";
 import { api } from "@/lib/api";
 import { errorMessage, formatQty } from "@/lib/format";
 import { buildExportsListPath } from "@/lib/list-query";
@@ -162,7 +163,29 @@ function LotCard({
           value={row.remainderKg != null ? `${formatQty(row.remainderKg)} kg` : "—"}
         />
         <Metric label="Grade" value={row.grade ?? "—"} />
+        {row.doniyaLabel ? (
+          <>
+            <Metric label="Coffee name" value={row.doniyaLabel.coffeeName} />
+            <Metric label="Destination" value={row.doniyaLabel.destination} />
+          </>
+        ) : null}
       </dl>
+      {row.doniyaLabel ? (
+        <div className="mt-4 flex flex-wrap items-end gap-3">
+          <DoniyaLabelPreview
+            label={row.doniyaLabel}
+            className="max-w-[160px]"
+          />
+          {row.runId ? (
+            <Link
+              href={`/process-runs/${row.runId}/doniya-label`}
+              className="text-sm font-medium text-[var(--frappe-primary)] hover:underline"
+            >
+              View Doniya label
+            </Link>
+          ) : null}
+        </div>
+      ) : null}
       {row.contracts.length > 0 ? (
         <p className="mt-3 text-xs text-[var(--frappe-text-muted)]">
           {row.contracts.map((contract) => (

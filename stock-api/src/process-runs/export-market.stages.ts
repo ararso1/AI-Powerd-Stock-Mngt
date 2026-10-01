@@ -28,6 +28,20 @@ export interface ExportDocumentRecord {
   notes?: string | null;
 }
 
+/** Printed on each Doniya at packaging. Linked to the run and export lots. */
+export interface ExportDoniyaLabel {
+  businessName: string;
+  location: string;
+  coffeeName: string;
+  origin: string;
+  netWeight: string;
+  certificateNumber: string;
+  icoNumber: string;
+  productionDate: string;
+  expiryDate: string;
+  destination: string;
+}
+
 export interface ExportStageResult {
   stage: ExportMarketStage;
   inputQty: string;
@@ -52,6 +66,7 @@ export interface ExportStageResult {
   remainderLotCode?: string | null;
   exportStoreLocationId?: string | null;
   exportStoreLocationName?: string | null;
+  doniyaLabel?: ExportDoniyaLabel | null;
   postEcta?: ExportPostEcta | null;
   documents?: ExportDocumentRecord[] | null;
 }

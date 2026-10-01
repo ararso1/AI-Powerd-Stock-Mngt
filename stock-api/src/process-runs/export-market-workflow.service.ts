@@ -29,6 +29,7 @@ import {
 } from './dto/export-stage.dto';
 import {
   EXPORT_MARKET_STAGES,
+  ExportDoniyaLabel,
   ExportMarketStage,
   ExportPostEcta,
   ExportStageResult,
@@ -129,8 +130,11 @@ export class ExportMarketWorkflowService {
         run.outputLotId = result.outputLotId;
         const input = parseFloat(results[0]?.inputQty ?? '0');
         const packed = parseFloat(result.packagedKg ?? result.outputQty ?? '0');
+        const remainder = parseFloat(result.remainderKg ?? '0');
         run.actualYieldPercent =
-          input > 0 ? ((packed / input) * 100).toFixed(2) : null;
+          input > 0
+            ? (((packed + remainder) / input) * 100).toFixed(2)
+            : null;
       }
       if (dto.notes) run.notes = dto.notes;
       await runRepo.save(run);
@@ -423,6 +427,8 @@ export class ExportMarketWorkflowService {
     if (!(dto.kgPerDoniya && dto.kgPerDoniya > 0)) {
       throw new BadRequestException('Enter kilograms per Doniya');
     }
+    const label = this.normalizeDoniyaLabel(dto, dto.kgPerDoniya);
+    await this.assertUniqueDoniyaIds(manager, label, run.id);
     const split = doniyaSplit(available, dto.kgPerDoniya);
     if (split.full < 1) {
       throw new BadRequestException(
@@ -448,7 +454,10 @@ export class ExportMarketWorkflowService {
       unitCost,
       run,
       userId,
-      notes: `Packaged ${split.full} Doniya for ${run.runNumber}`,
+      notes: this.labelLotNotes(
+        `Packaged ${split.full} Doniya for ${run.runNumber}`,
+        label,
+      ),
     });
     let remainderLot: Lot | null = null;
     if (split.remainderKg > 0.0005) {
@@ -486,6 +495,7 @@ export class ExportMarketWorkflowService {
         remainderKg: split.remainderKg.toFixed(3),
         remainderLotId: remainderLot?.id ?? null,
         remainderLotCode: remainderLot?.code ?? null,
+        doniyaLabel: label,
       },
     );
   }
@@ -545,7 +555,10 @@ export class ExportMarketWorkflowService {
       unitCost,
       run,
       userId,
-      notes: `Export store of ${run.runNumber}`,
+      notes: this.labelLotNotes(
+        `Export store of ${run.runNumber}`,
+        packaging.doniyaLabel ?? null,
+      ),
     });
     return this.result(
       'Export Store',
@@ -566,6 +579,7 @@ export class ExportMarketWorkflowService {
         remainderKg: packaging.remainderKg ?? '0.000',
         exportStoreLocationId: storeLocationId,
         exportStoreLocationName: store?.name ?? null,
+        doniyaLabel: packaging.doniyaLabel ?? null,
       },
     );
   }
@@ -645,6 +659,92 @@ export class ExportMarketWorkflowService {
       testedAt: dto.testedAt?.trim() || null,
       notes: dto.notes?.trim() || null,
     };
+  }
+
+  private normalizeDoniyaLabel(
+    dto: SubmitExportStageDto,
+    kgPerDoniya: number,
+  ): ExportDoniyaLabel {
+    const raw = dto.doniyaLabel;
+    if (!raw) {
+      throw new BadRequestException('Enter the Doniya label information');
+    }
+    const required: Array<keyof ExportDoniyaLabel> = [
+      'businessName',
+      'location',
+      'coffeeName',
+      'origin',
+      'certificateNumber',
+      'icoNumber',
+      'productionDate',
+      'expiryDate',
+      'destination',
+    ];
+    for (const key of required) {
+      if (!String(raw[key] ?? '').trim()) {
+        throw new BadRequestException('Complete every Doniya label field');
+      }
+    }
+    const netWeight =
+      String(raw.netWeight ?? '').trim() || `${round3(kgPerDoniya)} kg`;
+    return {
+      businessName: raw.businessName.trim(),
+      location: raw.location.trim(),
+      coffeeName: raw.coffeeName.trim(),
+      origin: raw.origin.trim(),
+      netWeight,
+      certificateNumber: raw.certificateNumber.trim(),
+      icoNumber: raw.icoNumber.trim(),
+      productionDate: raw.productionDate.trim(),
+      expiryDate: raw.expiryDate.trim(),
+      destination: raw.destination.trim(),
+    };
+  }
+
+  private async assertUniqueDoniyaIds(
+    manager: EntityManager,
+    label: ExportDoniyaLabel,
+    runId: string,
+  ) {
+    const rows = await manager.getRepository(ProcessRun).find({
+      where: { workflow: PurchaseType.EXPORT },
+      select: {
+        id: true,
+        runNumber: true,
+        stageResults: true,
+      },
+    });
+    for (const other of rows) {
+      if (other.id === runId) continue;
+      for (const stage of (other.stageResults ?? []) as ExportStageResult[]) {
+        const existing = stage.doniyaLabel;
+        if (!existing) continue;
+        if (
+          existing.certificateNumber.trim().toLowerCase() ===
+          label.certificateNumber.toLowerCase()
+        ) {
+          throw new BadRequestException(
+            `Certificate number ${label.certificateNumber} is already used on ${other.runNumber}`,
+          );
+        }
+        if (
+          existing.icoNumber.trim().toLowerCase() ===
+          label.icoNumber.toLowerCase()
+        ) {
+          throw new BadRequestException(
+            `ICO No. ${label.icoNumber} is already used on ${other.runNumber}`,
+          );
+        }
+      }
+    }
+  }
+
+  private labelLotNotes(
+    base: string,
+    label: ExportDoniyaLabel | null | undefined,
+  ): string {
+    if (!label) return base;
+    return `${base}\nDoniya label: ${label.coffeeName} · cert ${label.certificateNumber} · ICO ${label.icoNumber} · ${label.destination}`;
   }
 
   private async writePostEcta(

@@ -47,6 +47,8 @@ import {
   PROCESS_STATUS_OPTIONS,
   PROCESS_WORKFLOW_OPTIONS,
   currentProcessStage,
+  exportRunDoniyaLabel,
+  processRunYieldLabel,
   processStageLabel,
   processStatusClass,
   processStatusLabel,
@@ -254,10 +256,7 @@ export default function ProcessRunsPage() {
                   {
                     key: "yield",
                     header: "Yield %",
-                    cell: (r) =>
-                      r.actualYieldPercent
-                        ? `${formatQty(r.actualYieldPercent)}%`
-                        : `~${formatQty(r.expectedYieldPercent)}%`,
+                    cell: (r) => processRunYieldLabel(r),
                   },
                   {
                     key: "status",
@@ -267,6 +266,21 @@ export default function ProcessRunsPage() {
                         {processStatusLabel(r.status)}
                       </Badge>
                     ),
+                  },
+                  {
+                    key: "doniya",
+                    header: "Doniya label",
+                    cell: (r) =>
+                      r.workflow === "EXPORT" && exportRunDoniyaLabel(r) ? (
+                        <Link
+                          href={`/process-runs/${r.id}/doniya-label`}
+                          className="text-[var(--frappe-primary)] hover:underline"
+                        >
+                          View
+                        </Link>
+                      ) : (
+                        "—"
+                      ),
                   },
                   {
                     key: "date",

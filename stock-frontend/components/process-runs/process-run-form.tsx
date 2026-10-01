@@ -412,7 +412,7 @@ export function ProcessRunForm({
           >
             <FrappeFormGrid columns={2}>
               <FrappeField label="Expected output grade" required>
-                <Select
+              <Select
                   value={expectedGrade || SELECT}
                   onValueChange={(value) =>
                     setExpectedGrade(value === SELECT ? "" : value)
@@ -420,30 +420,30 @@ export function ProcessRunForm({
                 >
                   <SelectTrigger className="w-full">
                     <SelectValue placeholder="Select grade" />
-                  </SelectTrigger>
-                  <SelectContent>
+                </SelectTrigger>
+                <SelectContent>
                     <SelectItem value={SELECT}>Select grade</SelectItem>
                     {COFFEE_GRADE_OPTIONS.map((option) => (
                       <SelectItem key={option} value={option}>
                         {option}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </FrappeField>
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </FrappeField>
               <FrappeField
                 label="Expected yield"
                 hint="Expected processing loss is 13% or less. Enter the actual loss when cleaning ends."
               >
-                <Input
+              <Input
                   readOnly
                   value={
                     expectedOut != null
                       ? `87% or more ≈ ${formatQty(expectedOut)} kg`
                       : "87% or more"
                   }
-                />
-              </FrappeField>
+              />
+            </FrappeField>
             </FrappeFormGrid>
           </FrappeSection>
         ) : null}

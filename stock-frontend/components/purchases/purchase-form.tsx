@@ -977,53 +977,53 @@ export function PurchaseForm({ purchase }: { purchase?: Purchase }) {
             </>
           ) : null}
             <FrappeFormGrid columns={notesOnly ? 1 : 2} className="mt-3">
-              <FrappeField label="Payment method" required={!notesOnly}>
-                <SearchSelect
-                  value={paymentMethod}
-                  onValueChange={(v) =>
+            <FrappeField label="Payment method" required={!notesOnly}>
+              <SearchSelect
+                value={paymentMethod}
+                onValueChange={(v) =>
                     handlePaymentMethodChange(v as PaymentMethod)
-                  }
-                  options={PAYMENT_METHOD_OPTIONS}
-                  searchPlaceholder="Search payment method…"
+                }
+                options={PAYMENT_METHOD_OPTIONS}
+                searchPlaceholder="Search payment method…"
+                disabled={notesOnly}
+              />
+            </FrappeField>
+            {showsPaymentAccountPicker(paymentMethod, banks) ? (
+              <EntitySelectField
+                label={paymentAccountFieldLabel(paymentMethod)}
+                required={!notesOnly}
+                value={bankAccountId}
+                onValueChange={setBankAccountId}
+                options={bankAccountSelectOptions(banks ?? [], bankAccountId)}
+                listHref="/banks"
+                listLabel="All accounts"
+                emptyMessage={
+                  paymentMethod === "CASH"
+                    ? "Create a cash till (CASH account type) under Bank."
+                    : "Create a bank account (BANK account type) under Bank."
+                }
+                quickCreate={
+                  notesOnly ? undefined : (
+                    <QuickBankAccountDialog
+                        compact
+                      defaultAccountType={
+                        paymentMethod === "CASH" ? "CASH" : "BANK"
+                      }
+                      onCreated={onBankCreated}
+                    />
+                  )
+                }
+                disabled={notesOnly}
+              />
+              ) : createsPurchaseCredit(paymentMethod) ? (
+              <FrappeField label="Credit due date">
+                <Input
+                  type="date"
+                  value={creditDueDate}
+                  onChange={(e) => setCreditDueDate(e.target.value)}
                   disabled={notesOnly}
                 />
               </FrappeField>
-              {showsPaymentAccountPicker(paymentMethod, banks) ? (
-                <EntitySelectField
-                  label={paymentAccountFieldLabel(paymentMethod)}
-                  required={!notesOnly}
-                  value={bankAccountId}
-                  onValueChange={setBankAccountId}
-                  options={bankAccountSelectOptions(banks ?? [], bankAccountId)}
-                  listHref="/banks"
-                  listLabel="All accounts"
-                  emptyMessage={
-                    paymentMethod === "CASH"
-                      ? "Create a cash till (CASH account type) under Bank."
-                      : "Create a bank account (BANK account type) under Bank."
-                  }
-                  quickCreate={
-                    notesOnly ? undefined : (
-                      <QuickBankAccountDialog
-                        compact
-                        defaultAccountType={
-                          paymentMethod === "CASH" ? "CASH" : "BANK"
-                        }
-                        onCreated={onBankCreated}
-                      />
-                    )
-                  }
-                  disabled={notesOnly}
-                />
-              ) : createsPurchaseCredit(paymentMethod) ? (
-                <FrappeField label="Credit due date">
-                  <Input
-                    type="date"
-                    value={creditDueDate}
-                    onChange={(e) => setCreditDueDate(e.target.value)}
-                    disabled={notesOnly}
-                  />
-                </FrappeField>
               ) : null}
               {paymentMethod === "PARTIAL" ? (
                 <>
@@ -1032,7 +1032,7 @@ export function PurchaseForm({ purchase }: { purchase?: Purchase }) {
                     required={!notesOnly}
                     hint="Remaining balance is recorded as supplier credit"
                   >
-                    <Input
+              <Input
                       type="number"
                       min="0.01"
                       step="0.01"
@@ -1041,8 +1041,8 @@ export function PurchaseForm({ purchase }: { purchase?: Purchase }) {
                       placeholder="0.00"
                       disabled={notesOnly}
                       required={!notesOnly}
-                    />
-                  </FrappeField>
+              />
+            </FrappeField>
                   <FrappeField label="Credit due date">
                     <Input
                       type="date"
@@ -1053,7 +1053,7 @@ export function PurchaseForm({ purchase }: { purchase?: Purchase }) {
                   </FrappeField>
                 </>
               ) : null}
-            </FrappeFormGrid>
+          </FrappeFormGrid>
         </FrappeSection>
 
         {!notesOnly ? (
@@ -1067,7 +1067,7 @@ export function PurchaseForm({ purchase }: { purchase?: Purchase }) {
                   <p className="mt-0.5 text-xs text-[var(--frappe-text-muted)]">
                     Moisture and cupping taken at our warehouse. Saved on the lot.
                   </p>
-                </div>
+            </div>
                 <ChevronDownIcon className="size-4 shrink-0 text-[var(--frappe-text-muted)] transition-transform group-open:rotate-180" />
               </summary>
               <div className="p-4">
@@ -1101,12 +1101,12 @@ export function PurchaseForm({ purchase }: { purchase?: Purchase }) {
                             />
                           </FrappeField>
                           <FrappeField label="Cupping score">
-                            <Input
-                              type="number"
-                              min="0"
+                    <Input
+                      type="number"
+                      min="0"
                               step="0.01"
                               value={scores.cuppingScore}
-                              onChange={(e) =>
+                      onChange={(e) =>
                                 updateLineWarehouse(i, {
                                   cuppingScore: e.target.value,
                                 })
@@ -1124,12 +1124,12 @@ export function PurchaseForm({ purchase }: { purchase?: Purchase }) {
                             />
                           </FrappeField>
                           <FrappeField label="Defect count">
-                            <Input
-                              type="number"
-                              min="0"
+                    <Input
+                      type="number"
+                      min="0"
                               step="1"
                               value={scores.defectCount}
-                              onChange={(e) =>
+                      onChange={(e) =>
                                 updateLineWarehouse(i, {
                                   defectCount: e.target.value,
                                 })
@@ -1235,7 +1235,7 @@ export function PurchaseForm({ purchase }: { purchase?: Purchase }) {
                               <p className="mt-1 text-xs text-[var(--frappe-text-muted)]">
                                 Selected: {line.qualityFile.name}
                               </p>
-                            ) : null}
+        ) : null}
                           </FrappeField>
                         </FrappeFormGrid>
                       </div>

@@ -56,6 +56,38 @@ export class ExportDocumentDto {
   notes?: string;
 }
 
+export class ExportDoniyaLabelDto {
+  @IsString()
+  businessName: string;
+
+  @IsString()
+  location: string;
+
+  @IsString()
+  coffeeName: string;
+
+  @IsString()
+  origin: string;
+
+  @IsString()
+  netWeight: string;
+
+  @IsString()
+  certificateNumber: string;
+
+  @IsString()
+  icoNumber: string;
+
+  @IsString()
+  productionDate: string;
+
+  @IsString()
+  expiryDate: string;
+
+  @IsString()
+  destination: string;
+}
+
 export class SubmitExportStageDto {
   @Type(() => Number)
   @IsNumber()
@@ -90,6 +122,11 @@ export class SubmitExportStageDto {
   @IsInt()
   @Min(1)
   doniyaCount?: number;
+
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => ExportDoniyaLabelDto)
+  doniyaLabel?: ExportDoniyaLabelDto;
 
   @IsOptional()
   @IsString()

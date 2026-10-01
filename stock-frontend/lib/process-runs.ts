@@ -1,4 +1,9 @@
-import type { ProcessRunStatus } from "@/lib/types";
+import { formatQty } from "@/lib/format";
+import type {
+  ExportDoniyaLabel,
+  ProcessRun,
+  ProcessRunStatus,
+} from "@/lib/types";
 
 export const PROCESS_STATUS_OPTIONS: {
   value: ProcessRunStatus;
@@ -116,4 +121,70 @@ export interface ProcessOverview {
     byWorkflow: { workflow: string; runs: number; inputKg: string }[];
     packs: { label: string; count: number; kg: string }[];
   };
+}
+
+function qty(value: string | number | null | undefined): number {
+  const n = typeof value === "number" ? value : parseFloat(value ?? "");
+  return Number.isFinite(n) ? n : 0;
+}
+
+/** Usable coffee left after export losses, including kilograms that did not fill a Doniya. */
+export function exportRunYieldPercent(run: Pick<
+  ProcessRun,
+  "quantityInput" | "quantityReject" | "stageResults"
+>): number | null {
+  const input = qty(run.quantityInput);
+  if (input <= 0) return null;
+  const results = run.stageResults ?? [];
+  const packaged = [...results]
+    .reverse()
+    .find(
+      (row) =>
+        row.stage === "Packaging" ||
+        row.stage === "Export Store" ||
+        row.stage === "Packaging & Export Store"
+    );
+  if (packaged && "packagedKg" in packaged && packaged.packagedKg != null) {
+    const kept = qty(packaged.packagedKg) + qty(packaged.remainderKg);
+    return (kept / input) * 100;
+  }
+  if (results.length === 0) return null;
+  return ((input - qty(run.quantityReject)) / input) * 100;
+}
+
+export function processRunYieldLabel(
+  run: Pick<
+    ProcessRun,
+    | "workflow"
+    | "quantityInput"
+    | "quantityReject"
+    | "expectedYieldPercent"
+    | "actualYieldPercent"
+    | "stageResults"
+  >
+): string {
+  if (run.workflow === "EXPORT") {
+    const percent = exportRunYieldPercent(run);
+    if (percent != null) return `${formatQty(percent)}%`;
+  } else if (run.actualYieldPercent) {
+    return `${formatQty(run.actualYieldPercent)}%`;
+  }
+  return `~${formatQty(run.expectedYieldPercent)}%`;
+}
+
+export function exportRunDoniyaLabel(
+  run: Pick<ProcessRun, "stageResults">
+): ExportDoniyaLabel | null {
+  const results = run.stageResults ?? [];
+  for (const stage of [
+    "Export Store",
+    "Packaging & Export Store",
+    "Packaging",
+  ]) {
+    const found = results.find((row) => row.stage === stage);
+    if (found && "doniyaLabel" in found && found.doniyaLabel) {
+      return found.doniyaLabel;
+    }
+  }
+  return null;
 }

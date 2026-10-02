@@ -53,7 +53,7 @@ export default function ExportsPage() {
   return (
     <AppShell
       title="Exports"
-      subtitle="Export-ready coffee, then contracts, shipment, and delivery"
+      subtitle="Export-ready coffee through contract, documents, ECTA, shipment, and port load"
       breadcrumbs={[
         { label: "Operations", href: "/dashboard" },
         { label: "Exports" },

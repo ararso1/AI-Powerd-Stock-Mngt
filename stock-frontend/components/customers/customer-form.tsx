@@ -32,11 +32,13 @@ import {
   emptyCustomerForm,
   customerFormFromRecord,
   customerTypeSelectOptions,
+  CUSTOMER_MARKET_OPTIONS,
+  INCOTERM_OPTIONS,
   formatFileSize,
   uploadCustomerDocument,
   type CustomerFormValues,
 } from "@/lib/customers";
-import type { Customer, CustomerDocument } from "@/lib/types";
+import type { Customer, CustomerDocument, CustomerMarket } from "@/lib/types";
 import { toast } from "sonner";
 import { PlusIcon, Trash2Icon } from "lucide-react";
 
@@ -72,12 +74,34 @@ export function CustomerForm({
   );
 
   const isAgent = values.customerType === "AGENT";
+  const isInternational = values.market === "INTERNATIONAL";
 
   function setField<K extends keyof CustomerFormValues>(
     key: K,
     value: CustomerFormValues[K]
   ) {
     setValues((v) => ({ ...v, [key]: value }));
+  }
+
+  function setMarket(market: CustomerMarket) {
+    setValues((v) => ({
+      ...v,
+      market,
+      country:
+        market === "LOCAL"
+          ? v.country.trim() || "Ethiopia"
+          : v.country === "Ethiopia"
+            ? ""
+            : v.country,
+      preferredCurrency:
+        market === "INTERNATIONAL"
+          ? v.preferredCurrency.trim() || "USD"
+          : v.preferredCurrency.trim() || "ETB",
+      preferredIncoterm:
+        market === "INTERNATIONAL"
+          ? v.preferredIncoterm.trim() || "FOB"
+          : v.preferredIncoterm,
+    }));
   }
 
   function addAgreementDraft() {
@@ -125,6 +149,10 @@ export function CustomerForm({
     e.preventDefault();
     if (!values.name.trim()) {
       toast.error("Customer name is required");
+      return;
+    }
+    if (values.market === "INTERNATIONAL" && !values.country.trim()) {
+      toast.error("Country is required for international / export customers");
       return;
     }
     if (isAgent) {
@@ -176,15 +204,33 @@ export function CustomerForm({
       </FrappeFormToolbar>
 
       <FrappeDocument>
-        <FrappeSection title="Identity" description="Who this customer is">
+        <FrappeSection
+          title="Market"
+          description="Separate local buyers from international export customers"
+        >
           <FrappeFormGrid columns={2}>
-            <FrappeField label="Customer name" required>
-              <Input
-                value={values.name}
-                onChange={(e) => setField("name", e.target.value)}
-                required
-                autoFocus={!isEdit}
-              />
+            <FrappeField label="Customer market" required>
+              <Select
+                value={values.market}
+                onValueChange={(v) => setMarket(v as CustomerMarket)}
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {CUSTOMER_MARKET_OPTIONS.map((o) => (
+                    <SelectItem key={o.value} value={o.value}>
+                      {o.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="mt-1 text-xs text-[var(--frappe-text-muted)]">
+                {
+                  CUSTOMER_MARKET_OPTIONS.find((o) => o.value === values.market)
+                    ?.description
+                }
+              </p>
             </FrappeField>
             <FrappeField label="Customer type">
               <Select
@@ -215,6 +261,19 @@ export function CustomerForm({
                 </SelectContent>
               </Select>
             </FrappeField>
+          </FrappeFormGrid>
+        </FrappeSection>
+
+        <FrappeSection title="Identity" description="Who this customer is">
+          <FrappeFormGrid columns={2}>
+            <FrappeField label="Customer name" required>
+              <Input
+                value={values.name}
+                onChange={(e) => setField("name", e.target.value)}
+                required
+                autoFocus={!isEdit}
+              />
+            </FrappeField>
             <FrappeField label="Contact person">
               <Input
                 value={values.contactPerson}
@@ -227,7 +286,9 @@ export function CustomerForm({
                 onChange={(e) => setField("organizationName", e.target.value)}
               />
             </FrappeField>
-            <FrappeField label="TIN number">
+            <FrappeField
+              label={isInternational ? "Tax / registration ID" : "TIN number"}
+            >
               <Input
                 value={values.tinNumber}
                 onChange={(e) => setField("tinNumber", e.target.value)}
@@ -269,28 +330,115 @@ export function CustomerForm({
                 rows={2}
               />
             </FrappeField>
-            <FrappeField label="City">
+            <FrappeField label="City / town">
               <Input
                 value={values.city}
                 onChange={(e) => setField("city", e.target.value)}
               />
             </FrappeField>
-            <FrappeField label="Region">
+            <FrappeField label={isInternational ? "State / province" : "Region"}>
               <Input
                 value={values.region}
                 onChange={(e) => setField("region", e.target.value)}
               />
             </FrappeField>
+            <FrappeField
+              label="Country"
+              required={isInternational}
+              hint={
+                isInternational
+                  ? "Required for export / international buyers"
+                  : undefined
+              }
+            >
+              <Input
+                value={values.country}
+                onChange={(e) => setField("country", e.target.value)}
+                placeholder={isInternational ? "e.g. Japan" : "Ethiopia"}
+                required={isInternational}
+              />
+            </FrappeField>
           </FrappeFormGrid>
         </FrappeSection>
 
+        {isInternational ? (
+          <FrappeSection
+            title="Export buyer details"
+            description="Used when linking this customer to export contracts"
+          >
+            <FrappeFormGrid columns={2}>
+              <FrappeField label="Destination port / city">
+                <Input
+                  value={values.destinationPort}
+                  onChange={(e) => setField("destinationPort", e.target.value)}
+                  placeholder="e.g. Yokohama"
+                />
+              </FrappeField>
+              <FrappeField label="Buyer / ICO code">
+                <Input
+                  value={values.buyerCode}
+                  onChange={(e) => setField("buyerCode", e.target.value)}
+                />
+              </FrappeField>
+              <FrappeField label="Trade license #">
+                <Input
+                  value={values.tradeLicenseNumber}
+                  onChange={(e) =>
+                    setField("tradeLicenseNumber", e.target.value)
+                  }
+                />
+              </FrappeField>
+              <FrappeField label="Preferred currency">
+                <Input
+                  value={values.preferredCurrency}
+                  onChange={(e) =>
+                    setField(
+                      "preferredCurrency",
+                      e.target.value.toUpperCase()
+                    )
+                  }
+                  maxLength={3}
+                  placeholder="USD"
+                />
+              </FrappeField>
+              <FrappeField label="Preferred Incoterm">
+                <Select
+                  value={values.preferredIncoterm || "__none__"}
+                  onValueChange={(v) =>
+                    setField(
+                      "preferredIncoterm",
+                      v === "__none__" ? "" : v
+                    )
+                  }
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select…" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="__none__">Not set</SelectItem>
+                    {INCOTERM_OPTIONS.map((term) => (
+                      <SelectItem key={term} value={term}>
+                        {term}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </FrappeField>
+            </FrappeFormGrid>
+          </FrappeSection>
+        ) : null}
+
         <FrappeSection
           title="Credit limit"
-          description="Required for credit sales. Additional credit sales are blocked when outstanding reaches this limit."
+          description={
+            isInternational
+              ? "Optional open-account limit for export receivables (in preferred currency terms as recorded)."
+              : "Required for credit sales. Additional credit sales are blocked when outstanding reaches this limit."
+          }
         >
           <FrappeFormGrid columns={2}>
             <FrappeField
-              label="Credit limit (ETB)"
+              label={`Credit limit (${values.preferredCurrency || "ETB"})`}
               hint="Leave empty to disallow credit sales until a limit is set"
             >
               <Input

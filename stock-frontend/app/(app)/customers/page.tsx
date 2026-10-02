@@ -37,11 +37,12 @@ import {
 import { api } from "@/lib/api";
 import { buildListPath } from "@/lib/list-query";
 import { errorMessage, formatMoney } from "@/lib/format";
-import { customerTypeLabel } from "@/lib/customers";
-import type { Customer } from "@/lib/types";
+import { customerMarketLabel, customerTypeLabel } from "@/lib/customers";
+import type { Customer, CustomerMarket } from "@/lib/types";
 import { usePaginatedList } from "@/hooks/use-paginated-list";
 import { toast } from "sonner";
 import { PlusIcon, Trash2Icon } from "lucide-react";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 function DeleteCustomerButton({
   customer,
@@ -104,6 +105,7 @@ function DeleteCustomerButton({
 export default function CustomersPage() {
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState<"active" | "all">("active");
+  const [market, setMarket] = useState<CustomerMarket | "ALL">("ALL");
   const debouncedSearch = useDebouncedValue(search);
 
   const { rows, meta, setPage, setLimit, loading, reload } =
@@ -113,17 +115,18 @@ export default function CustomersPage() {
           params: {
             search: debouncedSearch || undefined,
             includeInactive: status === "all" ? true : undefined,
+            market: market === "ALL" ? undefined : market,
           },
           page,
           limit,
         }),
-      [debouncedSearch, status]
+      [debouncedSearch, status, market]
     );
 
   return (
     <AppShell
       title="Customers"
-      subtitle="Profiles, credit limits, and receivables linked to sales"
+      subtitle="Local and international (export) buyers — profiles, credit, and destinations"
       breadcrumbs={[
         { label: "Stock", href: "/dashboard" },
         { label: "Customers" },
@@ -140,11 +143,22 @@ export default function CustomersPage() {
       }
     >
       <PermissionGate permission="customers.read">
+        <Tabs
+          value={market}
+          onValueChange={(v) => setMarket(v as CustomerMarket | "ALL")}
+          className="mb-4"
+        >
+          <TabsList>
+            <TabsTrigger value="ALL">All</TabsTrigger>
+            <TabsTrigger value="LOCAL">Local</TabsTrigger>
+            <TabsTrigger value="INTERNATIONAL">International / export</TabsTrigger>
+          </TabsList>
+        </Tabs>
         <FrappeFilterBar>
           <ListSearchField
             value={search}
             onChange={setSearch}
-            placeholder="Search name, phone, TIN…"
+            placeholder="Search name, phone, country, buyer code…"
           />
           <div className="grid gap-2">
             <Label className="text-sm text-[var(--frappe-text-muted)]">
@@ -175,7 +189,7 @@ export default function CustomersPage() {
           <DataCardTable
             rows={rows}
             emptyTitle="No customers yet"
-            emptyDescription="Register buyers for local and wholesale sales."
+            emptyDescription="Register local buyers and international export customers."
             pagination={{
               meta,
               onPageChange: setPage,
@@ -203,9 +217,43 @@ export default function CustomersPage() {
                 ),
               },
               {
+                key: "market",
+                header: "Market",
+                cell: (r) => (
+                  <Badge
+                    variant="outline"
+                    className={
+                      r.market === "INTERNATIONAL"
+                        ? "border-sky-500/40 bg-sky-500/10 text-sky-900"
+                        : "border-emerald-500/40 bg-emerald-500/10 text-emerald-900"
+                    }
+                  >
+                    {customerMarketLabel(r.market)}
+                  </Badge>
+                ),
+              },
+              {
                 key: "type",
                 header: "Type",
                 cell: (r) => customerTypeLabel(r.customerType),
+              },
+              {
+                key: "location",
+                header: "Location",
+                cell: (r) => (
+                  <div className="text-sm">
+                    <p>
+                      {[r.city, r.country || (r.market === "LOCAL" ? "Ethiopia" : null)]
+                        .filter(Boolean)
+                        .join(", ") || "—"}
+                    </p>
+                    {r.destinationPort ? (
+                      <p className="text-xs text-[var(--frappe-text-muted)]">
+                        Port · {r.destinationPort}
+                      </p>
+                    ) : null}
+                  </div>
+                ),
               },
               {
                 key: "contact",

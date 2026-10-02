@@ -8,7 +8,7 @@ export default function NewCustomerPage() {
   return (
     <AppShell
       title="New customer"
-      subtitle="Profile and credit limit for sales"
+      subtitle="Local or international (export) buyer profile"
       variant="form"
       breadcrumbs={[
         { label: "Stock", href: "/dashboard" },

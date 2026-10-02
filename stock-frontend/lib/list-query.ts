@@ -48,7 +48,10 @@ export type InventoryAdjustmentsListQueryParams = GenericListQueryParams & {
   reason?: StockAdjustmentReason;
 };
 
-export type CustomerSupplierListQueryParams = GenericListQueryParams;
+export type CustomerSupplierListQueryParams = GenericListQueryParams & {
+  includeInactive?: boolean;
+  market?: "LOCAL" | "INTERNATIONAL";
+};
 
 export type PurchasesListQueryParams = GenericListQueryParams & {
   includeVoided?: boolean;

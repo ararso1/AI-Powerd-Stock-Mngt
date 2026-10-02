@@ -5,7 +5,7 @@ import {
   OneToMany,
   UpdateDateColumn,
 } from 'typeorm';
-import { CustomerType } from '../../common/enums';
+import { CustomerMarket, CustomerType } from '../../common/enums';
 import { CustomerDocument } from './customer-document.entity';
 import { Sale } from './sale.entity';
 import { UuidBaseEntity } from './uuid-base.entity';
@@ -23,6 +23,14 @@ export class Customer extends UuidBaseEntity {
     default: CustomerType.NORMAL,
   })
   customerType: CustomerType;
+
+  @Column({
+    type: 'enum',
+    enum: CustomerMarket,
+    enumName: 'customers_market_enum',
+    default: CustomerMarket.LOCAL,
+  })
+  market: CustomerMarket;
 
   @Column({ name: 'contact_person', type: 'varchar', length: 120, nullable: true })
   contactPerson: string | null;
@@ -49,6 +57,45 @@ export class Customer extends UuidBaseEntity {
 
   @Column({ type: 'varchar', length: 120, nullable: true })
   region: string | null;
+
+  /** Country — required for international / export buyers. */
+  @Column({ type: 'varchar', length: 100, nullable: true })
+  country: string | null;
+
+  @Column({
+    name: 'destination_port',
+    type: 'varchar',
+    length: 200,
+    nullable: true,
+  })
+  destinationPort: string | null;
+
+  @Column({
+    name: 'preferred_incoterm',
+    type: 'varchar',
+    length: 10,
+    nullable: true,
+  })
+  preferredIncoterm: string | null;
+
+  @Column({
+    name: 'preferred_currency',
+    type: 'varchar',
+    length: 3,
+    nullable: true,
+  })
+  preferredCurrency: string | null;
+
+  @Column({
+    name: 'trade_license_number',
+    type: 'varchar',
+    length: 80,
+    nullable: true,
+  })
+  tradeLicenseNumber: string | null;
+
+  @Column({ name: 'buyer_code', type: 'varchar', length: 80, nullable: true })
+  buyerCode: string | null;
 
   @Column({
     name: 'organization_name',

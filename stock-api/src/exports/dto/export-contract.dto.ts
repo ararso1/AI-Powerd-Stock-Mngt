@@ -318,6 +318,26 @@ export class AttachExportEctaDto {
   notes?: string;
 }
 
+export class AttachExportLoadReportDto {
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  portName?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  staffName?: string;
+
+  @IsOptional()
+  @IsDateString()
+  loadedAt?: string;
+
+  @IsOptional()
+  @IsString()
+  notes?: string;
+}
+
 export class AttachExportLotDto {
   @IsOptional()
   @IsUUID()
@@ -339,6 +359,11 @@ export class AttachExportLotDto {
   @ValidateNested({ each: true })
   @Type(() => AttachExportDocumentDto)
   documents?: AttachExportDocumentDto[];
+
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => AttachExportLoadReportDto)
+  loadReport?: AttachExportLoadReportDto;
 
   @IsOptional()
   @IsString()

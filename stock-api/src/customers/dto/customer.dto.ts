@@ -10,7 +10,7 @@ import {
   Min,
   ValidateIf,
 } from 'class-validator';
-import { CustomerType } from '../../common/enums';
+import { CustomerMarket, CustomerType, Incoterm } from '../../common/enums';
 
 export class CreateCustomerDto {
   @IsString()
@@ -20,6 +20,10 @@ export class CreateCustomerDto {
   @IsOptional()
   @IsEnum(CustomerType)
   customerType?: CustomerType;
+
+  @IsOptional()
+  @IsEnum(CustomerMarket)
+  market?: CustomerMarket;
 
   @IsOptional()
   @IsString()
@@ -57,6 +61,35 @@ export class CreateCustomerDto {
 
   @IsOptional()
   @IsString()
+  @MaxLength(100)
+  country?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  destinationPort?: string;
+
+  @IsOptional()
+  @IsEnum(Incoterm)
+  preferredIncoterm?: Incoterm;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(3)
+  preferredCurrency?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(80)
+  tradeLicenseNumber?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(80)
+  buyerCode?: string;
+
+  @IsOptional()
+  @IsString()
   @MaxLength(200)
   organizationName?: string;
 
@@ -85,6 +118,10 @@ export class UpdateCustomerDto {
   @IsOptional()
   @IsEnum(CustomerType)
   customerType?: CustomerType;
+
+  @IsOptional()
+  @IsEnum(CustomerMarket)
+  market?: CustomerMarket;
 
   @IsOptional()
   @IsString()
@@ -120,6 +157,36 @@ export class UpdateCustomerDto {
   @IsString()
   @MaxLength(120)
   region?: string | null;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(100)
+  country?: string | null;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  destinationPort?: string | null;
+
+  @IsOptional()
+  @ValidateIf((_, v) => v !== null && v !== '')
+  @IsEnum(Incoterm)
+  preferredIncoterm?: Incoterm | null;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(3)
+  preferredCurrency?: string | null;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(80)
+  tradeLicenseNumber?: string | null;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(80)
+  buyerCode?: string | null;
 
   @IsOptional()
   @IsString()

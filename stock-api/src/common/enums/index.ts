@@ -28,7 +28,7 @@ export enum ProcessOperationType {
   OTHER = 'OTHER',
 }
 
-/** Domestic customer segment. */
+/** Domestic customer segment (role within a market). */
 export enum CustomerType {
   NORMAL = 'NORMAL',
   AGENT = 'AGENT',
@@ -36,6 +36,12 @@ export enum CustomerType {
   WHOLESALE = 'WHOLESALE',
   CAFE = 'CAFE',
   OTHER = 'OTHER',
+}
+
+/** Local roast market vs international export buyer. */
+export enum CustomerMarket {
+  LOCAL = 'LOCAL',
+  INTERNATIONAL = 'INTERNATIONAL',
 }
 
 /** Uploaded customer document category. */

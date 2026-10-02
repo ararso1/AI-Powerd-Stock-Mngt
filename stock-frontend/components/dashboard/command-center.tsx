@@ -91,8 +91,8 @@ export function CommandCenter() {
           setLocalData(res);
         } else {
           const res = await api<ExportDashboardData>(path);
-        if (cancelled) return;
-        applyCurrencyFromResponse(res);
+          if (cancelled) return;
+          applyCurrencyFromResponse(res);
           setExportData(res);
         }
       } catch (e) {

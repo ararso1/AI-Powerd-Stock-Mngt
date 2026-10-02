@@ -3,6 +3,13 @@
 import { useMemo, useState } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
+import {
+  CheckCircle2Icon,
+  CircleIcon,
+  FileTextIcon,
+  PackageIcon,
+  TruckIcon,
+} from "lucide-react";
 import { AppShell } from "@/components/app-shell";
 import { PageLoading } from "@/components/shared/page-loading";
 import { PermissionGate } from "@/components/permission-gate";
@@ -16,13 +23,96 @@ import {
 } from "@/components/frappe";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { api } from "@/lib/api";
 import { errorMessage, formatDate, formatMoney, formatQty } from "@/lib/format";
-import type { ExportContract, ExportStoreLot } from "@/lib/types";
+import type {
+  ExportContract,
+  ExportContractStatus,
+  ExportStoreLot,
+} from "@/lib/types";
 import { useFetch } from "@/hooks/use-fetch";
+import { cn } from "@/lib/utils";
 import { toast } from "sonner";
+
+const CONTRACT_STEPS: Array<{
+  key: ExportContractStatus;
+  label: string;
+}> = [
+  { key: "DRAFT", label: "Draft" },
+  { key: "ALLOCATED", label: "Allocated" },
+  { key: "STAGED", label: "Staged" },
+  { key: "SHIPPED", label: "Shipped" },
+  { key: "DELIVERED", label: "Delivered" },
+  { key: "CLOSED", label: "Closed" },
+];
+
+function contractStepIndex(status: ExportContractStatus): number {
+  if (status === "CANCELLED") return -1;
+  return Math.max(
+    0,
+    CONTRACT_STEPS.findIndex((step) => step.key === status)
+  );
+}
+
+function ContractLifecycle({ status }: { status: ExportContractStatus }) {
+  if (status === "CANCELLED") {
+    return (
+      <div className="rounded-xl border border-rose-500/30 bg-rose-500/10 px-4 py-3 text-sm text-rose-900">
+        This contract was cancelled and reserved stock was released.
+      </div>
+    );
+  }
+  const current = contractStepIndex(status);
+  return (
+    <ol className="grid gap-2 sm:grid-cols-3 lg:grid-cols-6">
+      {CONTRACT_STEPS.map((step, index) => {
+        const done = index < current;
+        const active = index === current;
+        return (
+          <li
+            key={step.key}
+            className={cn(
+              "rounded-xl border px-3 py-3",
+              done && "border-emerald-500/35 bg-emerald-500/[0.08]",
+              active &&
+                "border-[var(--csolve-moss)] bg-[var(--csolve-moss)]/[0.08] ring-1 ring-[var(--csolve-moss)]/20",
+              !done &&
+                !active &&
+                "border-[var(--frappe-border)] bg-[var(--frappe-surface)] opacity-75"
+            )}
+          >
+            <div className="flex items-center gap-2">
+              <span
+                className={cn(
+                  "flex size-6 items-center justify-center rounded-full",
+                  done && "bg-emerald-600 text-white",
+                  active &&
+                    "bg-[var(--csolve-moss)] text-[var(--csolve-parchment)]",
+                  !done &&
+                    !active &&
+                    "bg-[var(--frappe-border)] text-[var(--frappe-text-muted)]"
+                )}
+              >
+                {done ? (
+                  <CheckCircle2Icon className="size-3.5" />
+                ) : (
+                  <CircleIcon className="size-3" />
+                )}
+              </span>
+              <div>
+                <p className="text-[10px] font-medium uppercase tracking-wide text-[var(--frappe-text-muted)]">
+                  Step {index + 1}
+                </p>
+                <p className="text-sm font-semibold">{step.label}</p>
+              </div>
+            </div>
+          </li>
+        );
+      })}
+    </ol>
+  );
+}
 
 export default function ExportDetailPage() {
   const params = useParams();
@@ -47,6 +137,11 @@ export default function ExportDetailPage() {
     () => contract?.docChecklist ?? [],
     [contract?.docChecklist]
   );
+  const docsDone = checklist.filter((d) => d.done).length;
+  const docsPct =
+    checklist.length > 0
+      ? Math.round((docsDone / checklist.length) * 100)
+      : 0;
 
   async function runAction(
     path: string,
@@ -118,7 +213,7 @@ export default function ExportDetailPage() {
   async function setDocReference(key: string, reference: string) {
     if (!contract) return;
     const next = checklist.map((d) =>
-      d.key === key ? { ...d, reference: reference || null } : d
+      d.key === key ? { ...d, reference: reference || null, done: Boolean(reference) || d.done } : d
     );
     await saveDocs(next, "Reference saved");
   }
@@ -148,6 +243,9 @@ export default function ExportDetailPage() {
           ? "Delivered stock"
           : null;
 
+  const locked =
+    contract.status === "CLOSED" || contract.status === "CANCELLED";
+
   return (
     <AppShell
       title={contract.contractNumber}
@@ -169,6 +267,62 @@ export default function ExportDetailPage() {
       <PermissionGate permission="export.read">
         <div className="mx-auto max-w-5xl space-y-4">
           <FrappeButtonLink href="/exports">← Back to list</FrappeButtonLink>
+
+          <section className="overflow-hidden rounded-2xl border border-[var(--frappe-border)] bg-[var(--frappe-surface)]">
+            <div className="border-b border-[var(--frappe-border)] bg-gradient-to-br from-[var(--csolve-moss)]/[0.08] to-transparent px-5 py-4">
+              <div className="flex flex-wrap items-center gap-2">
+                <TruckIcon className="size-4 text-[var(--csolve-moss)]" />
+                <h2 className="text-sm font-semibold uppercase tracking-wide text-[var(--frappe-text-muted)]">
+                  Contract lifecycle
+                </h2>
+              </div>
+              <div className="mt-3">
+                <ContractLifecycle status={contract.status} />
+              </div>
+            </div>
+            <div className="grid gap-3 px-5 py-4 sm:grid-cols-2 lg:grid-cols-4">
+              <div className="rounded-xl border border-[var(--frappe-border)] bg-[var(--frappe-bg)]/40 px-3 py-2.5">
+                <p className="text-[11px] uppercase tracking-wide text-[var(--frappe-text-muted)]">
+                  Volume filled
+                </p>
+                <p className="mt-1 text-sm font-semibold">
+                  {formatQty(contract.allocatedKg)} /{" "}
+                  {formatQty(contract.volumeKg)} kg
+                </p>
+                <p className="text-xs text-[var(--frappe-text-muted)]">
+                  {fillPct}% allocated
+                </p>
+              </div>
+              <div className="rounded-xl border border-[var(--frappe-border)] bg-[var(--frappe-bg)]/40 px-3 py-2.5">
+                <p className="text-[11px] uppercase tracking-wide text-[var(--frappe-text-muted)]">
+                  Documents
+                </p>
+                <p className="mt-1 text-sm font-semibold">
+                  {docsDone}/{checklist.length}
+                </p>
+                <p className="text-xs text-[var(--frappe-text-muted)]">
+                  {docsPct}% complete
+                </p>
+              </div>
+              <div className="rounded-xl border border-[var(--frappe-border)] bg-[var(--frappe-bg)]/40 px-3 py-2.5">
+                <p className="text-[11px] uppercase tracking-wide text-[var(--frappe-text-muted)]">
+                  Ship window
+                </p>
+                <p className="mt-1 text-sm font-semibold">
+                  {formatDate(contract.windowStart ?? undefined)} →{" "}
+                  {formatDate(contract.windowEnd ?? undefined)}
+                </p>
+              </div>
+              <div className="rounded-xl border border-[var(--frappe-border)] bg-[var(--frappe-bg)]/40 px-3 py-2.5">
+                <p className="text-[11px] uppercase tracking-wide text-[var(--frappe-text-muted)]">
+                  Destination
+                </p>
+                <p className="mt-1 text-sm font-semibold">
+                  {contract.destination ?? "—"}
+                </p>
+              </div>
+            </div>
+          </section>
 
           <FrappeDocument>
             <FrappeSection title="Commercial">
@@ -193,13 +347,6 @@ export default function ExportDetailPage() {
                   </p>
                 </div>
                 <div>
-                  <p className="text-xs text-muted-foreground">Volume</p>
-                  <p className="text-sm">
-                    {formatQty(contract.allocatedKg)} /{" "}
-                    {formatQty(contract.volumeKg)} kg ({fillPct}% filled)
-                  </p>
-                </div>
-                <div>
                   <p className="text-xs text-muted-foreground">Price</p>
                   <p className="text-sm">
                     {contract.currencyCode} {formatMoney(contract.pricePerKg)}
@@ -209,10 +356,6 @@ export default function ExportDetailPage() {
                 <div>
                   <p className="text-xs text-muted-foreground">Incoterm</p>
                   <p className="text-sm">{contract.incoterm}</p>
-                </div>
-                <div>
-                  <p className="text-xs text-muted-foreground">Destination</p>
-                  <p className="text-sm">{contract.destination ?? "—"}</p>
                 </div>
                 <div>
                   <p className="text-xs text-muted-foreground">Container</p>
@@ -234,13 +377,6 @@ export default function ExportDetailPage() {
                   </p>
                   <p className="text-sm">
                     {formatDate(contract.expectedArrival ?? undefined)}
-                  </p>
-                </div>
-                <div>
-                  <p className="text-xs text-muted-foreground">Ship window</p>
-                  <p className="text-sm">
-                    {formatDate(contract.windowStart ?? undefined)} →{" "}
-                    {formatDate(contract.windowEnd ?? undefined)}
                   </p>
                 </div>
                 <div>
@@ -325,12 +461,20 @@ export default function ExportDetailPage() {
                     {(contract.allocations ?? []).map((a) => (
                       <tr key={a.id}>
                         <td>
-                          <Link
-                            href={`/lots/${a.lotId}`}
-                            className="text-[var(--frappe-primary)] hover:underline"
-                          >
-                            {a.lot?.code ?? a.lotId.slice(0, 8)}
-                          </Link>
+                          <div className="flex flex-col gap-0.5">
+                            <Link
+                              href={`/lots/${a.lotId}`}
+                              className="text-[var(--frappe-primary)] hover:underline"
+                            >
+                              {a.lot?.code ?? a.lotId.slice(0, 8)}
+                            </Link>
+                            <Link
+                              href={`/exports/lots/${a.lotId}`}
+                              className="text-xs text-[var(--frappe-text-muted)] hover:text-[var(--frappe-primary)] hover:underline"
+                            >
+                              Export lot detail
+                            </Link>
+                          </div>
                         </td>
                         <td>{a.lot?.grade ?? "—"}</td>
                         <td>
@@ -382,7 +526,8 @@ export default function ExportDetailPage() {
                         <option value="">Select export store lot…</option>
                         {lots.map((l) => (
                           <option key={l.lotId} value={l.lotId}>
-                            {l.lotCode} · {l.grade ?? "—"} · {formatQty(l.quantityKg)} kg
+                            {l.lotCode} · {l.grade ?? "—"} ·{" "}
+                            {formatQty(l.quantityKg)} kg
                           </option>
                         ))}
                       </select>
@@ -409,71 +554,125 @@ export default function ExportDetailPage() {
               </PermissionGate>
             </FrappeSection>
 
-            <FrappeSection title="Export documents">
-              <ul className="space-y-3">
+            <FrappeSection
+              title="Export documents"
+              description={`${docsDone} of ${checklist.length} documents marked complete`}
+            >
+              <div className="mb-4 flex items-center gap-3">
+                <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-[var(--frappe-border)]">
+                  <div
+                    className="h-full rounded-full bg-[var(--csolve-moss)] transition-all"
+                    style={{ width: `${docsPct}%` }}
+                  />
+                </div>
+                <span className="text-sm font-semibold tabular-nums text-[var(--csolve-moss)]">
+                  {docsPct}%
+                </span>
+              </div>
+              <ul className="space-y-2">
                 {checklist.map((d) => (
                   <li
                     key={d.key}
-                    className="grid gap-2 rounded border border-[var(--frappe-border)] p-3 sm:grid-cols-[auto_1fr_minmax(8rem,12rem)] sm:items-center"
-                  >
-                    <div className="flex items-center gap-2 text-sm">
-                      <Checkbox
-                        checked={d.done}
-                        disabled={
-                          busy ||
-                          contract.status === "CLOSED" ||
-                          contract.status === "CANCELLED"
-                        }
-                        onCheckedChange={(v) =>
-                          void toggleDoc(d.key, v === true)
-                        }
-                      />
-                      <span className={d.done ? "line-through opacity-60" : ""}>
-                        {d.label}
-                      </span>
-                    </div>
-                    <Input
-                      className="h-8 text-xs"
-                      placeholder="Document / certificate reference"
-                      defaultValue={d.reference ?? ""}
-                      disabled={
-                        busy ||
-                        contract.status === "CLOSED" ||
-                        contract.status === "CANCELLED"
-                      }
-                      onBlur={(e) => {
-                        const next = e.target.value.trim();
-                        if (next !== (d.reference ?? "")) {
-                          void setDocReference(d.key, next);
-                        }
-                      }}
-                    />
-                    {d.url ? (
-                      <a
-                        href={d.url}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="text-xs text-[var(--frappe-primary)] hover:underline"
-                      >
-                        Open link
-                      </a>
-                    ) : (
-                      <span className="text-xs text-muted-foreground">
-                        Ref only
-                      </span>
+                    className={cn(
+                      "rounded-xl border px-4 py-3 transition-colors",
+                      d.done
+                        ? "border-emerald-500/30 bg-emerald-500/[0.06]"
+                        : "border-[var(--frappe-border)] bg-[var(--frappe-surface)]"
                     )}
+                  >
+                    <div className="flex flex-wrap items-center gap-3">
+                      <button
+                        type="button"
+                        disabled={busy || locked}
+                        onClick={() => void toggleDoc(d.key, !d.done)}
+                        className={cn(
+                          "flex size-8 shrink-0 items-center justify-center rounded-full",
+                          d.done
+                            ? "bg-emerald-600 text-white"
+                            : "bg-[var(--frappe-border)] text-[var(--frappe-text-muted)]",
+                          !locked && "hover:opacity-90"
+                        )}
+                        aria-label={
+                          d.done ? `Unmark ${d.label}` : `Mark ${d.label}`
+                        }
+                      >
+                        {d.done ? (
+                          <CheckCircle2Icon className="size-4" />
+                        ) : (
+                          <FileTextIcon className="size-3.5" />
+                        )}
+                      </button>
+                      <div className="min-w-0 flex-1">
+                        <p className="text-sm font-medium">{d.label}</p>
+                        <p className="text-xs text-[var(--frappe-text-muted)]">
+                          {d.done
+                            ? d.reference
+                              ? `Ref · ${d.reference}`
+                              : "Marked complete"
+                            : "Pending"}
+                        </p>
+                      </div>
+                      <Badge variant="outline" className="shrink-0">
+                        {d.done ? "Attached" : "Pending"}
+                      </Badge>
+                    </div>
+                    <div className="mt-3 grid gap-2 sm:grid-cols-[1fr_auto] sm:items-center">
+                      <Input
+                        className="h-8 text-xs"
+                        placeholder="Document / certificate reference"
+                        defaultValue={d.reference ?? ""}
+                        disabled={busy || locked}
+                        onBlur={(e) => {
+                          const next = e.target.value.trim();
+                          if (next !== (d.reference ?? "")) {
+                            void setDocReference(d.key, next);
+                          }
+                        }}
+                      />
+                      {d.url ? (
+                        <a
+                          href={d.url}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="text-xs text-[var(--frappe-primary)] hover:underline"
+                        >
+                          Open link
+                        </a>
+                      ) : (
+                        <span className="text-xs text-muted-foreground">
+                          Ref only
+                        </span>
+                      )}
+                    </div>
                   </li>
                 ))}
+                {checklist.length === 0 ? (
+                  <li className="rounded-xl border border-dashed border-[var(--frappe-border)] px-4 py-6 text-center text-sm text-[var(--frappe-text-muted)]">
+                    No document checklist on this contract yet.
+                  </li>
+                ) : null}
               </ul>
             </FrappeSection>
 
             {(contract.packingList ?? []).length > 0 ? (
               <FrappeSection title="Packing list">
-                <ul className="space-y-1 text-sm">
+                <ul className="space-y-2">
                   {contract.packingList!.map((p) => (
-                    <li key={p.lotId}>
-                      {p.lotCode}: {formatQty(p.quantityKg)} kg
-                      {p.grade ? ` · ${p.grade}` : ""}
+                    <li
+                      key={p.lotId}
+                      className="flex items-center gap-2 rounded-lg border border-[var(--frappe-border)] px-3 py-2 text-sm"
+                    >
+                      <PackageIcon className="size-3.5 text-[var(--frappe-text-muted)]" />
+                      <Link
+                        href={`/exports/lots/${p.lotId}`}
+                        className="font-medium text-[var(--frappe-primary)] hover:underline"
+                      >
+                        {p.lotCode}
+                      </Link>
+                      <span className="text-[var(--frappe-text-muted)]">
+                        {formatQty(String(p.quantityKg))} kg
+                        {p.grade ? ` · ${p.grade}` : ""}
+                      </span>
                     </li>
                   ))}
                 </ul>

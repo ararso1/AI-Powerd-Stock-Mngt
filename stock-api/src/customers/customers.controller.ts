@@ -21,10 +21,10 @@ import { CurrentUser } from '../common/decorators/current-user.decorator';
 import type { JwtPayload } from '../common/decorators/current-user.decorator';
 import { RequirePermissions } from '../common/decorators/permissions.decorator';
 import { ListQueryDto } from '../common/dto/list-query.dto';
-import { CustomerDocumentKind } from '../common/enums';
+import { CustomerDocumentKind, CustomerMarket } from '../common/enums';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { PermissionsGuard } from '../common/guards/permissions.guard';
-import { IsBooleanString, IsOptional, IsString, MaxLength } from 'class-validator';
+import { IsBooleanString, IsEnum, IsOptional, IsString, MaxLength } from 'class-validator';
 import { CreateCustomerDto, UpdateCustomerDto } from './dto/customer.dto';
 import { CustomersService } from './customers.service';
 
@@ -32,6 +32,10 @@ class CustomerListQueryDto extends ListQueryDto {
   @IsOptional()
   @IsBooleanString()
   includeInactive?: string;
+
+  @IsOptional()
+  @IsEnum(CustomerMarket)
+  market?: CustomerMarket;
 }
 
 class UploadDocumentBodyDto {
@@ -54,6 +58,7 @@ export class CustomersController {
       limit: query.limit,
       search: query.search,
       includeInactive: query.includeInactive === 'true',
+      market: query.market,
     });
   }
 

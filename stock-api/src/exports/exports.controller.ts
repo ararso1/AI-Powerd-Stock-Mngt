@@ -1,13 +1,21 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   Param,
   Patch,
   Post,
   Query,
+  Res,
+  UploadedFile,
   UseGuards,
+  UseInterceptors,
 } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
+import { memoryStorage } from 'multer';
+import type { Response } from 'express';
+import { IsBooleanString, IsOptional, IsString, MaxLength } from 'class-validator';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import type { JwtPayload } from '../common/decorators/current-user.decorator';
 import { RequirePermissions } from '../common/decorators/permissions.decorator';
@@ -23,6 +31,21 @@ import {
   UpdateExportContractDto,
 } from './dto/export-contract.dto';
 import { ExportsService } from './exports.service';
+
+class UpsertExportLotDocumentBodyDto {
+  @IsOptional()
+  @IsString()
+  @MaxLength(160)
+  reference?: string;
+
+  @IsOptional()
+  @IsString()
+  notes?: string;
+
+  @IsOptional()
+  @IsBooleanString()
+  clearFile?: string;
+}
 
 @Controller('exports')
 @UseGuards(JwtAuthGuard, PermissionsGuard)
@@ -41,6 +64,12 @@ export class ExportsController {
     return this.service.exportStore();
   }
 
+  @Get('store/:lotId')
+  @RequirePermissions('export.read')
+  storeLot(@Param('lotId') lotId: string) {
+    return this.service.exportStoreLot(lotId);
+  }
+
   @Post('store/:lotId/attach')
   @RequirePermissions('export.write')
   attachLot(
@@ -49,6 +78,60 @@ export class ExportsController {
     @CurrentUser() user: JwtPayload,
   ) {
     return this.service.attachLot(lotId, dto, user.sub);
+  }
+
+  @Post('store/:lotId/documents/:key')
+  @RequirePermissions('export.write')
+  @UseInterceptors(
+    FileInterceptor('file', {
+      storage: memoryStorage(),
+      limits: { fileSize: 10 * 1024 * 1024 },
+    }),
+  )
+  upsertLotDocument(
+    @Param('lotId') lotId: string,
+    @Param('key') key: string,
+    @UploadedFile() file: Express.Multer.File | undefined,
+    @Body() body: UpsertExportLotDocumentBodyDto,
+  ) {
+    return this.service.upsertLotDocument(lotId, key, {
+      reference: body.reference,
+      notes: body.notes,
+      clearFile: body.clearFile === 'true',
+      file: file
+        ? {
+            originalname: file.originalname,
+            mimetype: file.mimetype,
+            size: file.size,
+            buffer: file.buffer,
+          }
+        : undefined,
+    });
+  }
+
+  @Get('store/:lotId/documents/:key/file')
+  @RequirePermissions('export.read')
+  async downloadLotDocument(
+    @Param('lotId') lotId: string,
+    @Param('key') key: string,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const { file, mimeType, originalName } =
+      await this.service.downloadLotDocument(lotId, key);
+    res.set({
+      'Content-Type': mimeType,
+      'Content-Disposition': `inline; filename="${originalName.replace(/"/g, '')}"`,
+    });
+    return file;
+  }
+
+  @Delete('store/:lotId/documents/:key/file')
+  @RequirePermissions('export.write')
+  clearLotDocumentFile(
+    @Param('lotId') lotId: string,
+    @Param('key') key: string,
+  ) {
+    return this.service.clearLotDocumentFile(lotId, key);
   }
 
   @Get(':id')

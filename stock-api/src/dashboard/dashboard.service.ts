@@ -95,18 +95,13 @@ export class DashboardService {
   }
 
   /**
-   * Export / green coffee dashboard.
-   * Green stock → contracts → allocate/stage/ship → market & FX.
+   * Export coffee command center: purchase → process → packaging → export store → ship.
    */
   async getExportOverview(from?: string, to?: string) {
     const overview = await this.getOverview(from, to);
     const fromIso = overview.period?.from ?? from ?? undefined;
     const toIso = overview.period?.to ?? to ?? undefined;
-    const exportPnl = await this.computeProfitSummary(
-      fromIso ?? undefined,
-      toIso ?? undefined,
-      SaleChannel.EXPORT,
-    );
+    const market = await this.buildExportMarket(fromIso, toIso);
     const pipeline = await this.buildExportPipeline();
 
     const exportCodes = new Set([
@@ -118,110 +113,610 @@ export class DashboardService {
     const recommendations = (overview.recommendations ?? []).filter((r) =>
       exportCodes.has(r.code),
     );
-    const executiveInsights = (overview.executiveInsights ?? []).filter(
-      (c) =>
-        c.category === 'Export' ||
-        c.category === 'Profit' ||
-        c.category === 'Stock' ||
-        c.href.includes('/exports') ||
-        c.href.includes('/market'),
-    );
-
-    const exportGross = parseFloat(exportPnl.grossProfit);
-    if (exportGross !== 0) {
-      executiveInsights.unshift({
-        id: 'export-profit',
-        tone: exportGross >= 0 ? 'profit' : 'warn',
-        category: 'Profit',
-        title: `Export channel gross profit is ${exportGross.toLocaleString()} ETB for the period.`,
-        detail: `Revenue ${exportPnl.revenue} · COGS ${exportPnl.costOfGoodsSold}`,
-        href: '/exports',
-      });
-    }
-
-    const analytics = overview.analytics;
-    const exportSalesQb = this.saleRepo
-      .createQueryBuilder('s')
-      .select('COALESCE(SUM(s.total::numeric), 0)', 'total')
-      .where('s.status = :status', { status: DocumentStatus.ACTIVE })
-      .andWhere('s.channel = :channel', { channel: SaleChannel.EXPORT });
-    applyDateRangeToQb(exportSalesQb, 's.created_at', fromIso, toIso);
-    const exportSalesPeriod = await exportSalesQb.getRawOne<{ total: string }>();
 
     return {
       channel: 'EXPORT' as const,
       currency: overview.currency,
       asOf: overview.asOf,
       period: overview.period,
-      totalInventoryValue: overview.totalInventoryValue,
-      stockValueByLocation: overview.stockValueByLocation,
-      dailySales: parseFloat(exportSalesPeriod?.total ?? '0').toFixed(2),
-      profitAndLoss: exportPnl,
-      financialOverview: overview.financialOverview,
-      pulse: overview.pulse
-        ? {
-            greenStockKg: overview.pulse.greenStockKg,
-            exportStagedKg: overview.pulse.exportStagedKg,
-            openAlerts: overview.pulse.openAlerts,
-            exportSalesToday: parseFloat(
-              exportSalesPeriod?.total ?? '0',
-            ).toFixed(2),
-          }
-        : null,
+      flow: market.flow,
+      activity: market.activity,
+      readiness: market.readiness,
+      charts: market.charts,
+      finance: market.finance,
       contracts: overview.contracts,
       pipeline,
-      commercial: overview.commercial
-        ? {
-            exportRevenue: overview.commercial.exportRevenue,
-            customerCreditOutstanding:
-              overview.commercial.customerCreditOutstanding,
-            totalLiquidity: overview.commercial.totalLiquidity,
-            outstandingExportPayments:
-              analytics?.export.outstandingExportPayments ?? '0.00',
-          }
-        : null,
-      analytics: analytics
-        ? {
-            inventory: {
-              totalStockKg: analytics.inventory.totalStockKg,
-              stockValue: analytics.inventory.stockValue,
-              availableKg: analytics.inventory.availableKg,
-              reservedKg: analytics.inventory.reservedKg,
-              exportStockKg: analytics.inventory.exportStockKg,
-            },
-            trading: {
-              exportSalesValue: analytics.trading.exportSalesValue,
-              salesVolumeKg: analytics.trading.exportSalesVolumeKg,
-              salesValue: analytics.trading.exportSalesValue,
-              chart: [
-                {
-                  label: 'Export sales',
-                  value: Number(analytics.trading.exportSalesValue),
-                },
-                {
-                  label: 'Shipped value',
-                  value: Number(analytics.export.exportValue),
-                },
-              ],
-            },
-            export: analytics.export,
-          }
-        : null,
-      market: overview.market,
+      commercial: {
+        exportRevenue: market.finance.revenue,
+        customerCreditOutstanding: market.customerCredit,
+        totalLiquidity:
+          overview.commercial?.totalLiquidity ??
+          overview.financialOverview.totalLiquidity ??
+          overview.financialOverview.totalBankBalance,
+        outstandingExportPayments: market.outstandingPayments,
+        supplierCredit: market.supplierCredit,
+      },
+      financialOverview: overview.financialOverview,
       recommendations: recommendations.slice(0, 12),
-      executiveInsights: executiveInsights.slice(0, 6),
+      executiveInsights: market.insights,
       links: {
-        greenLots: overview.links?.greenLots,
-        exportStaged: overview.links?.exportStaged,
-        openContracts: overview.links?.openContracts,
+        greenLots: '/lots?form=GREEN',
+        exportStore: '/exports',
+        openContracts: '/exports',
+        processRuns: '/process-runs?workflow=EXPORT',
+        purchases: '/purchases?purchaseType=EXPORT',
         notifications: overview.links?.notifications,
         reports: overview.links?.reports,
         profitLoss: overview.links?.profitLoss,
         insights: overview.links?.insights,
         credits: overview.links?.credits,
-        marketPrices: overview.links?.marketPrices,
       },
     };
+  }
+
+  private async buildExportMarket(from?: string, to?: string) {
+    const [
+      pnl,
+      exportLotIds,
+      localLotIds,
+      stocks,
+      runs,
+      purchaseTotals,
+      purchaseKg,
+      saleLines,
+      customerCredit,
+      supplierCredit,
+      contracts,
+      exportLots,
+    ] = await Promise.all([
+      this.computeProfitSummary(from, to, SaleChannel.EXPORT),
+      this.purchaseLotIds(PurchaseType.EXPORT),
+      this.purchaseLotIds(PurchaseType.LOCAL),
+      this.stockRepo.find({
+        relations: { item: true, lot: true, location: true },
+      }),
+      this.processRunRepo.find({ where: { workflow: PurchaseType.EXPORT } }),
+      this.typedPurchaseTotals(PurchaseType.EXPORT, from, to),
+      this.typedPurchaseKg(PurchaseType.EXPORT, from, to),
+      this.channelSaleLines(SaleChannel.EXPORT, from, to),
+      this.channelCustomerCredit(SaleChannel.EXPORT),
+      this.typedSupplierCredit(PurchaseType.EXPORT),
+      this.exportRepo.find({
+        relations: { allocations: true },
+      }),
+      this.lotRepo.find({
+        where: { processMethod: 'Export store' },
+        relations: { location: true },
+      }),
+    ]);
+
+    let inventoryKg = 0;
+    let inventoryValue = 0;
+    const gradeMap = new Map<string, number>();
+
+    for (const stock of stocks) {
+      const lotId = stock.lotId;
+      if (!lotId || !exportLotIds.has(lotId) || localLotIds.has(lotId)) continue;
+      const qty = num(stock.quantity);
+      if (qty <= 0) continue;
+      const method = stock.lot?.processMethod ?? null;
+      const form = stock.lot?.form ?? null;
+      if (method === 'Export store' || method === 'Packaging') continue;
+      if (
+        method === 'Export processing' ||
+        method === 'Cleaning' ||
+        method === 'Export remainder'
+      ) {
+        continue;
+      }
+      if (
+        form &&
+        form !== CoffeeForm.GREEN &&
+        form !== CoffeeForm.PARCHMENT &&
+        form !== CoffeeForm.CHERRY
+      ) {
+        continue;
+      }
+      inventoryKg += qty;
+      inventoryValue += qty * num(stock.purchasePrice);
+      const grade = stock.lot?.grade?.trim() || 'Ungraded';
+      gradeMap.set(grade, (gradeMap.get(grade) ?? 0) + qty);
+    }
+
+    const openStatuses = new Set<ProcessRunStatus>([
+      ProcessRunStatus.IN_PROGRESS,
+      ProcessRunStatus.QC_HOLD,
+      ProcessRunStatus.READY,
+    ]);
+    let processingStartedKg = 0;
+    let cleaningKg = 0;
+    let packagingKg = 0;
+    let openRuns = 0;
+    let completedRuns = 0;
+    let cleaningInputKg = 0;
+    let cleaningOutputKg = 0;
+    let cleaningLossKg = 0;
+    let highLossRuns = 0;
+    let packagedKgPeriod = 0;
+    let rejectKg = 0;
+
+    for (const run of runs) {
+      if (openStatuses.has(run.status)) {
+        openRuns += 1;
+        const stage = currentProcessStage(run);
+        const kgNow = kgAtCurrentStage(run);
+        if (stage === 'Processing Started') processingStartedKg += kgNow;
+        else if (stage === 'Cleaning') cleaningKg += kgNow;
+        else if (
+          String(stage) === 'Packaging' ||
+          String(stage) === 'Packaging & Export Store'
+        ) {
+          packagingKg += kgNow;
+        }
+      }
+      if (run.status === ProcessRunStatus.COMPLETED) completedRuns += 1;
+      rejectKg += num(run.quantityReject);
+      for (const result of run.stageResults ?? []) {
+        if (!inPeriod(result.completedAt, from, to)) continue;
+        if (result.stage === 'Cleaning') {
+          cleaningInputKg += num(result.inputQty);
+          cleaningOutputKg += num(result.outputQty);
+          cleaningLossKg += num(result.removedQty);
+          if (result.warnings?.includes('HIGH_LOSS')) highLossRuns += 1;
+        }
+        if (
+          String(result.stage) === 'Packaging' ||
+          String(result.stage) === 'Export Store' ||
+          String(result.stage) === 'Packaging & Export Store'
+        ) {
+          packagedKgPeriod += num(
+            (result as { packagedKg?: string }).packagedKg ?? result.outputQty,
+          );
+        }
+      }
+    }
+
+    const runByOutputLot = new Map<string, ProcessRun>();
+    for (const run of runs) {
+      if (run.outputLotId) runByOutputLot.set(run.outputLotId, run);
+      for (const result of run.stageResults ?? []) {
+        if (result.outputLotId) runByOutputLot.set(result.outputLotId, run);
+      }
+    }
+
+    let exportStoreKg = 0;
+    let exportStoreLots = 0;
+    let reservedKg = 0;
+    let shippedFromStoreKg = 0;
+    let docsReadyLots = 0;
+    let ectaReadyLots = 0;
+    let shipReadyLots = 0;
+    let loadedLots = 0;
+    const requiredDocs = [
+      'PERMIT',
+      'CLEARANCE',
+      'CHAMBER',
+      'WAYBILL',
+      'X1',
+      'DECLARATION',
+      'SHIPPING_INSTRUCTION',
+      'LC',
+    ];
+
+    for (const lot of exportLots) {
+      const onHand = num(lot.quantity);
+      const run = runByOutputLot.get(lot.id);
+      const stage = ((run?.stageResults ?? []) as Array<{
+        stage?: string;
+        outputLotId?: string | null;
+        documents?: Array<{
+          key: string;
+          reference?: string | null;
+          notes?: string | null;
+          fileStorageKey?: string | null;
+        }>;
+        loadReport?: { loadedAt?: string | null } | null;
+      }>).find(
+        (row) =>
+          row.outputLotId === lot.id &&
+          (row.stage === 'Export Store' ||
+            row.stage === 'Packaging & Export Store'),
+      );
+      const documents = stage?.documents ?? [];
+      const docsAttached = requiredDocs.filter((key) => {
+        const saved = documents.find((doc) => doc.key === key);
+        return Boolean(
+          saved?.reference?.trim() ||
+            saved?.notes?.trim() ||
+            saved?.fileStorageKey?.trim(),
+        );
+      }).length;
+      const hasEcta = Boolean(
+        lot.ectaGrade ||
+          lot.ectaCertificateNumber ||
+          lot.ectaMoisturePercent ||
+          lot.ectaCuppingScore ||
+          lot.ectaTestedAt,
+      );
+      const allocations = contracts.flatMap((contract) =>
+        (contract.allocations ?? []).filter((row) => row.lotId === lot.id),
+      );
+      const reserved = allocations
+        .filter((row) => {
+          const parent = contracts.find((c) => c.id === row.contractId);
+          return (
+            parent &&
+            [
+              ExportContractStatus.DRAFT,
+              ExportContractStatus.ALLOCATED,
+              ExportContractStatus.STAGED,
+            ].includes(parent.status)
+          );
+        })
+        .reduce((sum, row) => sum + num(row.quantityKg), 0);
+      const shipped = allocations
+        .filter((row) => {
+          const parent = contracts.find((c) => c.id === row.contractId);
+          return (
+            parent &&
+            [
+              ExportContractStatus.SHIPPED,
+              ExportContractStatus.DELIVERED,
+              ExportContractStatus.CLOSED,
+            ].includes(parent.status)
+          );
+        })
+        .reduce((sum, row) => sum + num(row.quantityKg), 0);
+
+      if (onHand > 0.0005 || reserved > 0.0005 || shipped > 0.0005) {
+        exportStoreLots += 1;
+      }
+      exportStoreKg += onHand;
+      reservedKg += reserved;
+      shippedFromStoreKg += shipped;
+      if (docsAttached >= requiredDocs.length) docsReadyLots += 1;
+      if (hasEcta) ectaReadyLots += 1;
+      if (allocations.length > 0 && docsAttached >= requiredDocs.length && hasEcta) {
+        shipReadyLots += 1;
+      }
+      if (stage?.loadReport?.loadedAt) loadedLots += 1;
+      if (onHand > 0) {
+        const grade = lot.grade?.trim() || 'Ungraded';
+        gradeMap.set(grade, (gradeMap.get(grade) ?? 0) + onHand);
+      }
+    }
+
+    let salesKg = 0;
+    let salesValue = 0;
+    const saleIds = new Set<string>();
+    const salesTrend = new Map<string, { kg: number; value: number }>();
+    const volumeTrend = new Map<
+      string,
+      { purchasedKg: number; packagedKg: number; shippedKg: number }
+    >();
+    const trendBucket = salesTrendBucket(from, to);
+
+    for (const line of saleLines) {
+      const lineKg = num(line.quantity);
+      salesKg += lineKg;
+      if (!saleIds.has(line.saleId)) {
+        saleIds.add(line.saleId);
+        salesValue += num(line.sale?.total);
+      }
+      const soldAt = line.sale?.createdAt;
+      if (!soldAt) continue;
+      const key = trendKey(new Date(soldAt), trendBucket);
+      const point = salesTrend.get(key) ?? { kg: 0, value: 0 };
+      point.kg += lineKg;
+      point.value += num(line.lineTotal);
+      salesTrend.set(key, point);
+    }
+
+    const openContracts = contracts.filter(
+      (c) =>
+        ![
+          ExportContractStatus.CANCELLED,
+          ExportContractStatus.CLOSED,
+        ].includes(c.status),
+    );
+    const stagedKg = contracts
+      .filter((c) => c.status === ExportContractStatus.STAGED)
+      .reduce((sum, c) => sum + num(c.allocatedKg), 0);
+    const shippedContractKg = contracts.reduce(
+      (sum, c) => sum + num(c.shippedKg),
+      0,
+    );
+    const openVolumeKg = openContracts.reduce(
+      (sum, c) => sum + num(c.volumeKg),
+      0,
+    );
+    const allocatedKg = openContracts.reduce(
+      (sum, c) => sum + num(c.allocatedKg),
+      0,
+    );
+
+    const purchaseTrendQb = this.purchaseRepo
+      .createQueryBuilder('p')
+      .innerJoin('p.lines', 'line')
+      .select('p.created_at', 'createdAt')
+      .addSelect('line.quantity', 'quantity')
+      .where('p.purchase_type = :type', { type: PurchaseType.EXPORT })
+      .andWhere('p.status = :status', { status: DocumentStatus.ACTIVE });
+    applyDateRangeToQb(purchaseTrendQb, 'p.created_at', from, to);
+    const purchaseRows = await purchaseTrendQb.getRawMany<{
+      createdAt: Date;
+      quantity: string;
+    }>();
+    for (const row of purchaseRows) {
+      const key = trendKey(new Date(row.createdAt), trendBucket);
+      const point = volumeTrend.get(key) ?? {
+        purchasedKg: 0,
+        packagedKg: 0,
+        shippedKg: 0,
+      };
+      point.purchasedKg += num(row.quantity);
+      volumeTrend.set(key, point);
+    }
+    for (const run of runs) {
+      for (const result of run.stageResults ?? []) {
+        if (
+          String(result.stage) !== 'Packaging' &&
+          String(result.stage) !== 'Export Store' &&
+          String(result.stage) !== 'Packaging & Export Store'
+        ) {
+          continue;
+        }
+        if (!inPeriod(result.completedAt, from, to)) continue;
+        const key = trendKey(new Date(result.completedAt), trendBucket);
+        const point = volumeTrend.get(key) ?? {
+          purchasedKg: 0,
+          packagedKg: 0,
+          shippedKg: 0,
+        };
+        point.packagedKg += num(
+          (result as { packagedKg?: string }).packagedKg ?? result.outputQty,
+        );
+        volumeTrend.set(key, point);
+      }
+    }
+    for (const contract of contracts) {
+      if (!contract.shippedAt) continue;
+      if (!inPeriod(contract.shippedAt.toISOString(), from, to)) continue;
+      const key = trendKey(new Date(contract.shippedAt), trendBucket);
+      const point = volumeTrend.get(key) ?? {
+        purchasedKg: 0,
+        packagedKg: 0,
+        shippedKg: 0,
+      };
+      point.shippedKg += num(contract.shippedKg);
+      volumeTrend.set(key, point);
+    }
+
+    const yieldPercent =
+      cleaningInputKg > 0 ? (cleaningOutputKg / cleaningInputKg) * 100 : 0;
+    const gross = num(pnl.grossProfit);
+    const insights: Array<{
+      id: string;
+      tone: 'positive' | 'critical' | 'warn' | 'info' | 'profit';
+      category: string;
+      title: string;
+      detail: string;
+      href: string;
+    }> = [];
+    if (gross !== 0) {
+      insights.push({
+        id: 'export-profit',
+        tone: gross >= 0 ? 'profit' : 'warn',
+        category: 'Profit',
+        title: `Export gross profit is ${gross.toLocaleString()} for this period.`,
+        detail: `Revenue ${pnl.revenue} · COGS ${pnl.costOfGoodsSold}`,
+        href: '/exports',
+      });
+    }
+    if (exportStoreKg > 0) {
+      insights.push({
+        id: 'export-store',
+        tone: 'info',
+        category: 'Export store',
+        title: `${kg(exportStoreKg)} kg is export-ready across ${exportStoreLots} lot${exportStoreLots === 1 ? '' : 's'}.`,
+        detail: `${shipReadyLots} shipment-ready · ${docsReadyLots} with full documents · ${ectaReadyLots} with ECTA.`,
+        href: '/exports',
+      });
+    }
+    if (highLossRuns > 0) {
+      insights.push({
+        id: 'export-loss',
+        tone: 'warn',
+        category: 'Processing',
+        title: `${highLossRuns} export cleaning run${highLossRuns === 1 ? '' : 's'} flagged High Loss.`,
+        detail: `Loss ${kg(cleaningLossKg)} kg from ${kg(cleaningInputKg)} kg cleaned.`,
+        href: '/process-runs?workflow=EXPORT',
+      });
+    }
+    if (inventoryKg > 0 && openRuns === 0) {
+      insights.push({
+        id: 'export-ready-process',
+        tone: 'info',
+        category: 'Processing',
+        title: `${kg(inventoryKg)} kg of export coffee is waiting to be processed.`,
+        detail: 'Start an export run to move coffee through cleaning and packaging.',
+        href: '/process-runs/new/export',
+      });
+    }
+
+    const outstandingRow = await this.customerCreditRepo
+      .createQueryBuilder('credit')
+      .innerJoin('credit.sale', 'sale')
+      .select('COALESCE(SUM(credit.balance::numeric), 0)', 'total')
+      .where('credit.status IN (:...statuses)', {
+        statuses: [CreditStatus.OPEN, CreditStatus.PARTIAL],
+      })
+      .andWhere('sale.channel = :channel', { channel: SaleChannel.EXPORT })
+      .getRawOne<{ total: string }>();
+
+    return {
+      flow: {
+        purchaseCount: purchaseTotals.count,
+        purchaseKg: kg(purchaseKg),
+        purchaseValue: money(purchaseTotals.value),
+        inventoryKg: kg(inventoryKg),
+        inventoryValue: money(inventoryValue),
+        processingStartedKg: kg(processingStartedKg),
+        cleaningKg: kg(cleaningKg),
+        packagingKg: kg(packagingKg),
+        exportStoreKg: kg(exportStoreKg),
+        exportStoreLots,
+        reservedKg: kg(reservedKg),
+        stagedKg: kg(stagedKg),
+        shippedKg: kg(shippedContractKg || shippedFromStoreKg),
+        openRuns,
+        completedRuns,
+        rejectKg: kg(rejectKg),
+        salesCount: saleIds.size,
+        salesKg: kg(salesKg),
+        salesValue: money(salesValue),
+        openContracts: openContracts.length,
+        openVolumeKg: kg(openVolumeKg),
+        allocatedKg: kg(allocatedKg),
+      },
+      activity: {
+        cleaningInputKg: kg(cleaningInputKg),
+        cleaningOutputKg: kg(cleaningOutputKg),
+        cleaningLossKg: kg(cleaningLossKg),
+        yieldPercent: yieldPercent.toFixed(1),
+        highLossRuns,
+        packagedKg: kg(packagedKgPeriod),
+      },
+      readiness: {
+        docsReadyLots,
+        ectaReadyLots,
+        shipReadyLots,
+        loadedLots,
+        exportStoreLots,
+      },
+      charts: {
+        processing: [
+          { label: 'Purchase stock', value: round3(inventoryKg) },
+          { label: 'Processing started', value: round3(processingStartedKg) },
+          { label: 'Cleaning', value: round3(cleaningKg) },
+          { label: 'Packaging', value: round3(packagingKg) },
+          { label: 'Export store', value: round3(exportStoreKg) },
+        ],
+        stockMovement: [
+          { label: 'Available', value: round3(inventoryKg) },
+          {
+            label: 'In process',
+            value: round3(processingStartedKg + cleaningKg + packagingKg),
+          },
+          { label: 'Export store', value: round3(exportStoreKg) },
+          { label: 'Reserved', value: round3(reservedKg) },
+          {
+            label: 'Shipped',
+            value: round3(shippedContractKg || shippedFromStoreKg),
+          },
+        ],
+        grades: [...gradeMap.entries()]
+          .map(([label, value]) => ({ label, value: round3(value) }))
+          .sort((a, b) => b.value - a.value)
+          .slice(0, 8),
+        volumeTrend: [...volumeTrend.entries()]
+          .sort(([a], [b]) => a.localeCompare(b))
+          .map(([label, point]) => ({
+            label,
+            purchasedKg: round3(point.purchasedKg),
+            packagedKg: round3(point.packagedKg),
+            shippedKg: round3(point.shippedKg),
+          })),
+        salesTrend: [...salesTrend.entries()]
+          .sort(([a], [b]) => a.localeCompare(b))
+          .map(([label, point]) => ({
+            label,
+            kg: round3(point.kg),
+            value: round3(point.value),
+          })),
+      },
+      finance: pnl,
+      customerCredit,
+      supplierCredit,
+      outstandingPayments: money(num(outstandingRow?.total)),
+      insights: insights.slice(0, 6),
+    };
+  }
+
+  private async typedPurchaseTotals(
+    type: PurchaseType,
+    from?: string,
+    to?: string,
+  ) {
+    const qb = this.purchaseRepo
+      .createQueryBuilder('p')
+      .innerJoin('p.lines', 'line')
+      .select('COUNT(DISTINCT p.id)', 'count')
+      .addSelect('COALESCE(SUM(line.lineTotal), 0)', 'value')
+      .where('p.purchase_type = :type', { type })
+      .andWhere('p.status = :status', { status: DocumentStatus.ACTIVE })
+      .andWhere('line.lot_id IS NOT NULL');
+    applyDateRangeToQb(qb, 'p.created_at', from, to);
+    const row = await qb.getRawOne<{ count: string; value: string }>();
+    return {
+      count: parseInt(row?.count ?? '0', 10),
+      value: num(row?.value),
+    };
+  }
+
+  private async typedPurchaseKg(
+    type: PurchaseType,
+    from?: string,
+    to?: string,
+  ) {
+    const qb = this.purchaseRepo
+      .createQueryBuilder('p')
+      .innerJoin('p.lines', 'line')
+      .select('COALESCE(SUM(line.quantity::numeric), 0)', 'kg')
+      .where('p.purchase_type = :type', { type })
+      .andWhere('p.status = :status', { status: DocumentStatus.ACTIVE })
+      .andWhere('line.lot_id IS NOT NULL');
+    applyDateRangeToQb(qb, 'p.created_at', from, to);
+    const row = await qb.getRawOne<{ kg: string }>();
+    return num(row?.kg);
+  }
+
+  private async channelSaleLines(channel: SaleChannel, from?: string, to?: string) {
+    const qb = this.saleLineRepo
+      .createQueryBuilder('line')
+      .innerJoinAndSelect('line.sale', 'sale')
+      .innerJoinAndSelect('line.item', 'item')
+      .leftJoinAndSelect('line.lot', 'lot')
+      .where('sale.status = :status', { status: DocumentStatus.ACTIVE })
+      .andWhere('sale.channel = :channel', { channel });
+    applyDateRangeToQb(qb, 'sale.created_at', from, to);
+    return qb.getMany();
+  }
+
+  private async channelCustomerCredit(channel: SaleChannel) {
+    const row = await this.customerCreditRepo
+      .createQueryBuilder('credit')
+      .innerJoin('credit.sale', 'sale')
+      .select('COALESCE(SUM(credit.balance::numeric), 0)', 'total')
+      .where('credit.status IN (:...statuses)', {
+        statuses: [CreditStatus.OPEN, CreditStatus.PARTIAL],
+      })
+      .andWhere('sale.channel = :channel', { channel })
+      .getRawOne<{ total: string }>();
+    return money(num(row?.total));
+  }
+
+  private async typedSupplierCredit(type: PurchaseType) {
+    const row = await this.supplierCreditRepo
+      .createQueryBuilder('credit')
+      .innerJoin('credit.purchase', 'purchase')
+      .select('COALESCE(SUM(credit.balance::numeric), 0)', 'total')
+      .where('credit.status IN (:...statuses)', {
+        statuses: [CreditStatus.OPEN, CreditStatus.PARTIAL],
+      })
+      .andWhere('purchase.purchase_type = :type', { type })
+      .getRawOne<{ total: string }>();
+    return money(num(row?.total));
   }
 
   private async buildExportPipeline() {

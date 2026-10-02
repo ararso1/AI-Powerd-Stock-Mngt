@@ -15,7 +15,7 @@ import {
 import * as path from 'path';
 import { randomUUID } from 'crypto';
 import { Repository } from 'typeorm';
-import { CustomerDocumentKind, CustomerType } from '../common/enums';
+import { CustomerDocumentKind, CustomerMarket, CustomerType } from '../common/enums';
 import { CreditsService } from '../credits/credits.service';
 import { CustomerDocument } from '../database/entities/customer-document.entity';
 import { Customer } from '../database/entities/customer.entity';
@@ -52,11 +52,16 @@ export class CustomersService {
     limit?: number;
     search?: string;
     includeInactive?: boolean;
+    market?: CustomerMarket;
   }) {
     const qb = this.repo.createQueryBuilder('c').orderBy('c.name', 'ASC');
 
     if (!query.includeInactive) {
       qb.where('c.is_active = true');
+    }
+
+    if (query.market) {
+      qb.andWhere('c.market = :market', { market: query.market });
     }
 
     if (query.search?.trim()) {
@@ -67,7 +72,10 @@ export class CustomersService {
           OR c.phone ILIKE :search
           OR c.contact_person ILIKE :search
           OR c.organization_name ILIKE :search
-          OR c.tin_number ILIKE :search)`,
+          OR c.tin_number ILIKE :search
+          OR c.country ILIKE :search
+          OR c.destination_port ILIKE :search
+          OR c.buyer_code ILIKE :search)`,
         { search },
       );
     }
@@ -111,11 +119,14 @@ export class CustomersService {
   }
 
   create(dto: CreateCustomerDto) {
+    const market = dto.market ?? CustomerMarket.LOCAL;
+    this.assertMarketFields(market, dto.country);
     return this.repo
       .save(
         this.repo.create({
           name: dto.name.trim(),
           customerType: dto.customerType ?? CustomerType.NORMAL,
+          market,
           contactPerson: dto.contactPerson?.trim() || null,
           phone: dto.phone?.trim() || null,
           alternatePhone: dto.alternatePhone?.trim() || null,
@@ -123,6 +134,12 @@ export class CustomersService {
           address: dto.address?.trim() || null,
           city: dto.city?.trim() || null,
           region: dto.region?.trim() || null,
+          country: dto.country?.trim() || null,
+          destinationPort: dto.destinationPort?.trim() || null,
+          preferredIncoterm: dto.preferredIncoterm ?? null,
+          preferredCurrency: dto.preferredCurrency?.trim().toUpperCase() || null,
+          tradeLicenseNumber: dto.tradeLicenseNumber?.trim() || null,
+          buyerCode: dto.buyerCode?.trim() || null,
           organizationName: dto.organizationName?.trim() || null,
           tinNumber: dto.tinNumber?.trim() || null,
           notes: dto.notes?.trim() || null,
@@ -145,6 +162,7 @@ export class CustomersService {
       c.name = name;
     }
     if (dto.customerType !== undefined) c.customerType = dto.customerType;
+    if (dto.market !== undefined) c.market = dto.market;
     if (dto.contactPerson !== undefined) {
       c.contactPerson = dto.contactPerson?.trim() || null;
     }
@@ -156,6 +174,22 @@ export class CustomersService {
     if (dto.address !== undefined) c.address = dto.address?.trim() || null;
     if (dto.city !== undefined) c.city = dto.city?.trim() || null;
     if (dto.region !== undefined) c.region = dto.region?.trim() || null;
+    if (dto.country !== undefined) c.country = dto.country?.trim() || null;
+    if (dto.destinationPort !== undefined) {
+      c.destinationPort = dto.destinationPort?.trim() || null;
+    }
+    if (dto.preferredIncoterm !== undefined) {
+      c.preferredIncoterm = dto.preferredIncoterm || null;
+    }
+    if (dto.preferredCurrency !== undefined) {
+      c.preferredCurrency = dto.preferredCurrency?.trim().toUpperCase() || null;
+    }
+    if (dto.tradeLicenseNumber !== undefined) {
+      c.tradeLicenseNumber = dto.tradeLicenseNumber?.trim() || null;
+    }
+    if (dto.buyerCode !== undefined) {
+      c.buyerCode = dto.buyerCode?.trim() || null;
+    }
     if (dto.organizationName !== undefined) {
       c.organizationName = dto.organizationName?.trim() || null;
     }
@@ -175,8 +209,23 @@ export class CustomersService {
         c.lastLimitIncreasePercent = null;
       }
     }
+    this.assertMarketFields(c.market, c.country);
     await this.repo.save(c);
     return this.findOne(id);
+  }
+
+  private assertMarketFields(
+    market: CustomerMarket,
+    country?: string | null,
+  ) {
+    if (
+      market === CustomerMarket.INTERNATIONAL &&
+      !country?.trim()
+    ) {
+      throw new BadRequestException(
+        'Country is required for international / export customers',
+      );
+    }
   }
 
   async remove(id: string) {

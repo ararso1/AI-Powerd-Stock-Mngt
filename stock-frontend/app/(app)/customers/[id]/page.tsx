@@ -30,6 +30,7 @@ import { api } from "@/lib/api";
 import { errorMessage, formatDate, formatMoney } from "@/lib/format";
 import {
   agingRiskBadgeVariant,
+  customerMarketLabel,
   customerTypeLabel,
 } from "@/lib/customers";
 import { CustomerDocumentsPanel } from "@/components/customers/customer-documents-panel";
@@ -220,6 +221,21 @@ export default function CustomerProfilePage() {
                 <FrappeFormGrid columns={3}>
                   <DetailField label="Name" value={customer.name} />
                   <DetailField
+                    label="Market"
+                    value={
+                      <Badge
+                        variant="outline"
+                        className={
+                          customer.market === "INTERNATIONAL"
+                            ? "border-sky-500/40 bg-sky-500/10 text-sky-900"
+                            : "border-emerald-500/40 bg-emerald-500/10 text-emerald-900"
+                        }
+                      >
+                        {customerMarketLabel(customer.market)}
+                      </Badge>
+                    }
+                  />
+                  <DetailField
                     label="Type"
                     value={customerTypeLabel(customer.customerType)}
                   />
@@ -231,7 +247,20 @@ export default function CustomerProfilePage() {
                     label="Organization"
                     value={dash(customer.organizationName)}
                   />
-                  <DetailField label="TIN" value={dash(customer.tinNumber)} />
+                  <DetailField
+                    label={
+                      customer.market === "INTERNATIONAL"
+                        ? "Tax / registration ID"
+                        : "TIN"
+                    }
+                    value={dash(customer.tinNumber)}
+                  />
+                  {customer.buyerCode ? (
+                    <DetailField
+                      label="Buyer / ICO code"
+                      value={dash(customer.buyerCode)}
+                    />
+                  ) : null}
                 </FrappeFormGrid>
               </FrappeSection>
 
@@ -245,9 +274,52 @@ export default function CustomerProfilePage() {
                   <DetailField label="Email" value={dash(customer.email)} />
                   <DetailField label="Address" value={dash(customer.address)} />
                   <DetailField label="City" value={dash(customer.city)} />
-                  <DetailField label="Region" value={dash(customer.region)} />
+                  <DetailField
+                    label={
+                      customer.market === "INTERNATIONAL"
+                        ? "State / province"
+                        : "Region"
+                    }
+                    value={dash(customer.region)}
+                  />
+                  <DetailField
+                    label="Country"
+                    value={dash(
+                      customer.country ||
+                        (customer.market !== "INTERNATIONAL"
+                          ? "Ethiopia"
+                          : null)
+                    )}
+                  />
                 </FrappeFormGrid>
               </FrappeSection>
+
+              {customer.market === "INTERNATIONAL" ? (
+                <FrappeSection title="Export buyer details">
+                  <FrappeFormGrid columns={3}>
+                    <DetailField
+                      label="Destination port"
+                      value={dash(customer.destinationPort)}
+                    />
+                    <DetailField
+                      label="Preferred Incoterm"
+                      value={dash(customer.preferredIncoterm)}
+                    />
+                    <DetailField
+                      label="Preferred currency"
+                      value={dash(customer.preferredCurrency)}
+                    />
+                    <DetailField
+                      label="Trade license #"
+                      value={dash(customer.tradeLicenseNumber)}
+                    />
+                    <DetailField
+                      label="Buyer / ICO code"
+                      value={dash(customer.buyerCode)}
+                    />
+                  </FrappeFormGrid>
+                </FrappeSection>
+              ) : null}
 
               {customer.customerType === "AGENT" ? (
                 <FrappeSection

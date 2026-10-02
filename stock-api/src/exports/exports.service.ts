@@ -2,8 +2,12 @@ import {
   BadRequestException,
   Injectable,
   NotFoundException,
+  StreamableFile,
 } from '@nestjs/common';
 import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
+import { createReadStream, existsSync, mkdirSync, unlinkSync, writeFileSync } from 'fs';
+import * as path from 'path';
+import { randomUUID } from 'crypto';
 import { DataSource, EntityManager, In, Repository } from 'typeorm';
 import {
   BankTransactionType,
@@ -70,12 +74,14 @@ type ExportLotStage = {
     expiryDate?: string;
     destination?: string;
   } | null;
-  documents?: Array<{
-    key: string;
-    label: string;
-    reference?: string | null;
+  loadReport?: {
+    portName?: string | null;
+    staffName?: string | null;
+    loadedAt?: string | null;
     notes?: string | null;
-  }>;
+    reportedById?: string | null;
+  } | null;
+  documents?: ExportLotDocument[];
   postEcta?: {
     grade?: string | null;
     certificateNumber?: string | null;
@@ -86,15 +92,47 @@ type ExportLotStage = {
   } | null;
 };
 
-const DEFAULT_DOC_CHECKLIST: ExportDocCheckItem[] = [
-  { key: 'COO', label: 'Certificate of Origin', done: false },
-  { key: 'PHYTO', label: 'Phytosanitary certificate', done: false },
-  { key: 'QC', label: 'QC / cupping certificate', done: false },
-  { key: 'PACKING', label: 'Packing list', done: false },
-  { key: 'INVOICE', label: 'Commercial invoice', done: false },
-  { key: 'BOL', label: 'Bill of lading / AWB', done: false },
-  { key: 'WEIGHT', label: 'Weight / quality certificate', done: false },
-];
+type ExportLotDocument = {
+  key: string;
+  label: string;
+  reference?: string | null;
+  notes?: string | null;
+  fileStorageKey?: string | null;
+  fileOriginalName?: string | null;
+  fileMimeType?: string | null;
+  fileSizeBytes?: number | null;
+};
+
+type UploadedExportFile = {
+  originalname: string;
+  mimetype: string;
+  size: number;
+  buffer: Buffer;
+};
+
+const UPLOAD_ROOT = path.join(process.cwd(), 'uploads', 'exports');
+const MAX_EXPORT_DOC_BYTES = 10 * 1024 * 1024;
+const ALLOWED_EXPORT_DOC_MIME = new Set([
+  'application/pdf',
+  'image/jpeg',
+  'image/png',
+  'image/webp',
+]);
+
+const REQUIRED_EXPORT_DOCUMENTS = [
+  { key: 'PERMIT', label: 'Permit' },
+  { key: 'CLEARANCE', label: 'Certificate of Clearance' },
+  { key: 'CHAMBER', label: 'Chamber of Commerce Certificate' },
+  { key: 'WAYBILL', label: 'Waybill' },
+  { key: 'X1', label: 'X1' },
+  { key: 'DECLARATION', label: 'Declaration' },
+  { key: 'SHIPPING_INSTRUCTION', label: 'Shipping Instruction' },
+  { key: 'LC', label: 'Letter of Credit (LC)' },
+] as const;
+
+const DEFAULT_DOC_CHECKLIST: ExportDocCheckItem[] = REQUIRED_EXPORT_DOCUMENTS.map(
+  (doc) => ({ key: doc.key, label: doc.label, done: false }),
+);
 
 @Injectable()
 export class ExportsService {
@@ -191,6 +229,44 @@ export class ExportsService {
           ].includes(row.contract?.status),
         )
         .reduce((sum, row) => sum + parseFloat(row.quantityKg), 0);
+      const documents =
+        trace?.stage.documents ??
+        (
+          (trace?.run.stageResults ?? []) as ExportLotStage[]
+        ).find((row) => row.stage === 'Packaging')?.documents ??
+        [];
+      const loadReport =
+        trace?.stage.loadReport ??
+        (
+          (trace?.run.stageResults ?? []) as ExportLotStage[]
+        ).find((row) => row.stage === 'Export Store')?.loadReport ??
+        null;
+      const status =
+        onHand <= 0.0005 && shipped > 0
+          ? 'SHIPPED'
+          : reserved > 0.0005
+            ? 'RESERVED'
+            : 'IN_STORE';
+      const hasContract = rows.length > 0;
+      const docsAttached = REQUIRED_EXPORT_DOCUMENTS.filter((template) => {
+        const saved = documents.find((doc) => doc.key === template.key);
+        return this.documentIsAttached(saved);
+      }).length;
+      const docsTotal = REQUIRED_EXPORT_DOCUMENTS.length;
+      const hasEcta = Boolean(
+        lot.ectaGrade ||
+          lot.ectaCertificateNumber ||
+          lot.ectaMoisturePercent ||
+          lot.ectaCuppingScore ||
+          lot.ectaTestedAt,
+      );
+      const readiness = this.readinessFor({
+        status,
+        hasContract,
+        docsComplete: docsAttached >= docsTotal,
+        hasEcta,
+        loaded: Boolean(loadReport?.loadedAt),
+      });
       return {
         lotId: lot.id,
         lotCode: lot.code,
@@ -204,6 +280,7 @@ export class ExportsService {
         ectaMoisturePercent: lot.ectaMoisturePercent,
         ectaCuppingScore: lot.ectaCuppingScore,
         ectaTestedAt: lot.ectaTestedAt,
+        ectaNotes: lot.ectaNotes ?? null,
         runId: trace?.run.id ?? null,
         runNumber: trace?.run.runNumber ?? null,
         kgPerDoniya: trace?.stage.kgPerDoniya ?? null,
@@ -215,13 +292,14 @@ export class ExportsService {
             (trace?.run.stageResults ?? []) as ExportLotStage[]
           ).find((row) => row.stage === 'Packaging')?.doniyaLabel ??
           null,
-        documents: trace?.stage.documents ?? [],
-        status:
-          onHand <= 0.0005 && shipped > 0
-            ? 'SHIPPED'
-            : reserved > 0.0005
-              ? 'RESERVED'
-              : 'IN_STORE',
+        documents: this.serializeDocuments(lot.id, documents),
+        documentsAttached: docsAttached,
+        documentsTotal: docsTotal,
+        hasContract,
+        hasEcta,
+        loadReport,
+        readiness,
+        status,
         reservedKg: reserved.toFixed(3),
         shippedKg: shipped.toFixed(3),
         contracts: rows.map((row) => ({
@@ -239,13 +317,45 @@ export class ExportsService {
     );
   }
 
+  async exportStoreLot(lotId: string) {
+    const rows = await this.exportStore();
+    const row = rows.find((item) => item.lotId === lotId);
+    if (!row) throw new NotFoundException('Export lot not found');
+    return row;
+  }
+
+  private readinessFor(args: {
+    status: string;
+    hasContract: boolean;
+    docsComplete: boolean;
+    hasEcta: boolean;
+    loaded: boolean;
+  }) {
+    if (args.loaded) return 'LOADED';
+    if (args.status === 'SHIPPED') return 'SHIPPED';
+    if (args.hasContract && args.docsComplete && args.hasEcta) {
+      return 'SHIP_READY';
+    }
+    if (args.hasEcta) return 'ECTA';
+    if (args.docsComplete) return 'DOCUMENTS';
+    if (args.hasContract) return 'CONTRACT';
+    return 'READY';
+  }
+
   async attachLot(lotId: string, dto: AttachExportLotDto, userId?: string) {
     const lot = await this.lotRepo.findOne({ where: { id: lotId } });
     if (!lot || lot.processMethod !== 'Export store') {
       throw new NotFoundException('Export lot not found');
     }
-    if (!dto.contractId && !dto.postEcta && !dto.documents) {
-      throw new BadRequestException('Choose a contract, documents, or an ECTA result');
+    if (
+      !dto.contractId &&
+      !dto.postEcta &&
+      !dto.documents &&
+      !dto.loadReport
+    ) {
+      throw new BadRequestException(
+        'Choose a contract, documents, an ECTA result, or a load report',
+      );
     }
     if (dto.contractId) {
       const quantityKg = dto.quantityKg ?? parseFloat(lot.quantity);
@@ -274,11 +384,10 @@ export class ExportsService {
         ectaNotes: dto.postEcta.notes?.trim() || null,
       });
     }
-    if (dto.documents || dto.postEcta) {
-      await this.saveLotTrace(lotId, dto);
+    if (dto.documents || dto.postEcta || dto.loadReport) {
+      await this.saveLotTrace(lotId, dto, userId);
     }
-    const rows = await this.exportStore();
-    return rows.find((row) => row.lotId === lotId) ?? null;
+    return this.exportStoreLot(lotId);
   }
 
   private async runsForLots(lotIds: string[]) {
@@ -315,13 +424,17 @@ export class ExportsService {
     return null;
   }
 
-  private async saveLotTrace(lotId: string, dto: AttachExportLotDto) {
+  private async saveLotTrace(
+    lotId: string,
+    dto: AttachExportLotDto,
+    userId?: string,
+  ) {
     const runs = await this.runsForLots([lotId]);
     const trace = this.traceForLot(runs, lotId);
     if (!trace) {
-      if (dto.documents?.length) {
+      if (dto.documents?.length || dto.loadReport) {
         throw new BadRequestException(
-          'Documents need the process run that created this export lot',
+          'Documents and load reports need the process run that created this export lot',
         );
       }
       return;
@@ -354,16 +467,258 @@ export class ExportsService {
           }
         : current.postEcta,
       documents: dto.documents
-        ? dto.documents.map((doc) => ({
-            key: doc.key,
-            label: doc.label,
-            reference: doc.reference?.trim() || null,
-            notes: doc.notes?.trim() || null,
-          }))
+        ? this.mergeDocuments(current.documents, dto.documents)
         : current.documents,
+      loadReport: dto.loadReport
+        ? {
+            portName: dto.loadReport.portName?.trim() || null,
+            staffName: dto.loadReport.staffName?.trim() || null,
+            loadedAt:
+              dto.loadReport.loadedAt?.trim() || new Date().toISOString(),
+            notes: dto.loadReport.notes?.trim() || null,
+            reportedById: userId ?? null,
+          }
+        : current.loadReport,
     };
     trace.run.stageResults = stages as ProcessRun['stageResults'];
     await this.runRepo.save(trace.run);
+  }
+
+  async upsertLotDocument(
+    lotId: string,
+    key: string,
+    args: {
+      reference?: string | null;
+      notes?: string | null;
+      file?: UploadedExportFile;
+      clearFile?: boolean;
+    },
+  ) {
+    const template = REQUIRED_EXPORT_DOCUMENTS.find((doc) => doc.key === key);
+    if (!template) {
+      throw new BadRequestException(`Unknown export document key: ${key}`);
+    }
+    const lot = await this.lotRepo.findOne({ where: { id: lotId } });
+    if (!lot || lot.processMethod !== 'Export store') {
+      throw new NotFoundException('Export lot not found');
+    }
+    const runs = await this.runsForLots([lotId]);
+    const trace = this.traceForLot(runs, lotId);
+    if (!trace) {
+      throw new BadRequestException(
+        'Documents need the process run that created this export lot',
+      );
+    }
+    const stages = [...((trace.run.stageResults ?? []) as ExportLotStage[])];
+    const index = stages.findIndex(
+      (row) =>
+        row.outputLotId === lotId ||
+        row.stage === 'Export Store' ||
+        row.stage === 'Packaging & Export Store',
+    );
+    if (index < 0) {
+      throw new BadRequestException('Export store stage not found for this lot');
+    }
+    const current = stages[index];
+    const existing = [...(current.documents ?? [])];
+    const docIndex = existing.findIndex((doc) => doc.key === key);
+    const previous = docIndex >= 0 ? existing[docIndex] : undefined;
+    let nextDoc: ExportLotDocument = {
+      key: template.key,
+      label: template.label,
+      reference:
+        args.reference !== undefined
+          ? args.reference?.trim() || null
+          : previous?.reference ?? null,
+      notes:
+        args.notes !== undefined
+          ? args.notes?.trim() || null
+          : previous?.notes ?? null,
+      fileStorageKey: previous?.fileStorageKey ?? null,
+      fileOriginalName: previous?.fileOriginalName ?? null,
+      fileMimeType: previous?.fileMimeType ?? null,
+      fileSizeBytes: previous?.fileSizeBytes ?? null,
+    };
+
+    if (args.clearFile) {
+      if (previous?.fileStorageKey) {
+        this.deleteStoredFile(previous.fileStorageKey);
+      }
+      nextDoc = {
+        ...nextDoc,
+        fileStorageKey: null,
+        fileOriginalName: null,
+        fileMimeType: null,
+        fileSizeBytes: null,
+      };
+    }
+
+    if (args.file) {
+      this.assertExportFile(args.file);
+      if (previous?.fileStorageKey) {
+        this.deleteStoredFile(previous.fileStorageKey);
+      }
+      const stored = this.writeExportFile(lotId, key, args.file);
+      nextDoc = {
+        ...nextDoc,
+        fileStorageKey: stored.storageKey,
+        fileOriginalName: stored.originalName,
+        fileMimeType: stored.mimeType,
+        fileSizeBytes: stored.sizeBytes,
+      };
+    }
+
+    if (docIndex >= 0) existing[docIndex] = nextDoc;
+    else existing.push(nextDoc);
+
+    stages[index] = { ...current, documents: existing };
+    trace.run.stageResults = stages as ProcessRun['stageResults'];
+    await this.runRepo.save(trace.run);
+    return this.exportStoreLot(lotId);
+  }
+
+  async downloadLotDocument(lotId: string, key: string) {
+    const documents = await this.rawLotDocuments(lotId);
+    const doc = documents.find((row) => row.key === key);
+    if (!doc?.fileStorageKey) {
+      throw new NotFoundException('Uploaded file not found');
+    }
+    const abs = path.join(UPLOAD_ROOT, doc.fileStorageKey);
+    if (!existsSync(abs)) {
+      throw new NotFoundException('File missing on disk');
+    }
+    return {
+      file: new StreamableFile(createReadStream(abs)),
+      mimeType: doc.fileMimeType ?? 'application/octet-stream',
+      originalName: doc.fileOriginalName ?? `${key}.bin`,
+    };
+  }
+
+  async clearLotDocumentFile(lotId: string, key: string) {
+    return this.upsertLotDocument(lotId, key, { clearFile: true });
+  }
+
+  private async rawLotDocuments(lotId: string): Promise<ExportLotDocument[]> {
+    const lot = await this.lotRepo.findOne({ where: { id: lotId } });
+    if (!lot || lot.processMethod !== 'Export store') {
+      throw new NotFoundException('Export lot not found');
+    }
+    const runs = await this.runsForLots([lotId]);
+    const trace = this.traceForLot(runs, lotId);
+    return (
+      trace?.stage.documents ??
+      (
+        (trace?.run.stageResults ?? []) as ExportLotStage[]
+      ).find((row) => row.stage === 'Packaging')?.documents ??
+      []
+    );
+  }
+
+  private mergeDocuments(
+    current: ExportLotDocument[] | undefined,
+    incoming: Array<{
+      key: string;
+      label: string;
+      reference?: string;
+      notes?: string;
+    }>,
+  ): ExportLotDocument[] {
+    const byKey = new Map((current ?? []).map((doc) => [doc.key, doc]));
+    for (const doc of incoming) {
+      const previous = byKey.get(doc.key);
+      byKey.set(doc.key, {
+        key: doc.key,
+        label: doc.label,
+        reference: doc.reference?.trim() || null,
+        notes: doc.notes?.trim() || null,
+        fileStorageKey: previous?.fileStorageKey ?? null,
+        fileOriginalName: previous?.fileOriginalName ?? null,
+        fileMimeType: previous?.fileMimeType ?? null,
+        fileSizeBytes: previous?.fileSizeBytes ?? null,
+      });
+    }
+    return [...byKey.values()];
+  }
+
+  private documentIsAttached(doc?: ExportLotDocument | null): boolean {
+    return Boolean(
+      doc?.reference?.trim() ||
+        doc?.notes?.trim() ||
+        doc?.fileStorageKey?.trim(),
+    );
+  }
+
+  private serializeDocuments(lotId: string, documents: ExportLotDocument[]) {
+    return REQUIRED_EXPORT_DOCUMENTS.map((template) => {
+      const saved = documents.find((doc) => doc.key === template.key);
+      const hasFile = Boolean(saved?.fileStorageKey?.trim());
+      return {
+        key: template.key,
+        label: template.label,
+        reference: saved?.reference ?? null,
+        notes: saved?.notes ?? null,
+        hasFile,
+        fileOriginalName: hasFile ? saved?.fileOriginalName ?? null : null,
+        fileMimeType: hasFile ? saved?.fileMimeType ?? null : null,
+        fileSizeBytes: hasFile ? saved?.fileSizeBytes ?? null : null,
+        downloadPath: hasFile
+          ? `/exports/store/${lotId}/documents/${template.key}/file`
+          : null,
+      };
+    });
+  }
+
+  private assertExportFile(file: UploadedExportFile) {
+    if (!file?.buffer?.length) {
+      throw new BadRequestException('File is required');
+    }
+    if (!ALLOWED_EXPORT_DOC_MIME.has(file.mimetype)) {
+      throw new BadRequestException(
+        'Document must be JPEG, PNG, WebP, or PDF',
+      );
+    }
+    if (file.size > MAX_EXPORT_DOC_BYTES) {
+      throw new BadRequestException('Document must be 10MB or smaller');
+    }
+  }
+
+  private writeExportFile(
+    lotId: string,
+    key: string,
+    file: UploadedExportFile,
+  ) {
+    const ext = this.safeExt(file.originalname, file.mimetype);
+    const storageKey = path
+      .join(lotId, `${key.toLowerCase()}-${randomUUID()}${ext}`)
+      .replace(/\\/g, '/');
+    mkdirSync(path.join(UPLOAD_ROOT, lotId), { recursive: true });
+    writeFileSync(path.join(UPLOAD_ROOT, storageKey), file.buffer);
+    return {
+      storageKey,
+      originalName: file.originalname.slice(0, 255),
+      mimeType: file.mimetype,
+      sizeBytes: file.size,
+    };
+  }
+
+  private safeExt(originalName: string, mime: string) {
+    const fromName = path.extname(originalName || '').toLowerCase();
+    if (fromName && /^\.(pdf|jpe?g|png|webp)$/.test(fromName)) return fromName;
+    if (mime === 'application/pdf') return '.pdf';
+    if (mime === 'image/jpeg') return '.jpg';
+    if (mime === 'image/png') return '.png';
+    if (mime === 'image/webp') return '.webp';
+    return '';
+  }
+
+  private deleteStoredFile(storageKey: string) {
+    const abs = path.join(UPLOAD_ROOT, storageKey);
+    if (!existsSync(abs)) return;
+    try {
+      unlinkSync(abs);
+    } catch {
+      /* ignore cleanup errors */
+    }
   }
 
   async findOne(id: string) {

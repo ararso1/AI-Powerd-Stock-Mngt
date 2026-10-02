@@ -259,6 +259,7 @@ export interface Customer {
   id: string;
   name: string;
   customerType?: CustomerType;
+  market?: CustomerMarket;
   contactPerson?: string | null;
   phone?: string | null;
   alternatePhone?: string | null;
@@ -266,6 +267,12 @@ export interface Customer {
   address?: string | null;
   city?: string | null;
   region?: string | null;
+  country?: string | null;
+  destinationPort?: string | null;
+  preferredIncoterm?: string | null;
+  preferredCurrency?: string | null;
+  tradeLicenseNumber?: string | null;
+  buyerCode?: string | null;
   organizationName?: string | null;
   tinNumber?: string | null;
   notes?: string | null;
@@ -742,17 +749,63 @@ export interface ExportDashboardData {
   currency?: Currency;
   asOf?: string;
   period?: { from?: string | null; to?: string | null };
-  totalInventoryValue: string;
-  stockValueByLocation: DashboardData["stockValueByLocation"];
-  dailySales: string;
-  profitAndLoss: DashboardData["profitAndLoss"];
-  financialOverview: DashboardData["financialOverview"];
-  pulse: {
-    greenStockKg: string;
-    exportStagedKg: string;
-    openAlerts: number;
-    exportSalesToday: string;
-  } | null;
+  flow: {
+    purchaseCount: number;
+    purchaseKg: string;
+    purchaseValue: string;
+    inventoryKg: string;
+    inventoryValue: string;
+    processingStartedKg: string;
+    cleaningKg: string;
+    packagingKg: string;
+    exportStoreKg: string;
+    exportStoreLots: number;
+    reservedKg: string;
+    stagedKg: string;
+    shippedKg: string;
+    openRuns: number;
+    completedRuns: number;
+    rejectKg: string;
+    salesCount: number;
+    salesKg: string;
+    salesValue: string;
+    openContracts: number;
+    openVolumeKg: string;
+    allocatedKg: string;
+  };
+  activity: {
+    cleaningInputKg: string;
+    cleaningOutputKg: string;
+    cleaningLossKg: string;
+    yieldPercent: string;
+    highLossRuns: number;
+    packagedKg: string;
+  };
+  readiness: {
+    docsReadyLots: number;
+    ectaReadyLots: number;
+    shipReadyLots: number;
+    loadedLots: number;
+    exportStoreLots: number;
+  };
+  charts: {
+    processing: Array<{ label: string; value: number }>;
+    stockMovement: Array<{ label: string; value: number }>;
+    grades: Array<{ label: string; value: number }>;
+    volumeTrend: Array<{
+      label: string;
+      purchasedKg: number;
+      packagedKg: number;
+      shippedKg: number;
+    }>;
+    salesTrend: Array<{ label: string; kg: number; value: number }>;
+  };
+  finance: {
+    revenue: string;
+    costOfGoodsSold: string;
+    grossProfit: string;
+    netProfit: string;
+  };
   contracts?: DashboardData["contracts"];
   pipeline?: {
     byStatus: Record<
@@ -766,27 +819,23 @@ export interface ExportDashboardData {
     customerCreditOutstanding: string;
     totalLiquidity: string;
     outstandingExportPayments: string;
+    supplierCredit?: string;
   } | null;
-  analytics: {
-    inventory: {
-      totalStockKg: string;
-      stockValue: string;
-      availableKg: string;
-      reservedKg: string;
-      exportStockKg: string;
-    };
-    trading: {
-      exportSalesValue: string;
-      salesVolumeKg: string;
-      salesValue: string;
-      chart: Array<{ label: string; value: number }>;
-    };
-    export: NonNullable<DashboardData["analytics"]>["export"];
-  } | null;
-  market?: DashboardData["market"];
+  financialOverview: DashboardData["financialOverview"];
   recommendations?: DashboardData["recommendations"];
   executiveInsights?: DashboardData["executiveInsights"];
-  links?: DashboardData["links"];
+  links?: {
+    greenLots?: string;
+    exportStore?: string;
+    openContracts?: string;
+    processRuns?: string;
+    purchases?: string;
+    notifications?: string;
+    reports?: string;
+    profitLoss?: string;
+    insights?: string;
+    credits?: string;
+  };
 }
 
 export interface ProfitLossItem {
@@ -1326,6 +1375,8 @@ export type CustomerType =
   | "CAFE"
   | "OTHER";
 
+export type CustomerMarket = "LOCAL" | "INTERNATIONAL";
+
 export type StockMovementDirection = "IN" | "OUT";
 
 export type StockMovementSourceType =
@@ -1745,6 +1796,11 @@ export interface ExportDocumentRecord {
   label: string;
   reference?: string | null;
   notes?: string | null;
+  hasFile?: boolean;
+  fileOriginalName?: string | null;
+  fileMimeType?: string | null;
+  fileSizeBytes?: number | null;
+  downloadPath?: string | null;
 }
 
 export interface ExportDoniyaLabel {
@@ -1810,6 +1866,7 @@ export interface ExportStoreLot {
   ectaMoisturePercent?: string | null;
   ectaCuppingScore?: string | null;
   ectaTestedAt?: string | null;
+  ectaNotes?: string | null;
   runId?: string | null;
   runNumber?: string | null;
   kgPerDoniya?: string | null;
@@ -1817,6 +1874,19 @@ export interface ExportStoreLot {
   remainderKg?: string | null;
   doniyaLabel?: ExportDoniyaLabel | null;
   documents?: ExportDocumentRecord[];
+  documentsAttached?: number;
+  documentsTotal?: number;
+  hasContract?: boolean;
+  hasEcta?: boolean;
+  loadReport?: ExportLoadReport | null;
+  readiness?:
+    | "READY"
+    | "CONTRACT"
+    | "DOCUMENTS"
+    | "ECTA"
+    | "SHIP_READY"
+    | "SHIPPED"
+    | "LOADED";
   status: "IN_STORE" | "RESERVED" | "SHIPPED";
   reservedKg: string;
   shippedKg: string;
@@ -1826,6 +1896,14 @@ export interface ExportStoreLot {
     status?: string | null;
     quantityKg: string;
   }>;
+}
+
+export interface ExportLoadReport {
+  portName?: string | null;
+  staffName?: string | null;
+  loadedAt?: string | null;
+  notes?: string | null;
+  reportedById?: string | null;
 }
 
 export interface ProcessRun {

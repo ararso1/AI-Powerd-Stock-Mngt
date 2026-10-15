@@ -44,6 +44,7 @@ import { fetchInventoryForLocation } from "@/lib/inventory-fetch";
 import {
   buildItemOptionMap,
   itemOptionsFromMap,
+  isCoffeeSku,
   isExportSaleStock,
   isSaleStock,
   parseDocumentLines,
@@ -735,14 +736,24 @@ export function SaleForm({ sale }: { sale?: Sale }) {
     if (notesOnly) {
       body = { notes: notes || undefined };
     } else {
+      if (!locationId) {
+        toast.error(
+          isExport
+            ? "Select an export lot (or export staging location) first"
+            : "Select a selling location"
+        );
+        return;
+      }
       for (const line of lines) {
         if (
           line.itemId &&
-          isCoffeeSku(line.item?.sku) &&
+          (isExport || isCoffeeSku(line.item?.sku)) &&
           !line.lotId
         ) {
           toast.error(
-            `${line.item?.description ?? "Coffee item"} requires a lot-linked stock line`
+            isExport
+              ? "Export sales must pick a lot from the Export store"
+              : `${line.item?.description ?? "Coffee item"} requires a lot-linked stock line`
           );
           return;
         }

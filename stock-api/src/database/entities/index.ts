@@ -47,12 +47,18 @@ export { SaleReturnLine } from './sale-return-line.entity';
 export { MarketPrice } from './market-price.entity';
 export { MarketFxRate } from './market-fx-rate.entity';
 export { MarketGradeBasis } from './market-grade-basis.entity';
+export { UserLocation } from './user-location.entity';
+export { ApprovalRequest } from './approval-request.entity';
+export { ApprovalStep } from './approval-step.entity';
 
 import { Permission } from './permission.entity';
 import { Role } from './role.entity';
 import { User } from './user.entity';
 import { RefreshToken } from './refresh-token.entity';
 import { Location } from './location.entity';
+import { UserLocation } from './user-location.entity';
+import { ApprovalRequest } from './approval-request.entity';
+import { ApprovalStep } from './approval-step.entity';
 import { Item } from './item.entity';
 import { StockLevel } from './stock-level.entity';
 import { StockTransfer } from './stock-transfer.entity';
@@ -148,4 +154,7 @@ export const entities = [
   MarketPrice,
   MarketFxRate,
   MarketGradeBasis,
+  UserLocation,
+  ApprovalRequest,
+  ApprovalStep,
 ];

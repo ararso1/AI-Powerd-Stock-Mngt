@@ -23,6 +23,7 @@ import { RoastProfile } from './entities/roast-profile.entity';
 import { ExportContract } from './entities/export-contract.entity';
 import { Supplier } from './entities/supplier.entity';
 import { User } from './entities/user.entity';
+import { UserLocation } from './entities/user-location.entity';
 import {
   BankAccountType,
   CoffeeForm,
@@ -42,11 +43,43 @@ const DEMO_USERS: Array<{
   email: string;
   fullName: string;
   roleName: string;
+  locationKey?: string;
 }> = [
   {
     email: 'admin@csolve.local',
-    fullName: 'Csolve Admin',
+    fullName: 'Ahmad Jemal',
     roleName: 'Admin',
+  },
+  {
+    email: 'ahmad.jemal@csolve.local',
+    fullName: 'Ahmad Jemal',
+    roleName: 'Admin',
+  },
+  {
+    email: 'yadeta@csolve.local',
+    fullName: 'Yadeta',
+    roleName: 'Operations Manager',
+    locationKey: 'direDawa',
+  },
+  {
+    email: 'storekeeper@csolve.local',
+    fullName: 'Head Storekeeper',
+    roleName: 'Head Storekeeper',
+  },
+  {
+    email: 'cleaning@csolve.local',
+    fullName: 'Cleaning Team Head',
+    roleName: 'Cleaning Team Head',
+  },
+  {
+    email: 'roasting@csolve.local',
+    fullName: 'Roasting and Grinding Team Head',
+    roleName: 'Roasting and Grinding Team Head',
+  },
+  {
+    email: 'sales.head@csolve.local',
+    fullName: 'Sales Team Head',
+    roleName: 'Sales Team Head',
   },
   {
     email: 'sales@csolve.local',
@@ -100,6 +133,8 @@ export class SeedService implements OnModuleInit {
     private readonly exportContractRepo: Repository<ExportContract>,
     @InjectRepository(StockLevel)
     private readonly stockRepo: Repository<StockLevel>,
+    @InjectRepository(UserLocation)
+    private readonly userLocationRepo: Repository<UserLocation>,
   ) {}
 
   async onModuleInit() {
@@ -152,18 +187,21 @@ export class SeedService implements OnModuleInit {
     if (!admin && adminRole) {
       admin = this.userRepo.create({
         email: adminEmail,
-        fullName: 'System Administrator',
+        fullName: 'Ahmad Jemal',
         passwordHash: await bcrypt.hash(adminPassword, 10),
         roleId: adminRole.id,
         isActive: true,
       });
       await this.userRepo.save(admin);
       this.logger.log(`Admin user created: ${adminEmail}`);
+    } else if (admin && admin.fullName === 'System Administrator') {
+      admin.fullName = 'Ahmad Jemal';
+      await this.userRepo.save(admin);
     }
 
-    await this.seedDemoUsers();
     await this.seedBanks();
     const locations = await this.seedCoffeeLocations();
+    await this.seedDemoUsers(locations);
     const greenItem = await this.seedCoffeeItems();
     await this.seedCherryPrices();
     await this.seedDemoFarmer();
@@ -178,7 +216,7 @@ export class SeedService implements OnModuleInit {
     this.logger.log('Seeding complete');
   }
 
-  private async seedDemoUsers() {
+  private async seedDemoUsers(locations: Record<string, Location>) {
     const passwordHash = await bcrypt.hash(DEMO_PASSWORD, 10);
 
     for (const demo of DEMO_USERS) {
@@ -198,10 +236,36 @@ export class SeedService implements OnModuleInit {
         });
         await this.userRepo.save(user);
         this.logger.log(`Demo user created: ${demo.email} / ${DEMO_PASSWORD}`);
-      } else if (user.roleId !== role.id) {
-        user.roleId = role.id;
-        user.fullName = demo.fullName;
-        await this.userRepo.save(user);
+      } else {
+        // Keep sample role users aligned with workflow names
+        let changed = false;
+        if (user.fullName !== demo.fullName) {
+          user.fullName = demo.fullName;
+          changed = true;
+        }
+        if (user.roleId !== role.id) {
+          user.roleId = role.id;
+          changed = true;
+        }
+        if (changed) await this.userRepo.save(user);
+      }
+
+      if (demo.locationKey && locations[demo.locationKey]) {
+        const locationId = locations[demo.locationKey].id;
+        const existing = await this.userLocationRepo.findOne({
+          where: { userId: user.id, locationId },
+        });
+        if (!existing) {
+          await this.userLocationRepo.save(
+            this.userLocationRepo.create({
+              userId: user.id,
+              locationId,
+            }),
+          );
+          this.logger.log(
+            `Scoped ${demo.email} to location ${locations[demo.locationKey].name}`,
+          );
+        }
       }
     }
   }
@@ -263,6 +327,12 @@ export class SeedService implements OnModuleInit {
         name: 'Main Warehouse',
         type: LocationType.WAREHOUSE,
         address: 'Addis Ababa green coffee warehouse',
+      },
+      {
+        key: 'direDawa',
+        name: 'Dire Dawa Warehouse',
+        type: LocationType.WAREHOUSE,
+        address: 'Dire Dawa, Ethiopia',
       },
       {
         key: 'collection',
@@ -592,6 +662,30 @@ export class SeedService implements OnModuleInit {
         await this.processTemplateRepo.save(existing);
       }
     }
+    // Dedicated cleaning process — Cleaning Team Head initiates; Ops Manager approves.
+    {
+      const cleanCode = 'CLEANING';
+      let clean = await this.processTemplateRepo.findOne({
+        where: { code: cleanCode },
+      });
+      if (!clean) {
+        await this.processTemplateRepo.save(
+          this.processTemplateRepo.create({
+            code: cleanCode,
+            name: 'Cleaning Process',
+            operationType: ProcessOperationType.OTHER,
+            inputForm: CoffeeForm.GREEN,
+            outputForm: CoffeeForm.GREEN,
+            expectedYieldPercent: '98.00',
+            stages: ['Cleaning'],
+            isActive: true,
+            notes:
+              'Cleaning Team Head initiates; Operations Manager must approve before processing begins.',
+          }),
+        );
+      }
+    }
+
     const workflows: Array<{
       code: string;
       name: string;

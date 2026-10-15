@@ -267,13 +267,19 @@ export class ExportsService {
         hasEcta,
         loaded: Boolean(loadReport?.loadedAt),
       });
+      const availableKg = Math.max(0, onHand - reserved);
       return {
         lotId: lot.id,
         lotCode: lot.code,
         grade: lot.grade,
         quantityKg: lot.quantity,
+        locationId: lot.locationId ?? null,
         locationName: lot.location?.name ?? null,
+        itemId: lot.itemId ?? null,
         itemDescription: lot.item?.description ?? null,
+        itemSku: lot.item?.sku ?? null,
+        itemUnit: lot.item?.unit ?? null,
+        availableKg: availableKg.toFixed(3),
         parentLotId: lot.parentLotId,
         ectaGrade: lot.ectaGrade,
         ectaCertificateNumber: lot.ectaCertificateNumber,

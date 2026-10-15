@@ -188,11 +188,20 @@ const SALE_PROCESS_METHODS = new Set([
   "Reject",
 ]);
 
+export function isExportStoreStock(row: {
+  lot?: { processMethod?: string | null } | null;
+  processMethod?: string | null;
+}): boolean {
+  const method = row.lot?.processMethod ?? row.processMethod ?? "";
+  return method.trim() === "Export store";
+}
+
 /** Processed or finished coffee, and reject stock. Raw purchased coffee stays out of sales. */
 export function isSaleStock(row: {
   lot?: { form?: string | null; processMethod?: string | null; code?: string | null } | null;
   item?: { sku?: string | null; itemType?: string | null } | null;
 }): boolean {
+  if (isExportStoreStock(row)) return false;
   const sku = row.item?.sku?.trim().toUpperCase() ?? "";
   const form = row.lot?.form ?? null;
   const coffee =
@@ -209,6 +218,13 @@ export function isSaleStock(row: {
   }
   const method = row.lot?.processMethod ?? "";
   return SALE_PROCESS_METHODS.has(method);
+}
+
+/** Export-channel sales: coffee already in the export store. */
+export function isExportSaleStock(row: {
+  lot?: { processMethod?: string | null } | null;
+}): boolean {
+  return isExportStoreStock(row);
 }
 
 export function isCoffeeSku(sku: string | null | undefined): boolean {

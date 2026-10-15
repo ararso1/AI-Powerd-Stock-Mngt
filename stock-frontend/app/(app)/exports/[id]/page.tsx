@@ -264,7 +264,15 @@ export default function ExportDetailPage() {
         </div>
       }
     >
-      <PermissionGate permission="export.read">
+      <PermissionGate
+        permission="export.write"
+        fallback={
+          <p className="text-sm text-[var(--frappe-text-muted)]">
+            Export contract detail is restricted. You can view contracts on the
+            Exports list, but opening detail requires export write access.
+          </p>
+        }
+      >
         <div className="mx-auto max-w-5xl space-y-4">
           <FrappeButtonLink href="/exports">← Back to list</FrappeButtonLink>
 

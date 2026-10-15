@@ -1,13 +1,22 @@
 import {
   BadRequestException,
+  Inject,
   Injectable,
   Logger,
   NotFoundException,
   OnModuleInit,
+  forwardRef,
 } from '@nestjs/common';
 import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
 import { DataSource, EntityManager, Not, Repository } from 'typeorm';
 import {
+  cleaningApprovalSteps,
+  isCleaningProcess,
+} from '../approvals/approval-policies';
+import { ApprovalsService } from '../approvals/approvals.service';
+import { UserLocationAccessService } from '../approvals/user-location-access.service';
+import {
+  ApprovalEntityType,
   CoffeeForm,
   ItemType,
   LotEventType,
@@ -91,6 +100,9 @@ export class ProcessRunsService implements OnModuleInit {
     @InjectDataSource()
     private readonly dataSource: DataSource,
     private readonly stockService: StockService,
+    @Inject(forwardRef(() => ApprovalsService))
+    private readonly approvals: ApprovalsService,
+    private readonly locationAccess: UserLocationAccessService,
   ) {}
 
   async onModuleInit() {
@@ -214,6 +226,8 @@ export class ProcessRunsService implements OnModuleInit {
   }
 
   async create(dto: CreateProcessRunDto, userId?: string) {
+    await this.locationAccess.assertCanUseLocation(userId, dto.locationId);
+
     const template = await this.templateRepo.findOne({
       where: { id: dto.templateId, isActive: true },
     });
@@ -250,6 +264,20 @@ export class ProcessRunsService implements OnModuleInit {
     });
     if (!location) throw new BadRequestException('Location not found');
 
+    const roleName = userId
+      ? await this.locationAccess.getUserRoleName(userId)
+      : null;
+    const needsCleaningApproval = isCleaningProcess({
+      initiatorRoleName: roleName,
+      templateCode: template.code,
+      templateName: template.name,
+      stages: Array.isArray(template.stages) ? template.stages : [],
+    });
+    const approvalSteps = needsCleaningApproval
+      ? cleaningApprovalSteps(roleName)
+      : [];
+    const needsApproval = approvalSteps.length > 0;
+
     const count = await this.runRepo.count();
     const runNumber = `PR-${new Date().getFullYear()}-${String(count + 1).padStart(4, '0')}`;
 
@@ -262,7 +290,9 @@ export class ProcessRunsService implements OnModuleInit {
         quantityInput: dto.quantityInput.toFixed(3),
         quantityReject: '0.000',
         expectedYieldPercent: template.expectedYieldPercent,
-        status: ProcessRunStatus.DRAFT,
+        status: needsApproval
+          ? ProcessRunStatus.PENDING_APPROVAL
+          : ProcessRunStatus.DRAFT,
         currentStageIndex: 0,
         stages: Array.isArray(template.stages) ? template.stages : [],
         stagesCompleted: [],
@@ -276,6 +306,21 @@ export class ProcessRunsService implements OnModuleInit {
       }),
     );
 
+    if (needsApproval) {
+      await this.approvals.createRequest({
+        entityType: ApprovalEntityType.PROCESS_RUN,
+        entityId: run.id,
+        initiatedById: userId ?? null,
+        steps: approvalSteps,
+        metadata: {
+          reference: run.runNumber,
+          runNumber: run.runNumber,
+          templateCode: template.code,
+          locationId: dto.locationId,
+        },
+      });
+    }
+
     return this.findOne(run.id);
   }
 
@@ -288,6 +333,20 @@ export class ProcessRunsService implements OnModuleInit {
       where: { id: dto.locationId },
     });
     if (!location) throw new BadRequestException('Location not found');
+
+    const roleName = userId
+      ? await this.locationAccess.getUserRoleName(userId)
+      : null;
+    const needsCleaningApproval = isCleaningProcess({
+      initiatorRoleName: roleName,
+      templateCode: template.code,
+      templateName: template.name,
+      stages: Array.isArray(template.stages) ? template.stages : [],
+    });
+    const approvalSteps = needsCleaningApproval
+      ? cleaningApprovalSteps(roleName)
+      : [];
+    const needsApproval = approvalSteps.length > 0;
 
     const seen = new Set<string>();
     const picked: Array<{
@@ -342,8 +401,9 @@ export class ProcessRunsService implements OnModuleInit {
 
     const total = picked.reduce((sum, line) => sum + line.quantity, 0);
     const commitStock =
-      template.workflow === PurchaseType.LOCAL ||
-      template.workflow === PurchaseType.EXPORT;
+      !needsApproval &&
+      (template.workflow === PurchaseType.LOCAL ||
+        template.workflow === PurchaseType.EXPORT);
     const count = await this.runRepo.count();
     const runNumber = `PR-${new Date().getFullYear()}-${String(count + 1).padStart(4, '0')}`;
     const first = picked[0].lot;
@@ -366,9 +426,11 @@ export class ProcessRunsService implements OnModuleInit {
               : template.workflow === PurchaseType.EXPORT
                 ? '87.00'
                 : template.expectedYieldPercent,
-          status: commitStock
-            ? ProcessRunStatus.IN_PROGRESS
-            : ProcessRunStatus.DRAFT,
+          status: needsApproval
+            ? ProcessRunStatus.PENDING_APPROVAL
+            : commitStock
+              ? ProcessRunStatus.IN_PROGRESS
+              : ProcessRunStatus.DRAFT,
           startedAt: commitStock ? new Date() : null,
           currentStageIndex: 0,
           stages:
@@ -452,6 +514,48 @@ export class ProcessRunsService implements OnModuleInit {
       return run.id;
     });
 
+    if (needsApproval) {
+      await this.approvals.createRequest({
+        entityType: ApprovalEntityType.PROCESS_RUN,
+        entityId: runId,
+        initiatedById: userId ?? null,
+        steps: approvalSteps,
+        metadata: {
+          reference: runNumber,
+          runNumber,
+          templateCode: template.code,
+          locationId: dto.locationId,
+        },
+      });
+    }
+
+    return this.findOne(runId);
+  }
+
+  async applyApprovalOutcome(
+    runId: string,
+    decision: 'approve' | 'reject',
+    _actorUserId: string,
+  ) {
+    const run = await this.runRepo.findOne({ where: { id: runId } });
+    if (!run) throw new NotFoundException('Process run not found');
+
+    if (decision === 'reject') {
+      if (run.status !== ProcessRunStatus.PENDING_APPROVAL) {
+        throw new BadRequestException('Process run is not awaiting approval');
+      }
+      run.status = ProcessRunStatus.CANCELLED;
+      await this.runRepo.save(run);
+      return this.findOne(runId);
+    }
+
+    if (run.status !== ProcessRunStatus.PENDING_APPROVAL) {
+      return this.findOne(runId);
+    }
+
+    // Approved: processing may begin (start from DRAFT).
+    run.status = ProcessRunStatus.DRAFT;
+    await this.runRepo.save(run);
     return this.findOne(runId);
   }
 
@@ -499,6 +603,11 @@ export class ProcessRunsService implements OnModuleInit {
 
   async start(id: string, userId?: string) {
     const run = await this.findOne(id);
+    if (run.status === ProcessRunStatus.PENDING_APPROVAL) {
+      throw new BadRequestException(
+        'This process run is awaiting Operations Manager approval before it can start',
+      );
+    }
     if (run.status !== ProcessRunStatus.DRAFT) {
       throw new BadRequestException('Only DRAFT runs can be started');
     }

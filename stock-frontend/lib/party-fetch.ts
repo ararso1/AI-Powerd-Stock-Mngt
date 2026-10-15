@@ -63,9 +63,19 @@ async function fetchPartyList<T>(
   return fetchAllPages<T>((page, limit) => buildPath(undefined, page, limit));
 }
 
-export function fetchCustomers(search?: string): Promise<Customer[]> {
+export function fetchCustomers(
+  search?: string,
+  market?: "LOCAL" | "INTERNATIONAL"
+): Promise<Customer[]> {
   return fetchPartyList<Customer>((term, page, limit) =>
-    buildCustomersListPath(term ? { search: term } : undefined, page, limit)
+    buildCustomersListPath(
+      {
+        ...(term ? { search: term } : {}),
+        ...(market ? { market } : {}),
+      },
+      page,
+      limit
+    )
   );
 }
 

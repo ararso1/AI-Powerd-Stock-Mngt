@@ -28,6 +28,11 @@ export function notificationHref(
     case "inventory":
     case "stock":
       return "/inventory";
+    case "approval_request":
+    case "approval":
+      return `/approvals`;
+    case "process_run":
+      return `/process-runs/${entityId}`;
     default:
       return null;
   }

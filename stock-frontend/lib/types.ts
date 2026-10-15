@@ -38,7 +38,12 @@ export type ProductionOrderStatus =
   | "CANCELLED";
 export type TransferStatus = "PENDING" | "COMPLETED" | "CANCELLED";
 export type CreditStatus = "OPEN" | "PARTIAL" | "PAID";
-export type DocumentStatus = "ACTIVE" | "VOIDED" | "POSTED";
+export type DocumentStatus =
+  | "ACTIVE"
+  | "VOIDED"
+  | "POSTED"
+  | "PENDING_APPROVAL"
+  | "REJECTED";
 export type CommissionBasis = "PROFIT" | "SALES";
 
 export type { Currency };
@@ -675,11 +680,19 @@ export interface SalesStorePack {
   value: string;
 }
 
+export interface DashboardAccessMeta {
+  roleName?: string | null;
+  companyWide: boolean;
+  locationIds?: string[] | null;
+  sections?: Record<string, boolean>;
+}
+
 export interface LocalDashboardData {
   channel: "LOCAL";
   currency?: Currency;
   asOf?: string;
   period?: { from?: string | null; to?: string | null };
+  access?: DashboardAccessMeta;
   pipeline: {
     purchaseCount: number;
     purchaseKg: string;
@@ -749,6 +762,7 @@ export interface ExportDashboardData {
   currency?: Currency;
   asOf?: string;
   period?: { from?: string | null; to?: string | null };
+  access?: DashboardAccessMeta;
   flow: {
     purchaseCount: number;
     purchaseKg: string;
@@ -1307,13 +1321,35 @@ export interface ProductionOrder {
   updatedAt?: string;
 }
 
+export type EmploymentType =
+  | "FULL_TIME"
+  | "PART_TIME"
+  | "CONTRACT"
+  | "CASUAL";
+
+export type EmploymentStatus = "ACTIVE" | "ON_LEAVE" | "TERMINATED";
+
 export interface UserAdmin {
   id: string;
   email: string;
   fullName: string;
-  roleId?: string;
-  role?: Role;
+  roleId?: string | null;
+  role?: Role | null;
   isActive?: boolean;
+  phone?: string | null;
+  employeeCode?: string | null;
+  department?: string | null;
+  designation?: string | null;
+  salary?: string | null;
+  salaryCurrency?: string | null;
+  hiredAt?: string | null;
+  employmentType?: EmploymentType | null;
+  employmentStatus?: EmploymentStatus;
+  notes?: string | null;
+  locationIds?: string[];
+  locations?: Array<{ id: string; name: string; type?: string }>;
+  createdAt?: string;
+  updatedAt?: string;
 }
 
 export interface ApiError {
@@ -1668,11 +1704,51 @@ export interface CollectionTicket {
 
 export type ProcessRunStatus =
   | "DRAFT"
+  | "PENDING_APPROVAL"
   | "IN_PROGRESS"
   | "QC_HOLD"
   | "READY"
   | "COMPLETED"
   | "CANCELLED";
+
+export type ApprovalEntityType = "PURCHASE" | "SALE" | "PROCESS_RUN";
+export type ApprovalRequestStatus =
+  | "PENDING"
+  | "APPROVED"
+  | "REJECTED"
+  | "CANCELLED";
+export type ApprovalStepStatus =
+  | "PENDING"
+  | "APPROVED"
+  | "REJECTED"
+  | "SKIPPED";
+
+export interface ApprovalStep {
+  id: string;
+  requiredRoleName: string;
+  requiredPermission: string | null;
+  stepOrder: number;
+  status: ApprovalStepStatus;
+  comment: string | null;
+  decidedAt: string | null;
+  decidedById: string | null;
+  decidedBy: { id: string; fullName: string; email: string } | null;
+}
+
+export interface ApprovalRequest {
+  id: string;
+  entityType: ApprovalEntityType;
+  entityId: string;
+  status: ApprovalRequestStatus;
+  notes: string | null;
+  metadata: Record<string, unknown> | null;
+  initiatedById: string | null;
+  initiatedBy: { id: string; fullName: string; email: string } | null;
+  createdAt: string;
+  updatedAt: string;
+  decidedAt: string | null;
+  steps: ApprovalStep[];
+}
 
 export interface ProcessTemplate {
   id: string;
@@ -1858,8 +1934,13 @@ export interface ExportStoreLot {
   lotCode: string;
   grade?: string | null;
   quantityKg: string;
+  locationId?: string | null;
   locationName?: string | null;
+  itemId?: string | null;
   itemDescription?: string | null;
+  itemSku?: string | null;
+  itemUnit?: string | null;
+  availableKg?: string;
   parentLotId?: string | null;
   ectaGrade?: string | null;
   ectaCertificateNumber?: string | null;

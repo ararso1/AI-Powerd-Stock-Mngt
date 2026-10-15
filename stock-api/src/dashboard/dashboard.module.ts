@@ -17,6 +17,8 @@ import { Sale } from '../database/entities/sale.entity';
 import { SaleLine } from '../database/entities/sale-line.entity';
 import { StockLevel } from '../database/entities/stock-level.entity';
 import { SupplierCredit } from '../database/entities/supplier-credit.entity';
+import { User } from '../database/entities/user.entity';
+import { UserLocation } from '../database/entities/user-location.entity';
 import { MarketPricesModule } from '../market-prices/market-prices.module';
 import { DashboardController } from './dashboard.controller';
 import { DashboardService } from './dashboard.service';
@@ -42,6 +44,8 @@ import { DashboardService } from './dashboard.service';
       SupplierCredit,
       Supplier,
       Notification,
+      User,
+      UserLocation,
     ]),
   ],
   controllers: [DashboardController],

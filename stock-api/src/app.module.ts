@@ -22,6 +22,7 @@ import { ProcessRunsModule } from './process-runs/process-runs.module';
 import { RoastProfilesModule } from './roast-profiles/roast-profiles.module';
 import { ExportsModule } from './exports/exports.module';
 import { AiModule } from './ai/ai.module';
+import { ApprovalsModule } from './approvals/approvals.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { PermissionsModule } from './permissions/permissions.module';
 import { ProductionModule } from './production/production.module';
@@ -49,6 +50,7 @@ import { HealthController } from './health.controller';
     PermissionsModule,
     LocationsModule,
     NotificationsModule,
+    ApprovalsModule,
     InventoryModule,
     BomsModule,
     ProductionModule,

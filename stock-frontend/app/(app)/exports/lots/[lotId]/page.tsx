@@ -147,7 +147,15 @@ export default function ExportLotDetailPage() {
       ]}
       actions={<FrappeButtonLink href="/exports">← Exports</FrappeButtonLink>}
     >
-      <PermissionGate permission="export.read">
+      <PermissionGate
+        permission="export.write"
+        fallback={
+          <p className="text-sm text-[var(--frappe-text-muted)]">
+            Export lot detail is restricted. You can view export lots on the
+            Exports list, but opening detail requires export write access.
+          </p>
+        }
+      >
         {loading ? (
           <PageLoading />
         ) : !lot ? (

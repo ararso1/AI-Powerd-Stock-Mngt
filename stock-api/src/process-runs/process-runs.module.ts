@@ -1,5 +1,6 @@
-import { Module } from '@nestjs/common';
+import { Module, forwardRef } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
+import { ApprovalsModule } from '../approvals/approvals.module';
 import { Item } from '../database/entities/item.entity';
 import { Location } from '../database/entities/location.entity';
 import { Lot } from '../database/entities/lot.entity';
@@ -23,6 +24,7 @@ import { ProcessRunsService } from './process-runs.service';
       Location,
     ]),
     InventoryModule,
+    forwardRef(() => ApprovalsModule),
   ],
   controllers: [ProcessRunsController],
   providers: [

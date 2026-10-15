@@ -22,6 +22,7 @@ import {
   sumFilteredQueryBuilder,
 } from '../common/utils/query.util';
 import {
+  EXPORT_SELLABLE_STOCK_SQL,
   PROCESS_AVAILABLE_STOCK_SQL,
   REJECT_STOCK_SQL,
   SALES_STORE_STOCK_SQL,
@@ -130,7 +131,9 @@ export class InventoryService {
       qb.andWhere(REJECT_STOCK_SQL);
     }
     applyDateRangeToQb(qb, 'stock.updated_at', query.from, query.to);
-    if (query.forSale === 'true') {
+    if (query.forExportSale === 'true') {
+      qb.andWhere(EXPORT_SELLABLE_STOCK_SQL);
+    } else if (query.forSale === 'true') {
       qb.andWhere(SELLABLE_STOCK_SQL);
     }
     if (query.search?.trim()) {

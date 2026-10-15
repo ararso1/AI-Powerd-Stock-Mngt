@@ -17,9 +17,10 @@ import {
   Layers,
   Workflow,
   Ship,
-  Flame,
+  // Flame,
   Sparkles,
   LineChart,
+  ClipboardCheck,
 } from "lucide-react";
 
 export interface NavItem {
@@ -48,7 +49,7 @@ export const insightsNav: NavItem[] = [
     title: "Market prices",
     href: "/market-prices",
     icon: LineChart,
-    permissions: ["market_prices.read", "insights.read", "dashboard.read"],
+    permission: "market_prices.read",
   },
   {
     title: "Reports",
@@ -61,6 +62,18 @@ export const insightsNav: NavItem[] = [
 /** Day-to-day coffee stock & trading */
 export const operationsNav: NavItem[] = [
   {
+    title: "Approvals",
+    href: "/approvals",
+    icon: ClipboardCheck,
+    permissions: [
+      "approvals.read",
+      "approvals.decide",
+      "purchase.approve",
+      "sales.approve",
+      "process.approve",
+    ],
+  },
+  {
     title: "Coffee lots",
     href: "/lots",
     icon: Layers,
@@ -72,12 +85,12 @@ export const operationsNav: NavItem[] = [
     icon: Workflow,
     permission: "process.read",
   },
-  {
-    title: "Roast recipes",
-    href: "/roast-profiles",
-    icon: Flame,
-    permission: "process.read",
-  },
+  // {
+  //   title: "Roast recipes",
+  //   href: "/roast-profiles",
+  //   icon: Flame,
+  //   permission: "process.read",
+  // },
   {
     title: "Exports",
     href: "/exports",
@@ -137,13 +150,14 @@ export const masterNav: NavItem[] = [
     title: "Locations",
     href: "/locations",
     icon: MapPin,
-    permission: "locations.read",
+    // Master-data screen — operational roles may still have locations.read for dropdowns
+    permission: "locations.write",
   },
   {
     title: "Suppliers",
     href: "/suppliers",
     icon: Truck,
-    permission: "suppliers.read",
+    permission: "suppliers.write",
   },
   {
     title: "Customers",
@@ -155,7 +169,7 @@ export const masterNav: NavItem[] = [
 
 export const adminNav: NavItem[] = [
   {
-    title: "Users",
+    title: "People & HR",
     href: "/users",
     icon: UserCog,
     permissions: ["users.read", "users.write"],

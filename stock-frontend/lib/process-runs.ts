@@ -10,6 +10,7 @@ export const PROCESS_STATUS_OPTIONS: {
   label: string;
 }[] = [
   { value: "DRAFT", label: "Draft" },
+  { value: "PENDING_APPROVAL", label: "Pending approval" },
   { value: "IN_PROGRESS", label: "In progress" },
   { value: "QC_HOLD", label: "QC hold" },
   { value: "READY", label: "Ready" },
@@ -25,6 +26,7 @@ export function processStatusLabel(status: ProcessRunStatus | string): string {
 
 const PROCESS_STATUS_CLASS: Record<ProcessRunStatus, string> = {
   DRAFT: "border-transparent bg-muted text-muted-foreground",
+  PENDING_APPROVAL: "border-transparent bg-warning text-warning-foreground",
   IN_PROGRESS: "border-transparent bg-primary/15 text-primary",
   QC_HOLD: "border-transparent bg-warning text-warning-foreground",
   READY: "border-transparent bg-info text-info-foreground",

@@ -16,6 +16,8 @@ import {
   exportReadinessLabel,
 } from "@/lib/exports";
 import { formatQty } from "@/lib/format";
+import { useAuth } from "@/lib/auth";
+import { hasPermission } from "@/lib/permissions";
 import type { ExportStoreLot } from "@/lib/types";
 import { useFetch } from "@/hooks/use-fetch";
 import { api } from "@/lib/api";
@@ -53,19 +55,31 @@ function StatusChips({ row }: { row: ExportStoreLot }) {
   );
 }
 
-function LotCard({ row }: { row: ExportStoreLot }) {
+function LotCard({
+  row,
+  canOpenDetail,
+}: {
+  row: ExportStoreLot;
+  canOpenDetail: boolean;
+}) {
   const readiness = row.readiness ?? exportReadiness(row);
   const docs = exportDocsProgress(row.documents);
   return (
     <article className="rounded-xl border border-[var(--frappe-border)] bg-[var(--frappe-surface)] p-4">
       <div className="flex items-start gap-3">
         <div className="min-w-0">
-          <Link
-            href={`/exports/lots/${row.lotId}`}
-            className="font-semibold text-[var(--frappe-primary)] hover:underline"
-          >
-            {row.lotCode}
-          </Link>
+          {canOpenDetail ? (
+            <Link
+              href={`/exports/lots/${row.lotId}`}
+              className="font-semibold text-[var(--frappe-primary)] hover:underline"
+            >
+              {row.lotCode}
+            </Link>
+          ) : (
+            <span className="font-semibold text-[var(--frappe-text)]">
+              {row.lotCode}
+            </span>
+          )}
           <p className="text-xs text-[var(--frappe-text-muted)]">
             Batch {row.runNumber ?? "—"}
             {row.locationName ? ` · ${row.locationName}` : ""}
@@ -106,15 +120,23 @@ function LotCard({ row }: { row: ExportStoreLot }) {
         />
       </dl>
       <div className="mt-4">
-        <Button asChild size="sm">
-          <Link href={`/exports/lots/${row.lotId}`}>Open export detail</Link>
-        </Button>
+        {canOpenDetail ? (
+          <Button asChild size="sm">
+            <Link href={`/exports/lots/${row.lotId}`}>Open export detail</Link>
+          </Button>
+        ) : (
+          <Button size="sm" disabled title="Export detail requires export write access">
+            Open export detail
+          </Button>
+        )}
       </div>
     </article>
   );
 }
 
 export function ExportLotsPanel() {
+  const { user } = useAuth();
+  const canOpenDetail = hasPermission(user, "export.write");
   const { data, loading } = useFetch(
     () => api<ExportStoreLot[]>("/exports/store"),
     []
@@ -167,7 +189,11 @@ export function ExportLotsPanel() {
       ) : view === "grid" ? (
         <div className="grid gap-4 lg:grid-cols-2">
           {rows.map((row) => (
-            <LotCard key={row.lotId} row={row} />
+            <LotCard
+              key={row.lotId}
+              row={row}
+              canOpenDetail={canOpenDetail}
+            />
           ))}
         </div>
       ) : (
@@ -179,14 +205,17 @@ export function ExportLotsPanel() {
             {
               key: "lot",
               header: "Lot",
-              cell: (row) => (
-                <Link
-                  href={`/exports/lots/${row.lotId}`}
-                  className="font-medium text-[var(--frappe-primary)] hover:underline"
-                >
-                  {row.lotCode}
-                </Link>
-              ),
+              cell: (row) =>
+                canOpenDetail ? (
+                  <Link
+                    href={`/exports/lots/${row.lotId}`}
+                    className="font-medium text-[var(--frappe-primary)] hover:underline"
+                  >
+                    {row.lotCode}
+                  </Link>
+                ) : (
+                  <span className="font-medium">{row.lotCode}</span>
+                ),
             },
             {
               key: "batch",
@@ -211,14 +240,22 @@ export function ExportLotsPanel() {
             {
               key: "open",
               header: "",
-              cell: (row) => (
-                <Link
-                  href={`/exports/lots/${row.lotId}`}
-                  className="text-sm text-[var(--frappe-primary)] hover:underline"
-                >
-                  Open
-                </Link>
-              ),
+              cell: (row) =>
+                canOpenDetail ? (
+                  <Link
+                    href={`/exports/lots/${row.lotId}`}
+                    className="text-sm text-[var(--frappe-primary)] hover:underline"
+                  >
+                    Open
+                  </Link>
+                ) : (
+                  <span
+                    className="cursor-not-allowed text-sm text-muted-foreground"
+                    title="Export detail requires export write access"
+                  >
+                    Open
+                  </span>
+                ),
             },
           ]}
         />

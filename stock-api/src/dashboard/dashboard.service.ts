@@ -35,11 +35,20 @@ import { SaleLine } from '../database/entities/sale-line.entity';
 import { StockLevel } from '../database/entities/stock-level.entity';
 import { Supplier } from '../database/entities/supplier.entity';
 import { SupplierCredit } from '../database/entities/supplier-credit.entity';
+import { User } from '../database/entities/user.entity';
+import { UserLocation } from '../database/entities/user-location.entity';
 import { MarketPricesService } from '../market-prices/market-prices.service';
 import {
   currentProcessStage,
   kgAtCurrentStage,
 } from '../process-runs/process-summary';
+import {
+  DashboardAccess,
+  canViewFinance,
+  hasPerm,
+  inScopedLocations,
+  scopeMeta,
+} from './dashboard-access';
 
 type Recommendation = {
   id: string;
@@ -84,24 +93,59 @@ export class DashboardService {
     private readonly supplierCreditRepo: Repository<SupplierCredit>,
     @InjectRepository(Notification)
     private readonly notificationRepo: Repository<Notification>,
+    @InjectRepository(User)
+    private readonly userRepo: Repository<User>,
+    @InjectRepository(UserLocation)
+    private readonly userLocationRepo: Repository<UserLocation>,
   ) {}
+
+  async resolveAccess(userId: string): Promise<DashboardAccess> {
+    const user = await this.userRepo.findOne({
+      where: { id: userId },
+      relations: { role: { permissions: true } },
+    });
+    const locationRows = await this.userLocationRepo.find({
+      where: { userId },
+    });
+    return {
+      userId,
+      roleName: user?.role?.name ?? null,
+      locationIds:
+        locationRows.length > 0
+          ? locationRows.map((r) => r.locationId)
+          : null,
+      permissions: new Set(
+        (user?.role?.permissions ?? []).map((p) => p.code),
+      ),
+    };
+  }
 
   /**
    * Local market only: purchase → inventory → cleaning → roast & ground → sales store → sales.
    * Export purchases, export sales, and export contracts are excluded.
    */
-  async getLocalOverview(from?: string, to?: string) {
-    return this.buildLocalMarket(from, to);
+  async getLocalOverview(from?: string, to?: string, userId?: string) {
+    const access = userId
+      ? await this.resolveAccess(userId)
+      : this.unrestrictedAccess();
+    const data = await this.buildLocalMarket(from, to, access);
+    return {
+      ...this.redactLocalByPermissions(data, access),
+      access: scopeMeta(access),
+    };
   }
 
   /**
    * Export coffee command center: purchase → process → packaging → export store → ship.
    */
-  async getExportOverview(from?: string, to?: string) {
-    const overview = await this.getOverview(from, to);
+  async getExportOverview(from?: string, to?: string, userId?: string) {
+    const access = userId
+      ? await this.resolveAccess(userId)
+      : this.unrestrictedAccess();
+    const overview = await this.getOverview(from, to, userId);
     const fromIso = overview.period?.from ?? from ?? undefined;
     const toIso = overview.period?.to ?? to ?? undefined;
-    const market = await this.buildExportMarket(fromIso, toIso);
+    const market = await this.buildExportMarket(fromIso, toIso, access);
     const pipeline = await this.buildExportPipeline();
 
     const exportCodes = new Set([
@@ -114,7 +158,7 @@ export class DashboardService {
       exportCodes.has(r.code),
     );
 
-    return {
+    const raw = {
       channel: 'EXPORT' as const,
       currency: overview.currency,
       asOf: overview.asOf,
@@ -152,35 +196,65 @@ export class DashboardService {
         credits: overview.links?.credits,
       },
     };
+    return {
+      ...this.redactExportByPermissions(raw, access),
+      access: scopeMeta(access),
+    };
   }
 
-  private async buildExportMarket(from?: string, to?: string) {
+  private unrestrictedAccess(): DashboardAccess {
+    return {
+      userId: '',
+      roleName: 'Admin',
+      locationIds: null,
+      permissions: new Set([
+        'inventory.read',
+        'purchase.read',
+        'sales.read',
+        'process.read',
+        'export.read',
+        'bank.read',
+        'credit.read',
+        'profit_loss.read',
+        'reports.read',
+        'lot.read',
+        'dashboard.read',
+      ]),
+    };
+  }
+
+  private async buildExportMarket(
+    from?: string,
+    to?: string,
+    access?: DashboardAccess,
+  ) {
+    const locationIds = access?.locationIds ?? null;
     const [
       pnl,
       exportLotIds,
       localLotIds,
-      stocks,
-      runs,
+      stocksRaw,
+      runsRaw,
       purchaseTotals,
       purchaseKg,
       saleLines,
       customerCredit,
       supplierCredit,
       contracts,
-      exportLots,
+      exportLotsRaw,
     ] = await Promise.all([
-      this.computeProfitSummary(from, to, SaleChannel.EXPORT),
-      this.purchaseLotIds(PurchaseType.EXPORT),
-      this.purchaseLotIds(PurchaseType.LOCAL),
+      this.computeProfitSummary(from, to, SaleChannel.EXPORT, locationIds),
+      this.purchaseLotIds(PurchaseType.EXPORT, locationIds),
+      this.purchaseLotIds(PurchaseType.LOCAL, locationIds),
       this.stockRepo.find({
         relations: { item: true, lot: true, location: true },
       }),
       this.processRunRepo.find({ where: { workflow: PurchaseType.EXPORT } }),
-      this.typedPurchaseTotals(PurchaseType.EXPORT, from, to),
-      this.typedPurchaseKg(PurchaseType.EXPORT, from, to),
-      this.channelSaleLines(SaleChannel.EXPORT, from, to),
-      this.channelCustomerCredit(SaleChannel.EXPORT),
-      this.typedSupplierCredit(PurchaseType.EXPORT),
+      this.typedPurchaseTotals(PurchaseType.EXPORT, from, to, locationIds),
+      this.typedPurchaseKg(PurchaseType.EXPORT, from, to, locationIds),
+      this.channelSaleLines(SaleChannel.EXPORT, from, to, locationIds),
+      this.channelCustomerCredit(SaleChannel.EXPORT, locationIds),
+      this.typedSupplierCredit(PurchaseType.EXPORT, locationIds),
       this.exportRepo.find({
         relations: { allocations: true },
       }),
@@ -189,6 +263,10 @@ export class DashboardService {
         relations: { location: true },
       }),
     ]);
+
+    const stocks = inScopedLocations(stocksRaw, locationIds);
+    const runs = inScopedLocations(runsRaw, locationIds);
+    const exportLots = inScopedLocations(exportLotsRaw, locationIds);
 
     let inventoryKg = 0;
     let inventoryValue = 0;
@@ -442,6 +520,7 @@ export class DashboardService {
       .addSelect('line.quantity', 'quantity')
       .where('p.purchase_type = :type', { type: PurchaseType.EXPORT })
       .andWhere('p.status = :status', { status: DocumentStatus.ACTIVE });
+    this.applyLocationScope(purchaseTrendQb, 'p.location_id', locationIds);
     applyDateRangeToQb(purchaseTrendQb, 'p.created_at', from, to);
     const purchaseRows = await purchaseTrendQb.getRawMany<{
       createdAt: Date;
@@ -643,10 +722,23 @@ export class DashboardService {
     };
   }
 
+  private applyLocationScope(
+    qb: { andWhere: (sql: string, params?: object) => unknown },
+    column: string,
+    locationIds: string[] | null,
+  ) {
+    if (locationIds?.length) {
+      qb.andWhere(`${column} IN (:...dashLocationIds)`, {
+        dashLocationIds: locationIds,
+      });
+    }
+  }
+
   private async typedPurchaseTotals(
     type: PurchaseType,
     from?: string,
     to?: string,
+    locationIds?: string[] | null,
   ) {
     const qb = this.purchaseRepo
       .createQueryBuilder('p')
@@ -656,6 +748,7 @@ export class DashboardService {
       .where('p.purchase_type = :type', { type })
       .andWhere('p.status = :status', { status: DocumentStatus.ACTIVE })
       .andWhere('line.lot_id IS NOT NULL');
+    this.applyLocationScope(qb, 'p.location_id', locationIds ?? null);
     applyDateRangeToQb(qb, 'p.created_at', from, to);
     const row = await qb.getRawOne<{ count: string; value: string }>();
     return {
@@ -668,6 +761,7 @@ export class DashboardService {
     type: PurchaseType,
     from?: string,
     to?: string,
+    locationIds?: string[] | null,
   ) {
     const qb = this.purchaseRepo
       .createQueryBuilder('p')
@@ -676,12 +770,18 @@ export class DashboardService {
       .where('p.purchase_type = :type', { type })
       .andWhere('p.status = :status', { status: DocumentStatus.ACTIVE })
       .andWhere('line.lot_id IS NOT NULL');
+    this.applyLocationScope(qb, 'p.location_id', locationIds ?? null);
     applyDateRangeToQb(qb, 'p.created_at', from, to);
     const row = await qb.getRawOne<{ kg: string }>();
     return num(row?.kg);
   }
 
-  private async channelSaleLines(channel: SaleChannel, from?: string, to?: string) {
+  private async channelSaleLines(
+    channel: SaleChannel,
+    from?: string,
+    to?: string,
+    locationIds?: string[] | null,
+  ) {
     const qb = this.saleLineRepo
       .createQueryBuilder('line')
       .innerJoinAndSelect('line.sale', 'sale')
@@ -689,33 +789,42 @@ export class DashboardService {
       .leftJoinAndSelect('line.lot', 'lot')
       .where('sale.status = :status', { status: DocumentStatus.ACTIVE })
       .andWhere('sale.channel = :channel', { channel });
+    this.applyLocationScope(qb, 'sale.location_id', locationIds ?? null);
     applyDateRangeToQb(qb, 'sale.created_at', from, to);
     return qb.getMany();
   }
 
-  private async channelCustomerCredit(channel: SaleChannel) {
-    const row = await this.customerCreditRepo
+  private async channelCustomerCredit(
+    channel: SaleChannel,
+    locationIds?: string[] | null,
+  ) {
+    const qb = this.customerCreditRepo
       .createQueryBuilder('credit')
       .innerJoin('credit.sale', 'sale')
       .select('COALESCE(SUM(credit.balance::numeric), 0)', 'total')
       .where('credit.status IN (:...statuses)', {
         statuses: [CreditStatus.OPEN, CreditStatus.PARTIAL],
       })
-      .andWhere('sale.channel = :channel', { channel })
-      .getRawOne<{ total: string }>();
+      .andWhere('sale.channel = :channel', { channel });
+    this.applyLocationScope(qb, 'sale.location_id', locationIds ?? null);
+    const row = await qb.getRawOne<{ total: string }>();
     return money(num(row?.total));
   }
 
-  private async typedSupplierCredit(type: PurchaseType) {
-    const row = await this.supplierCreditRepo
+  private async typedSupplierCredit(
+    type: PurchaseType,
+    locationIds?: string[] | null,
+  ) {
+    const qb = this.supplierCreditRepo
       .createQueryBuilder('credit')
       .innerJoin('credit.purchase', 'purchase')
       .select('COALESCE(SUM(credit.balance::numeric), 0)', 'total')
       .where('credit.status IN (:...statuses)', {
         statuses: [CreditStatus.OPEN, CreditStatus.PARTIAL],
       })
-      .andWhere('purchase.purchase_type = :type', { type })
-      .getRawOne<{ total: string }>();
+      .andWhere('purchase.purchase_type = :type', { type });
+    this.applyLocationScope(qb, 'purchase.location_id', locationIds ?? null);
+    const row = await qb.getRawOne<{ total: string }>();
     return money(num(row?.total));
   }
 
@@ -765,14 +874,19 @@ export class DashboardService {
     return { byStatus, chart };
   }
 
-  async getOverview(from?: string, to?: string) {
+  async getOverview(from?: string, to?: string, userId?: string) {
+    const access = userId
+      ? await this.resolveAccess(userId)
+      : this.unrestrictedAccess();
+    const locationIds = access.locationIds;
     const today = new Date();
     today.setHours(0, 0, 0, 0);
     const todayStr = today.toISOString().slice(0, 10);
 
-    const stocks = await this.stockRepo.find({
+    const stocksRaw = await this.stockRepo.find({
       relations: { location: true, item: true },
     });
+    const stocks = inScopedLocations(stocksRaw, locationIds);
 
     let totalInventoryValue = 0;
     const valueByLocation: Record<string, { name: string; value: number }> = {};
@@ -803,6 +917,7 @@ export class DashboardService {
       .createQueryBuilder('s')
       .select('COALESCE(SUM(s.total::numeric), 0)', 'total')
       .where('s.status = :status', { status: DocumentStatus.ACTIVE });
+    this.applyLocationScope(dailySalesQb, 's.location_id', locationIds);
     applyDateRangeToQb(dailySalesQb, 's.created_at', from, to);
     const dailySales = await dailySalesQb.getRawOne<{ total: string }>();
 
@@ -810,21 +925,32 @@ export class DashboardService {
       .createQueryBuilder('p')
       .select('COALESCE(SUM(p.total::numeric), 0)', 'total')
       .where('p.status = :status', { status: DocumentStatus.ACTIVE });
+    this.applyLocationScope(dailyPurchasesQb, 'p.location_id', locationIds);
     applyDateRangeToQb(dailyPurchasesQb, 'p.created_at', from, to);
     const dailyPurchases = await dailyPurchasesQb.getRawOne<{ total: string }>();
 
-    const profitAndLoss = await this.computeProfitSummary(from, to);
+    const profitAndLoss = await this.computeProfitSummary(
+      from,
+      to,
+      undefined,
+      locationIds,
+    );
 
-    const bankAccounts = await this.bankRepo.find({
+    const bankAccounts = canViewFinance(access)
+      ? await this.bankRepo.find({
       where: { isActive: true },
       order: { accountType: 'ASC', name: 'ASC' },
-    });
+        })
+      : [];
     const liquidityTotals =
       this.banksService.computeLiquidityTotals(bankAccounts);
 
-    const showrooms = await this.locationRepo.find({
+    const showroomsRaw = await this.locationRepo.find({
       where: { type: LocationType.SHOWROOM, isActive: true },
     });
+    const showrooms = locationIds
+      ? showroomsRaw.filter((l) => locationIds.includes(l.id))
+      : showroomsRaw;
 
     const fromIso = from;
     const toIso = to;
@@ -840,12 +966,15 @@ export class DashboardService {
       this.buildPulse(fromIso, toIso),
       this.buildCommercial(fromIso, toIso, liquidityTotals.totalLiquidity),
       this.buildContracts(today),
-      this.lotRepo
+      (async () => {
+        const qb = this.lotRepo
         .createQueryBuilder('lot')
         .select('COUNT(*)', 'count')
         .addSelect('COALESCE(SUM(lot.quantity::numeric), 0)', 'kg')
-        .where('lot.status = :status', { status: LotStatus.HOLD })
-        .getRawOne<{ count: string; kg: string }>(),
+          .where('lot.status = :status', { status: LotStatus.HOLD });
+        this.applyLocationScope(qb, 'lot.location_id', locationIds);
+        return qb.getRawOne<{ count: string; kg: string }>();
+      })(),
       (async () => {
         const qb = this.processRunRepo
           .createQueryBuilder('run')
@@ -855,17 +984,22 @@ export class DashboardService {
           })
           .orderBy('run.completed_at', 'DESC')
           .take(40);
+        this.applyLocationScope(qb, 'run.location_id', locationIds);
         applyDateRangeToQb(qb, 'run.completed_at', fromIso, toIso);
         return qb.getMany();
       })(),
-      this.lotRepo.find({
-        where: {
-          status: LotStatus.ACTIVE,
-          form: In([CoffeeForm.GREEN, CoffeeForm.PARCHMENT, CoffeeForm.CHERRY]),
-        },
-        order: { moisturePercent: 'DESC' },
-        take: 20,
-      }),
+      (async () => {
+        const qb = this.lotRepo
+          .createQueryBuilder('lot')
+          .where('lot.status = :status', { status: LotStatus.ACTIVE })
+          .andWhere('lot.form IN (:...forms)', {
+            forms: [CoffeeForm.GREEN, CoffeeForm.PARCHMENT, CoffeeForm.CHERRY],
+          })
+          .orderBy('lot.moisture_percent', 'DESC')
+          .take(20);
+        this.applyLocationScope(qb, 'lot.location_id', locationIds);
+        return qb.getMany();
+      })(),
     ]);
 
     const shrinkageSignals = shrinkage
@@ -925,6 +1059,7 @@ export class DashboardService {
     return {
       currency: getAppCurrency(this.config),
       asOf: new Date().toISOString(),
+      access: scopeMeta(access),
       totalInventoryValue: totalInventoryValue.toFixed(2),
       stockValueByLocation: Object.entries(valueByLocation).map(
         ([locationId, data]) => ({
@@ -1289,6 +1424,7 @@ export class DashboardService {
     from?: string,
     to?: string,
     channel?: SaleChannel,
+    locationIds?: string[] | null,
   ) {
     const saleLinesQb = this.saleLineRepo
       .createQueryBuilder('line')
@@ -1297,6 +1433,7 @@ export class DashboardService {
     if (channel) {
       saleLinesQb.andWhere('sale.channel = :channel', { channel });
     }
+    this.applyLocationScope(saleLinesQb, 'sale.location_id', locationIds ?? null);
     applyDateRangeToQb(saleLinesQb, 'sale.created_at', from, to);
     const lines = await saleLinesQb.getMany();
 
@@ -1310,9 +1447,9 @@ export class DashboardService {
     // Expenses are company-wide; only attribute them on the combined overview.
     let totalExpenses = 0;
     if (!channel) {
-      const expenseQb = this.expenseRepo.createQueryBuilder('expense');
-      applyDateRangeToQb(expenseQb, 'expense.expense_date', from, to);
-      const expenses = await expenseQb.getMany();
+    const expenseQb = this.expenseRepo.createQueryBuilder('expense');
+    applyDateRangeToQb(expenseQb, 'expense.expense_date', from, to);
+    const expenses = await expenseQb.getMany();
       totalExpenses = expenses.reduce((sum, e) => sum + parseFloat(e.amount), 0);
     }
 
@@ -1918,22 +2055,34 @@ export class DashboardService {
     return cards.slice(0, 6);
   }
 
-  private async buildLocalMarket(from?: string, to?: string) {
-    const pnl = await this.computeProfitSummary(from, to, SaleChannel.LOCAL);
-    const [localLotIds, exportLotIds, stocks, runs, purchaseTotals, purchaseKg, saleLines, customerCredit, supplierCredit] =
+  private async buildLocalMarket(
+    from?: string,
+    to?: string,
+    access?: DashboardAccess,
+  ) {
+    const locationIds = access?.locationIds ?? null;
+    const pnl = await this.computeProfitSummary(
+      from,
+      to,
+      SaleChannel.LOCAL,
+      locationIds,
+    );
+    const [localLotIds, exportLotIds, stocksRaw, runsRaw, purchaseTotals, purchaseKg, saleLines, customerCredit, supplierCredit] =
       await Promise.all([
-        this.purchaseLotIds(PurchaseType.LOCAL),
-        this.purchaseLotIds(PurchaseType.EXPORT),
+        this.purchaseLotIds(PurchaseType.LOCAL, locationIds),
+        this.purchaseLotIds(PurchaseType.EXPORT, locationIds),
         this.stockRepo.find({
           relations: { item: true, lot: true, location: true },
         }),
         this.processRunRepo.find({ where: { workflow: PurchaseType.LOCAL } }),
-        this.localPurchaseTotals(from, to),
-        this.localPurchaseKg(from, to),
-        this.localSaleLines(from, to),
-        this.localCustomerCredit(),
-        this.localSupplierCredit(),
+        this.localPurchaseTotals(from, to, locationIds),
+        this.localPurchaseKg(from, to, locationIds),
+        this.localSaleLines(from, to, locationIds),
+        this.localCustomerCredit(locationIds),
+        this.localSupplierCredit(locationIds),
       ]);
+    const stocks = inScopedLocations(stocksRaw, locationIds);
+    const runs = inScopedLocations(runsRaw, locationIds);
 
     let inventoryKg = 0;
     let inventoryValue = 0;
@@ -2219,15 +2368,19 @@ export class DashboardService {
     };
   }
 
-  private async purchaseLotIds(type: PurchaseType): Promise<Set<string>> {
-    const rows = await this.purchaseRepo
+  private async purchaseLotIds(
+    type: PurchaseType,
+    locationIds?: string[] | null,
+  ): Promise<Set<string>> {
+    const qb = this.purchaseRepo
       .createQueryBuilder('p')
       .innerJoin('p.lines', 'line')
       .select('line.lot_id', 'lotId')
       .where('p.purchase_type = :type', { type })
       .andWhere('p.status = :status', { status: DocumentStatus.ACTIVE })
-      .andWhere('line.lot_id IS NOT NULL')
-      .getRawMany<Record<string, string>>();
+      .andWhere('line.lot_id IS NOT NULL');
+    this.applyLocationScope(qb, 'p.location_id', locationIds ?? null);
+    const rows = await qb.getRawMany<Record<string, string>>();
     return new Set(
       rows
         .map((row) => row.lotId ?? row.lotid ?? '')
@@ -2235,7 +2388,11 @@ export class DashboardService {
     );
   }
 
-  private async localPurchaseTotals(from?: string, to?: string) {
+  private async localPurchaseTotals(
+    from?: string,
+    to?: string,
+    locationIds?: string[] | null,
+  ) {
     const qb = this.purchaseRepo
       .createQueryBuilder('p')
       .innerJoin('p.lines', 'line')
@@ -2244,6 +2401,7 @@ export class DashboardService {
       .where('p.purchase_type = :type', { type: PurchaseType.LOCAL })
       .andWhere('p.status = :status', { status: DocumentStatus.ACTIVE })
       .andWhere('line.lot_id IS NOT NULL');
+    this.applyLocationScope(qb, 'p.location_id', locationIds ?? null);
     applyDateRangeToQb(qb, 'p.created_at', from, to);
     const row = await qb.getRawOne<{ count: string; value: string }>();
     return {
@@ -2252,7 +2410,11 @@ export class DashboardService {
     };
   }
 
-  private async localPurchaseKg(from?: string, to?: string) {
+  private async localPurchaseKg(
+    from?: string,
+    to?: string,
+    locationIds?: string[] | null,
+  ) {
     const qb = this.purchaseRepo
       .createQueryBuilder('p')
       .innerJoin('p.lines', 'line')
@@ -2260,12 +2422,17 @@ export class DashboardService {
       .where('p.purchase_type = :type', { type: PurchaseType.LOCAL })
       .andWhere('p.status = :status', { status: DocumentStatus.ACTIVE })
       .andWhere('line.lot_id IS NOT NULL');
+    this.applyLocationScope(qb, 'p.location_id', locationIds ?? null);
     applyDateRangeToQb(qb, 'p.created_at', from, to);
     const row = await qb.getRawOne<{ kg: string }>();
     return num(row?.kg);
   }
 
-  private async localSaleLines(from?: string, to?: string) {
+  private async localSaleLines(
+    from?: string,
+    to?: string,
+    locationIds?: string[] | null,
+  ) {
     const qb = this.saleLineRepo
       .createQueryBuilder('line')
       .innerJoinAndSelect('line.sale', 'sale')
@@ -2273,34 +2440,167 @@ export class DashboardService {
       .leftJoinAndSelect('line.lot', 'lot')
       .where('sale.status = :status', { status: DocumentStatus.ACTIVE })
       .andWhere('sale.channel = :channel', { channel: SaleChannel.LOCAL });
+    this.applyLocationScope(qb, 'sale.location_id', locationIds ?? null);
     applyDateRangeToQb(qb, 'sale.created_at', from, to);
     return qb.getMany();
   }
 
-  private async localCustomerCredit() {
-    const row = await this.customerCreditRepo
+  private async localCustomerCredit(locationIds?: string[] | null) {
+    const qb = this.customerCreditRepo
       .createQueryBuilder('credit')
       .innerJoin('credit.sale', 'sale')
       .select('COALESCE(SUM(credit.balance::numeric), 0)', 'total')
       .where('credit.status IN (:...statuses)', {
         statuses: [CreditStatus.OPEN, CreditStatus.PARTIAL],
       })
-      .andWhere('sale.channel = :channel', { channel: SaleChannel.LOCAL })
-      .getRawOne<{ total: string }>();
+      .andWhere('sale.channel = :channel', { channel: SaleChannel.LOCAL });
+    this.applyLocationScope(qb, 'sale.location_id', locationIds ?? null);
+    const row = await qb.getRawOne<{ total: string }>();
     return money(num(row?.total));
   }
 
-  private async localSupplierCredit() {
-    const row = await this.supplierCreditRepo
+  private async localSupplierCredit(locationIds?: string[] | null) {
+    const qb = this.supplierCreditRepo
       .createQueryBuilder('credit')
       .innerJoin('credit.purchase', 'purchase')
       .select('COALESCE(SUM(credit.balance::numeric), 0)', 'total')
       .where('credit.status IN (:...statuses)', {
         statuses: [CreditStatus.OPEN, CreditStatus.PARTIAL],
       })
-      .andWhere('purchase.purchase_type = :type', { type: PurchaseType.LOCAL })
-      .getRawOne<{ total: string }>();
+      .andWhere('purchase.purchase_type = :type', { type: PurchaseType.LOCAL });
+    this.applyLocationScope(qb, 'purchase.location_id', locationIds ?? null);
+    const row = await qb.getRawOne<{ total: string }>();
     return money(num(row?.total));
+  }
+
+  private redactLocalByPermissions(
+    data: Record<string, unknown>,
+    access: DashboardAccess,
+  ) {
+    const out = { ...data } as Record<string, any>;
+    const pipeline = { ...(out.pipeline ?? {}) };
+    const activity = { ...(out.activity ?? {}) };
+    const finance = { ...(out.finance ?? {}) };
+    const salesStore = { ...(out.salesStore ?? {}) };
+
+    if (!hasPerm(access, 'purchase.read')) {
+      pipeline.purchaseCount = 0;
+      pipeline.purchaseKg = '0.000';
+      pipeline.purchaseValue = '0.00';
+    }
+    if (!hasPerm(access, 'inventory.read', 'lot.read')) {
+      pipeline.inventoryKg = '0.000';
+      pipeline.inventoryValue = '0.00';
+      pipeline.salesStoreKg = '0.000';
+      pipeline.salesStoreValue = '0.00';
+      pipeline.rejectKg = '0.000';
+      out.stockByLocation = [];
+      out.onHandChart = [];
+    }
+    if (!hasPerm(access, 'process.read')) {
+      pipeline.processingStartedKg = '0.000';
+      pipeline.cleaningKg = '0.000';
+      pipeline.roastGroundKg = '0.000';
+      activity.cleaningInputKg = '0.000';
+      activity.cleaningOutputKg = '0.000';
+      activity.cleaningLossKg = '0.000';
+      activity.yieldPercent = '0.0';
+      activity.highLossRuns = 0;
+      activity.underScreenRuns = 0;
+      activity.roastKg = '0.000';
+      activity.groundKg = '0.000';
+    }
+    if (!hasPerm(access, 'sales.read')) {
+      pipeline.salesCount = 0;
+      pipeline.salesKg = '0.000';
+      pipeline.salesValue = '0.00';
+      salesStore.soldRoastKg = '0.000';
+      salesStore.soldGroundKg = '0.000';
+      out.tradingChart = [];
+    }
+    if (!canViewFinance(access)) {
+      finance.revenue = '0.00';
+      finance.costOfGoodsSold = '0.00';
+      finance.grossProfit = '0.00';
+      finance.netProfit = '0.00';
+      finance.customerCredit = '0.00';
+      finance.supplierCredit = '0.00';
+    } else {
+      if (!hasPerm(access, 'credit.read')) {
+        finance.customerCredit = '0.00';
+        finance.supplierCredit = '0.00';
+      }
+      if (!hasPerm(access, 'profit_loss.read', 'reports.read', 'bank.read')) {
+        finance.revenue = '0.00';
+        finance.costOfGoodsSold = '0.00';
+        finance.grossProfit = '0.00';
+        finance.netProfit = '0.00';
+      }
+    }
+
+    out.pipeline = pipeline;
+    out.activity = activity;
+    out.finance = finance;
+    out.salesStore = salesStore;
+    return out;
+  }
+
+  private redactExportByPermissions(
+    data: Record<string, unknown>,
+    access: DashboardAccess,
+  ) {
+    const out = { ...data } as Record<string, any>;
+    if (!canViewFinance(access)) {
+      out.finance = {
+        revenue: '0.00',
+        costOfGoodsSold: '0.00',
+        grossProfit: '0.00',
+        netProfit: '0.00',
+      };
+      out.commercial = {
+        ...(out.commercial ?? {}),
+        exportRevenue: '0.00',
+        customerCreditOutstanding: '0.00',
+        totalLiquidity: '0.00',
+        outstandingExportPayments: '0.00',
+        supplierCredit: '0.00',
+      };
+      out.financialOverview = {
+        ...(out.financialOverview ?? {}),
+        totalBankBalance: '0.00',
+        totalCashBalance: '0.00',
+        totalLiquidity: '0.00',
+        accounts: [],
+      };
+    }
+    if (!hasPerm(access, 'purchase.read') && out.flow) {
+      out.flow = {
+        ...out.flow,
+        purchaseCount: 0,
+        purchaseKg: '0.000',
+        purchaseValue: '0.00',
+      };
+    }
+    if (!hasPerm(access, 'sales.read') && out.flow) {
+      out.flow = {
+        ...out.flow,
+        salesCount: 0,
+        salesKg: '0.000',
+        salesValue: '0.00',
+      };
+    }
+    if (!hasPerm(access, 'process.read') && out.activity) {
+      out.activity = {
+        ...out.activity,
+        cleaningInputKg: '0.000',
+        cleaningOutputKg: '0.000',
+        cleaningLossKg: '0.000',
+        yieldPercent: '0.0',
+        highLossRuns: 0,
+        packagedKg: '0.000',
+      };
+    }
+    return out;
   }
 }
 

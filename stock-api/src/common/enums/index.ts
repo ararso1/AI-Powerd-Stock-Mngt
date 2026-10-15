@@ -203,6 +203,9 @@ export enum TransferStatus {
 export enum DocumentStatus {
   ACTIVE = 'ACTIVE',
   VOIDED = 'VOIDED',
+  /** Awaiting required role approvals before stock / side-effects post. */
+  PENDING_APPROVAL = 'PENDING_APPROVAL',
+  REJECTED = 'REJECTED',
 }
 
 /** Whether commission is calculated on sale profit or gross subtotal. */
@@ -252,6 +255,8 @@ export enum ProductionOrderStatus {
 /** Coffee mill / roast process run lifecycle. */
 export enum ProcessRunStatus {
   DRAFT = 'DRAFT',
+  /** Cleaning (and similar) runs waiting for Operations Manager approval. */
+  PENDING_APPROVAL = 'PENDING_APPROVAL',
   IN_PROGRESS = 'IN_PROGRESS',
   QC_HOLD = 'QC_HOLD',
   READY = 'READY',
@@ -302,6 +307,29 @@ export enum NotificationType {
   EXPENSE = 'EXPENSE',
   SYSTEM = 'SYSTEM',
   FRESHNESS = 'FRESHNESS',
+  APPROVAL_PENDING = 'APPROVAL_PENDING',
+  APPROVAL_DECIDED = 'APPROVAL_DECIDED',
+}
+
+/** Domain document tied to an approval request. */
+export enum ApprovalEntityType {
+  PURCHASE = 'PURCHASE',
+  SALE = 'SALE',
+  PROCESS_RUN = 'PROCESS_RUN',
+}
+
+export enum ApprovalRequestStatus {
+  PENDING = 'PENDING',
+  APPROVED = 'APPROVED',
+  REJECTED = 'REJECTED',
+  CANCELLED = 'CANCELLED',
+}
+
+export enum ApprovalStepStatus {
+  PENDING = 'PENDING',
+  APPROVED = 'APPROVED',
+  REJECTED = 'REJECTED',
+  SKIPPED = 'SKIPPED',
 }
 
 /** AI decision-support insight categories (Step 8 / §10). */
@@ -343,4 +371,19 @@ export enum AiFeedbackDecision {
   ACCEPT = 'ACCEPT',
   REJECT = 'REJECT',
   DISMISS = 'DISMISS',
+}
+
+/** HR employment classification on users. */
+export enum EmploymentType {
+  FULL_TIME = 'FULL_TIME',
+  PART_TIME = 'PART_TIME',
+  CONTRACT = 'CONTRACT',
+  CASUAL = 'CASUAL',
+}
+
+/** HR employment lifecycle (separate from login isActive). */
+export enum EmploymentStatus {
+  ACTIVE = 'ACTIVE',
+  ON_LEAVE = 'ON_LEAVE',
+  TERMINATED = 'TERMINATED',
 }

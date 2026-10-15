@@ -38,6 +38,7 @@ export type InventoryListQueryParams = GenericListQueryParams & {
   cropYear?: string;
   grade?: string;
   forSale?: boolean;
+  forExportSale?: boolean;
   stockGroup?: "process" | "sales" | "reject";
 };
 

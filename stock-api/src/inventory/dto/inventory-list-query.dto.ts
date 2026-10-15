@@ -38,6 +38,11 @@ export class InventoryListQueryDto extends ListQueryDto {
   @IsBooleanString()
   forSale?: string;
 
+  /** When true, only export-store lots (for export-channel sales). */
+  @IsOptional()
+  @IsBooleanString()
+  forExportSale?: string;
+
   /** Warehouse coffee group: raw stock, sales-store coffee, or reject. */
   @IsOptional()
   @IsIn(['process', 'sales', 'reject'])

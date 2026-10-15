@@ -1,16 +1,23 @@
 import {
   BadRequestException,
+  Inject,
   Injectable,
   NotFoundException,
+  forwardRef,
 } from '@nestjs/common';
 import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
 import { DataSource, EntityManager, Repository } from 'typeorm';
+import { purchaseApprovalSteps } from '../approvals/approval-policies';
+import { ApprovalsService } from '../approvals/approvals.service';
+import { UserLocationAccessService } from '../approvals/user-location-access.service';
 import {
+  ApprovalEntityType,
   BankTransactionType,
   CreditStatus,
   DocumentStatus,
   LotEventType,
   LotStatus,
+  NotificationType,
   PaymentMethod,
   PurchaseType,
   StockMovementSourceType,
@@ -52,7 +59,11 @@ export class PurchasesService {
     private readonly notifications: NotificationsService,
     private readonly creditsService: CreditsService,
     private readonly qualityService: PurchaseQualityService,
+    @Inject(forwardRef(() => ProcessRunsService))
     private readonly processRuns: ProcessRunsService,
+    @Inject(forwardRef(() => ApprovalsService))
+    private readonly approvals: ApprovalsService,
+    private readonly locationAccess: UserLocationAccessService,
   ) {}
 
   async findAll(query: PurchaseListQueryDto) {
@@ -97,8 +108,11 @@ export class PurchasesService {
     const qb = this.purchaseRepo.createQueryBuilder('purchase');
 
     if (!includeVoided) {
-      qb.andWhere('purchase.status = :status', {
-        status: DocumentStatus.ACTIVE,
+      qb.andWhere('purchase.status IN (:...statuses)', {
+        statuses: [
+          DocumentStatus.ACTIVE,
+          DocumentStatus.PENDING_APPROVAL,
+        ],
       });
     }
     if (query.supplierId) {
@@ -731,6 +745,7 @@ export class PurchasesService {
 
   async create(dto: CreatePurchaseDto, userId?: string) {
     this.assertBankAccountRequired(dto.paymentMethod, dto.bankAccountId);
+    await this.locationAccess.assertCanUseLocation(userId, dto.locationId);
 
     const subtotal = dto.lines.reduce(
       (sum, l) => sum + l.quantity * l.unitPrice,
@@ -752,6 +767,12 @@ export class PurchasesService {
       }
     }
 
+    const roleName = userId
+      ? await this.locationAccess.getUserRoleName(userId)
+      : null;
+    const approvalSteps = purchaseApprovalSteps(roleName);
+    const needsApproval = approvalSteps.length > 0;
+
     const purchaseId = await this.dataSource.transaction(async (manager) => {
       if (this.paysViaBank(dto.paymentMethod) && dto.bankAccountId) {
         await this.banksService.assertPaymentAccount(
@@ -762,7 +783,6 @@ export class PurchasesService {
       }
 
       const purchaseRepo = manager.getRepository(Purchase);
-      const creditRepo = manager.getRepository(SupplierCredit);
 
       await this.validatePurchaseLines(dto.lines, manager);
       const lineEntities = this.toPurchaseLines(dto.lines);
@@ -778,75 +798,192 @@ export class PurchasesService {
           total: subtotal.toFixed(2),
           paidAmount: amountPaid.toFixed(2),
           notes: dto.notes ?? null,
-          status: DocumentStatus.ACTIVE,
+          status: needsApproval
+            ? DocumentStatus.PENDING_APPROVAL
+            : DocumentStatus.ACTIVE,
           createdById: userId ?? null,
           lines: lineEntities,
         }),
       );
 
-      await this.applyReceiveLines(
-        manager,
-        purchase.id,
-        dto.locationId,
-        dto.lines,
-        purchase.lines ?? lineEntities,
-        userId,
-        purchase.purchaseType,
-      );
-
-      if (
-        this.paysViaBank(dto.paymentMethod) &&
-        dto.bankAccountId &&
-        amountPaid > 0
-      ) {
-        await this.bankLedger.recordTransaction(
-          {
-            bankAccountId: dto.bankAccountId,
-            type: BankTransactionType.PURCHASE,
-            amount: amountPaid,
-            direction: 'out',
-            description:
-              dto.paymentMethod === PaymentMethod.PARTIAL
-                ? `Purchase ${purchase.id} (partial payment)`
-                : `Purchase ${purchase.id}`,
-            refType: 'purchase',
-            refId: purchase.id,
-            createdById: userId,
-          },
+      if (!needsApproval) {
+        await this.postPurchaseEffects(
           manager,
-        );
-      }
-
-      if (this.createsSupplierCredit(dto.paymentMethod)) {
-        const balance = Math.max(0, subtotal - amountPaid);
-        await creditRepo.save(
-          creditRepo.create({
-            supplierId: dto.supplierId,
-            purchaseId: purchase.id,
-            amount: subtotal.toFixed(2),
-            paidAmount: amountPaid.toFixed(2),
-            balance: balance.toFixed(2),
-            status:
-              balance <= 0
-                ? CreditStatus.PAID
-                : amountPaid > 0
-                  ? CreditStatus.PARTIAL
-                  : CreditStatus.OPEN,
-            dueDate: dto.creditDueDate ?? null,
-          }),
+          purchase,
+          dto.lines,
+          dto.creditDueDate ?? null,
+          userId,
         );
       }
 
       return purchase.id;
     });
 
+    if (needsApproval) {
+      await this.approvals.createRequest({
+        entityType: ApprovalEntityType.PURCHASE,
+        entityId: purchaseId,
+        initiatedById: userId ?? null,
+        steps: approvalSteps,
+        metadata: {
+          reference: purchaseId.slice(0, 8),
+          total: subtotal.toFixed(2),
+          locationId: dto.locationId,
+        },
+      });
+      await this.notifications.notifyUsers(
+        userId ? [userId] : [],
+        {
+          module: 'purchases',
+          type: NotificationType.PURCHASE,
+          title: 'Purchase submitted for approval',
+          message: `Purchase of Br ${subtotal.toFixed(2)} is pending approval. Stock will update after all approvals.`,
+          entityType: 'purchase',
+          entityId: purchaseId,
+          metadata: { total: subtotal.toFixed(2), pendingApproval: true },
+        },
+      );
+    } else {
+      await this.notifications.onPurchaseRecorded({
+        purchaseId,
+        total: subtotal.toFixed(2),
+        actorUserId: userId,
+        creditDueDate: dto.creditDueDate ?? null,
+      });
+    }
+
+    return this.findOne(purchaseId);
+  }
+
+  /**
+   * Called when an approval workflow fully approves or rejects a purchase.
+   * Stock, bank, and supplier credit post only on approve.
+   */
+  async applyApprovalOutcome(
+    purchaseId: string,
+    decision: 'approve' | 'reject',
+    actorUserId: string,
+  ) {
+    const purchase = await this.purchaseRepo.findOne({
+      where: { id: purchaseId },
+      relations: { lines: true },
+    });
+    if (!purchase) throw new NotFoundException('Purchase not found');
+
+    if (decision === 'reject') {
+      if (purchase.status !== DocumentStatus.PENDING_APPROVAL) {
+        throw new BadRequestException('Purchase is not awaiting approval');
+      }
+      purchase.status = DocumentStatus.REJECTED;
+      await this.purchaseRepo.save(purchase);
+      return this.findOne(purchaseId);
+    }
+
+    if (purchase.status !== DocumentStatus.PENDING_APPROVAL) {
+      // Idempotent: already posted
+      return this.findOne(purchaseId);
+    }
+
+    await this.dataSource.transaction(async (manager) => {
+      const repo = manager.getRepository(Purchase);
+      const locked = await repo.findOne({
+        where: { id: purchaseId },
+        relations: { lines: true },
+      });
+      if (!locked || locked.status !== DocumentStatus.PENDING_APPROVAL) {
+        return;
+      }
+
+      const lines: PurchaseLineDto[] = (locked.lines ?? []).map((l) => ({
+        itemId: l.itemId,
+        quantity: parseFloat(l.quantity),
+        unitPrice: parseFloat(l.unitPrice),
+        lotId: l.lotId ?? undefined,
+      }));
+
+      await this.postPurchaseEffects(
+        manager,
+        locked,
+        lines,
+        null,
+        actorUserId,
+      );
+      locked.status = DocumentStatus.ACTIVE;
+      await repo.save(locked);
+    });
+
     await this.notifications.onPurchaseRecorded({
       purchaseId,
-      total: subtotal.toFixed(2),
-      actorUserId: userId,
-      creditDueDate: dto.creditDueDate ?? null,
+      total: purchase.total,
+      actorUserId,
+      creditDueDate: null,
     });
 
     return this.findOne(purchaseId);
+  }
+
+  private async postPurchaseEffects(
+    manager: EntityManager,
+    purchase: Purchase,
+    lines: PurchaseLineDto[],
+    creditDueDate: string | null,
+    userId?: string | null,
+  ) {
+    const creditRepo = manager.getRepository(SupplierCredit);
+    const amountPaid = parseFloat(purchase.paidAmount);
+    const subtotal = parseFloat(purchase.total);
+
+    await this.applyReceiveLines(
+      manager,
+      purchase.id,
+      purchase.locationId,
+      lines,
+      purchase.lines ?? [],
+      userId ?? undefined,
+      purchase.purchaseType,
+    );
+
+    if (
+      this.paysViaBank(purchase.paymentMethod) &&
+      purchase.bankAccountId &&
+      amountPaid > 0
+    ) {
+      await this.bankLedger.recordTransaction(
+        {
+          bankAccountId: purchase.bankAccountId,
+          type: BankTransactionType.PURCHASE,
+          amount: amountPaid,
+          direction: 'out',
+          description:
+            purchase.paymentMethod === PaymentMethod.PARTIAL
+              ? `Purchase ${purchase.id} (partial payment)`
+              : `Purchase ${purchase.id}`,
+          refType: 'purchase',
+          refId: purchase.id,
+          createdById: userId ?? undefined,
+        },
+        manager,
+      );
+    }
+
+    if (this.createsSupplierCredit(purchase.paymentMethod)) {
+      const balance = Math.max(0, subtotal - amountPaid);
+      await creditRepo.save(
+        creditRepo.create({
+          supplierId: purchase.supplierId,
+          purchaseId: purchase.id,
+          amount: subtotal.toFixed(2),
+          paidAmount: amountPaid.toFixed(2),
+          balance: balance.toFixed(2),
+          status:
+            balance <= 0
+              ? CreditStatus.PAID
+              : amountPaid > 0
+                ? CreditStatus.PARTIAL
+                : CreditStatus.OPEN,
+          dueDate: creditDueDate,
+        }),
+      );
+    }
   }
 }

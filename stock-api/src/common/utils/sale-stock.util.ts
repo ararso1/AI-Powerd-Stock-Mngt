@@ -12,19 +12,34 @@ const SALE_PROCESS_METHODS = new Set([
   'Reject',
 ]);
 
+export const EXPORT_STORE_PROCESS_METHOD = 'Export store';
+
 function isCoffeeSku(sku?: string | null): boolean {
   const value = sku?.trim().toUpperCase() ?? '';
   return value.startsWith('COF-') || value.startsWith('LOT-');
 }
 
+/** Packaged coffee sitting in the export staging store. */
+export function isExportStoreStock(processMethod?: string | null): boolean {
+  return (processMethod ?? '').trim() === EXPORT_STORE_PROCESS_METHOD;
+}
+
 /** Processed or finished coffee, plus reject stock. Raw purchased coffee is not sellable. */
-export function isSellableStock(source: {
-  sku?: string | null;
-  itemType?: string | null;
-  lotCode?: string | null;
-  form?: string | null;
-  processMethod?: string | null;
-}): boolean {
+export function isSellableStock(
+  source: {
+    sku?: string | null;
+    itemType?: string | null;
+    lotCode?: string | null;
+    form?: string | null;
+    processMethod?: string | null;
+  },
+  channel: 'LOCAL' | 'EXPORT' = 'LOCAL',
+): boolean {
+  if (channel === 'EXPORT') {
+    return isExportStoreStock(source.processMethod);
+  }
+  if (isExportStoreStock(source.processMethod)) return false;
+
   const sku = source.sku?.trim().toUpperCase() ?? '';
   const coffee =
     isCoffeeSku(sku) || isCoffeeSku(source.lotCode) || !!source.form;
@@ -42,13 +57,15 @@ export function isSellableStock(source: {
 }
 
 /**
- * Inventory rows that may be sold: roasted, ground, packaged, finished, or reject coffee.
+ * Inventory rows that may be sold locally: roasted, ground, packaged, finished, or reject coffee.
+ * Export-store lots are excluded — use EXPORT_SELLABLE_STOCK_SQL for export sales.
  */
 export const SELLABLE_STOCK_SQL = `(
   EXISTS (
     SELECT 1 FROM items sale_item
     LEFT JOIN lots sale_lot ON sale_lot.id = stock.lot_id
     WHERE sale_item.id = stock.item_id
+      AND COALESCE(sale_lot.process_method, '') <> 'Export store'
       AND (
         sale_lot.form IN ('ROASTED', 'FLOUR', 'PACKAGED', 'REJECT')
         OR sale_item.item_type = 'FINISHED'
@@ -62,6 +79,15 @@ export const SELLABLE_STOCK_SQL = `(
           'Reject'
         )
       )
+  )
+)`;
+
+/** Export-channel sales: coffee in the export store only. */
+export const EXPORT_SELLABLE_STOCK_SQL = `(
+  EXISTS (
+    SELECT 1 FROM lots export_lot
+    WHERE export_lot.id = stock.lot_id
+      AND export_lot.process_method = 'Export store'
   )
 )`;
 

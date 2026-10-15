@@ -484,11 +484,7 @@ export default function MarketPricesPage() {
       breadcrumbs={[{ label: "Overview" }, { label: "Market prices" }]}
     >
       <PermissionGate
-        permissions={[
-          "market_prices.read",
-          "insights.read",
-          "dashboard.read",
-        ]}
+        permission="market_prices.read"
         fallback={
           <p className="text-muted-foreground">
             You do not have permission to view market prices.

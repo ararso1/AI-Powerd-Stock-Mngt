@@ -1,12 +1,18 @@
 import {
   BadRequestException,
   ForbiddenException,
+  Inject,
   Injectable,
   NotFoundException,
+  forwardRef,
 } from '@nestjs/common';
 import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
 import { DataSource, EntityManager, Repository } from 'typeorm';
+import { saleApprovalSteps } from '../approvals/approval-policies';
+import { ApprovalsService } from '../approvals/approvals.service';
+import { UserLocationAccessService } from '../approvals/user-location-access.service';
 import {
+  ApprovalEntityType,
   BankAccountType,
   BankTransactionType,
   CommissionBasis,
@@ -14,14 +20,20 @@ import {
   DEFAULT_COMMISSION_PERCENT,
   CoffeeForm,
   DocumentStatus,
+  ExportContractStatus,
   LotEventType,
   LotStatus,
+  NotificationType,
   PaymentMethod,
   SaleChannel,
   StockMovementSourceType,
 } from '../common/enums';
 import { computeCommissionAmount } from '../common/utils/commission.util';
-import { isSellableStock } from '../common/utils/sale-stock.util';
+import {
+  isExportStoreStock,
+  isSellableStock,
+} from '../common/utils/sale-stock.util';
+import { ExportContract } from '../database/entities/export-contract.entity';
 import {
   applyDateRangeToQb,
   applyRelatedIlikeSearch,
@@ -80,6 +92,9 @@ export class SalesService {
     private readonly notifications: NotificationsService,
     private readonly lowStockService: LowStockService,
     private readonly creditsService: CreditsService,
+    @Inject(forwardRef(() => ApprovalsService))
+    private readonly approvals: ApprovalsService,
+    private readonly locationAccess: UserLocationAccessService,
   ) {}
 
   async findAll(query: SalesListQueryDto) {
@@ -237,7 +252,9 @@ export class SalesService {
     const qb = this.saleRepo.createQueryBuilder('sale');
 
     if (!includeVoided) {
-      qb.andWhere('sale.status = :status', { status: DocumentStatus.ACTIVE });
+      qb.andWhere('sale.status IN (:...statuses)', {
+        statuses: [DocumentStatus.ACTIVE, DocumentStatus.PENDING_APPROVAL],
+      });
     }
     if (query.soldByUserId) {
       qb.andWhere('sale.sold_by_user_id = :soldByUserId', {
@@ -438,10 +455,11 @@ export class SalesService {
     }));
   }
 
-  /** Processed/finished coffee and reject lots. Raw purchased coffee is refused. */
+  /** Local: processed/reject coffee. Export: export-store lots only. */
   private async assertSellableSaleLine(
     manager: EntityManager,
     line: { itemId: string; lotId?: string | null },
+    channel: SaleChannel = SaleChannel.LOCAL,
   ) {
     const item = await manager.getRepository(Item).findOne({
       where: { id: line.itemId },
@@ -472,20 +490,160 @@ export class SalesService {
       );
     }
 
+    if (channel === SaleChannel.EXPORT) {
+      if (!lot || !isExportStoreStock(lot.processMethod)) {
+        throw new BadRequestException(
+          'Export sales must use coffee from the Export store that is ready for shipment',
+        );
+      }
+      return;
+    }
+
     if (
-      !isSellableStock({
-        sku: item.sku,
-        itemType: item.itemType,
-        lotCode: lot?.code,
-        form: lot?.form,
-        processMethod: lot?.processMethod,
-      })
+      !isSellableStock(
+        {
+          sku: item.sku,
+          itemType: item.itemType,
+          lotCode: lot?.code,
+          form: lot?.form,
+          processMethod: lot?.processMethod,
+        },
+        SaleChannel.LOCAL,
+      )
     ) {
       const name = lot?.code ?? item.description ?? item.sku;
       throw new BadRequestException(
         `${name} is unprocessed coffee and cannot be sold. Select processed coffee or reject stock.`,
       );
     }
+  }
+
+  /**
+   * When an export contract is linked, sale lines must match allocations and
+   * stock checks use on-hand (reserved kg is released at post).
+   */
+  private async assertExportContractSale(
+    manager: EntityManager,
+    dto: CreateSaleDto,
+  ) {
+    if (!dto.exportContractId) return null;
+    const contract = await manager.getRepository(ExportContract).findOne({
+      where: { id: dto.exportContractId },
+      relations: { allocations: true },
+    });
+    if (!contract) {
+      throw new BadRequestException('Export contract not found');
+    }
+    if (
+      contract.status !== ExportContractStatus.ALLOCATED &&
+      contract.status !== ExportContractStatus.STAGED
+    ) {
+      throw new BadRequestException(
+        'Export contract must be ALLOCATED or STAGED to sell against it',
+      );
+    }
+    if (contract.saleId) {
+      throw new BadRequestException('Export contract already has a linked sale');
+    }
+    if (dto.customerId && contract.customerId && dto.customerId !== contract.customerId) {
+      throw new BadRequestException(
+        'Sale customer must match the export contract buyer',
+      );
+    }
+
+    const allocByLot = new Map<string, number>();
+    for (const alloc of contract.allocations ?? []) {
+      allocByLot.set(
+        alloc.lotId,
+        (allocByLot.get(alloc.lotId) ?? 0) + parseFloat(alloc.quantityKg),
+      );
+    }
+
+    for (const line of dto.lines) {
+      if (!line.lotId) {
+        throw new BadRequestException(
+          'Export contract sales require lotId on every line',
+        );
+      }
+      const allocated = allocByLot.get(line.lotId) ?? 0;
+      if (allocated + 1e-6 < line.quantity) {
+        throw new BadRequestException(
+          `Line qty ${line.quantity} kg exceeds contract allocation ${allocated} kg for this lot`,
+        );
+      }
+    }
+    return contract;
+  }
+
+  private async checkExportStockAvailability(
+    manager: EntityManager,
+    locationId: string,
+    lines: SaleLineDto[],
+    allowNegative: boolean,
+    againstContract: boolean,
+  ): Promise<string[]> {
+    if (!againstContract) {
+      return this.stockService.checkAvailability(
+        locationId,
+        lines.map((l) => ({
+          itemId: l.itemId,
+          quantity: l.quantity,
+          lotId: l.lotId ?? null,
+        })),
+        allowNegative,
+        manager,
+      );
+    }
+
+    const warnings: string[] = [];
+    for (const line of lines) {
+      const onHand = await this.stockService.getQuantity(
+        locationId,
+        line.itemId,
+        manager,
+        line.lotId ?? null,
+      );
+      if (onHand + 1e-6 < line.quantity) {
+        const msg = `requested ${line.quantity}, on hand ${onHand}`;
+        if (!allowNegative) {
+          throw new BadRequestException(`Stock unavailable: ${msg}`);
+        }
+        warnings.push(msg);
+      }
+    }
+    return warnings;
+  }
+
+  private async finalizeExportContractSale(
+    manager: EntityManager,
+    sale: Sale,
+    lines: SaleLineDto[],
+  ) {
+    if (!sale.exportContractId) return;
+    const contractRepo = manager.getRepository(ExportContract);
+    const contract = await contractRepo.findOne({
+      where: { id: sale.exportContractId },
+      relations: { allocations: true },
+    });
+    if (!contract) return;
+
+    let shippedKg = parseFloat(contract.shippedKg ?? '0');
+    for (const line of lines) {
+      shippedKg += line.quantity;
+    }
+    contract.shippedKg = shippedKg.toFixed(3);
+    contract.shippedAt = new Date();
+    contract.saleId = sale.id;
+    if (
+      contract.status === ExportContractStatus.ALLOCATED ||
+      contract.status === ExportContractStatus.STAGED
+    ) {
+      contract.status = ExportContractStatus.SHIPPED;
+    }
+    if (!contract.shippingDate) {
+      contract.shippingDate = new Date().toISOString().slice(0, 10);
+    }
+    await contractRepo.save(contract);
   }
 
   private paysViaBank(method: PaymentMethod): boolean {
@@ -727,15 +885,17 @@ export class SalesService {
         );
       }
 
+      const channel = sale.channel ?? SaleChannel.LOCAL;
       for (const line of lines) {
-        await this.assertSellableSaleLine(manager, line);
+        await this.assertSellableSaleLine(manager, line, channel);
       }
 
-      stockWarnings = await this.stockService.checkAvailability(
+      stockWarnings = await this.checkExportStockAvailability(
+        manager,
         locationId,
         lines,
         allowNeg,
-        manager,
+        channel === SaleChannel.EXPORT && !!sale.exportContractId,
       );
 
       if (this.paysViaBank(oldPaymentMethod) && oldBankAccountId) {
@@ -939,6 +1099,8 @@ export class SalesService {
       );
     }
 
+    await this.locationAccess.assertCanUseLocation(userId, dto.locationId);
+
     const paysViaBank = this.paysViaBank(dto.paymentMethod);
     if (paysViaBank && !dto.bankAccountId) {
       throw new BadRequestException(
@@ -977,6 +1139,12 @@ export class SalesService {
       );
     }
 
+    const roleName = userId
+      ? await this.locationAccess.getUserRoleName(userId)
+      : null;
+    const approvalSteps = saleApprovalSteps(roleName);
+    const needsApproval = approvalSteps.length > 0;
+
     const result = await this.dataSource.transaction(async (manager) => {
       if (paysViaBank && dto.bankAccountId) {
         await this.banksService.assertPaymentAccount(
@@ -987,28 +1155,30 @@ export class SalesService {
       }
 
       const saleRepo = manager.getRepository(Sale);
-      const creditRepo = manager.getRepository(CustomerCredit);
+      const channel = dto.channel ?? SaleChannel.LOCAL;
 
       for (const line of dto.lines) {
-        await this.assertSellableSaleLine(manager, line);
+        await this.assertSellableSaleLine(manager, line, channel);
       }
 
-      const stockWarnings = await this.stockService.checkAvailability(
-        dto.locationId,
-        dto.lines.map((l) => ({
-          itemId: l.itemId,
-          quantity: l.quantity,
-          lotId: l.lotId ?? null,
-        })),
-        allowNegative,
+      if (channel === SaleChannel.EXPORT) {
+        await this.assertExportContractSale(manager, dto);
+      } else if (dto.exportContractId) {
+        throw new BadRequestException(
+          'exportContractId is only valid for EXPORT channel sales',
+        );
+      }
+
+      const stockWarnings = await this.checkExportStockAvailability(
         manager,
+        dto.locationId,
+        dto.lines,
+        allowNegative,
+        channel === SaleChannel.EXPORT && !!dto.exportContractId,
       );
 
       const saleLines: SaleLineDraft[] = [];
       let subtotal = 0;
-      const lotRepo = manager.getRepository(Lot);
-      const eventRepo = manager.getRepository(LotEvent);
-      const channel = dto.channel ?? SaleChannel.LOCAL;
 
       for (const line of dto.lines) {
         const stock = await this.stockService.getStock(
@@ -1062,7 +1232,9 @@ export class SalesService {
           ).toFixed(2),
           notes: dto.notes ?? null,
           stockWarnings: stockWarnings.length ? stockWarnings : null,
-          status: DocumentStatus.ACTIVE,
+          status: needsApproval
+            ? DocumentStatus.PENDING_APPROVAL
+            : DocumentStatus.ACTIVE,
           createdById: userId ?? null,
           soldByUserId,
           commissionPercent: commission.commissionPercent,
@@ -1072,128 +1244,275 @@ export class SalesService {
         }),
       );
 
-      for (const line of dto.lines) {
-        const lotId = line.lotId ?? null;
-        const previousQuantity = await this.stockService.getQuantity(
-          dto.locationId,
-          line.itemId,
+      if (!needsApproval) {
+        await this.postSaleStockAndPayments(
           manager,
-          lotId,
-        );
-        await this.stockService.adjust(
-          {
-            locationId: dto.locationId,
-            itemId: line.itemId,
-            quantityDelta: -line.quantity,
-            lotId,
-            meta: {
-              sourceType:
-                channel === SaleChannel.LOCAL
-                  ? StockMovementSourceType.SALE_LOCAL
-                  : StockMovementSourceType.SALE_EXPORT,
-              referenceType: 'sale',
-              referenceId: sale.id,
-              reference: sale.invoiceNumber ?? sale.id.slice(0, 8),
-              createdById: userId ?? null,
-              notes: `Sale ${sale.invoiceNumber ?? sale.id.slice(0, 8)}`,
-            },
-          },
-          manager,
-        );
-        if (lotId) {
-          const lot = await lotRepo.findOne({ where: { id: lotId } });
-          if (lot) {
-            const nextQty = Math.max(
-              0,
-              parseFloat(lot.quantity) - line.quantity,
-            );
-            lot.quantity = nextQty.toFixed(3);
-            await lotRepo.save(lot);
-            const eventType =
-              channel === SaleChannel.LOCAL
-                ? LotEventType.SOLD_LOCAL
-                : LotEventType.SHIPPED;
-            await eventRepo.save(
-              eventRepo.create({
-                lotId,
-                eventType,
-                quantity: line.quantity.toFixed(3),
-                fromLocationId: dto.locationId,
-                notes: `Sale ${sale.id.slice(0, 8)} · ${channel}`,
-                createdById: userId ?? null,
-                metadata: { saleId: sale.id, channel },
-              }),
-            );
-          }
-        }
-        stockChanges.push({
-          locationId: dto.locationId,
-          itemId: line.itemId,
-          previousQuantity,
-          lotId,
-        });
-      }
-
-      const amountPaid = parseFloat(sale.paidAmount);
-      if (paysViaBank && dto.bankAccountId && amountPaid > 0) {
-        await this.bankLedger.recordTransaction(
-          {
-            bankAccountId: dto.bankAccountId,
-            type: BankTransactionType.SALE,
-            amount: amountPaid,
-            direction: 'in',
-            description:
-              dto.paymentMethod === PaymentMethod.PARTIAL
-                ? `Sale ${sale.id} (partial payment)`
-                : `Sale ${sale.id}`,
-            refType: 'sale',
-            refId: sale.id,
-            createdById: userId,
-          },
-          manager,
-        );
-      }
-
-      if (this.createsCustomerCredit(dto.paymentMethod) && dto.customerId) {
-        const balance = Math.max(0, subtotal - amountPaid);
-        await creditRepo.save(
-          creditRepo.create({
-            customerId: dto.customerId,
-            saleId: sale.id,
-            amount: subtotal.toFixed(2),
-            paidAmount: amountPaid.toFixed(2),
-            balance: balance.toFixed(2),
-            status:
-              amountPaid > 0 ? CreditStatus.PARTIAL : CreditStatus.OPEN,
-            dueDate: dto.creditDueDate ?? null,
-          }),
+          sale,
+          dto.lines,
+          dto.creditDueDate ?? null,
+          userId,
+          stockChanges,
         );
       }
 
       return {
         saleId: sale.id,
+        invoiceNumber: sale.invoiceNumber,
         stockWarnings,
         soldByUserId,
         subtotal: subtotal.toFixed(2),
         creditDueDate: dto.creditDueDate ?? null,
+        needsApproval,
       };
     });
 
-    const sale = await this.findOne(result.saleId);
-    await this.lowStockService.evaluateChanges(stockChanges);
-    await this.notifications.onSaleRecorded({
-      saleId: result.saleId,
-      total: result.subtotal,
-      actorUserId: userId,
-      soldByUserId: result.soldByUserId,
-      stockWarnings: result.stockWarnings,
-      creditDueDate: result.creditDueDate,
-    });
+    if (result.needsApproval) {
+      await this.approvals.createRequest({
+        entityType: ApprovalEntityType.SALE,
+        entityId: result.saleId,
+        initiatedById: userId ?? null,
+        steps: approvalSteps,
+        metadata: {
+          reference: result.invoiceNumber ?? result.saleId.slice(0, 8),
+          invoiceNumber: result.invoiceNumber,
+          total: result.subtotal,
+          locationId: dto.locationId,
+        },
+      });
+      if (userId) {
+        await this.notifications.notifyUsers([userId], {
+          module: 'sales',
+          type: NotificationType.SALE,
+          title: 'Sale submitted for approval',
+          message: `Sale of Br ${result.subtotal} is pending Storekeeper and Operations Manager approval before stock is reduced.`,
+          entityType: 'sale',
+          entityId: result.saleId,
+          metadata: { total: result.subtotal, pendingApproval: true },
+        });
+      }
+    } else {
+      await this.lowStockService.evaluateChanges(stockChanges);
+      await this.notifications.onSaleRecorded({
+        saleId: result.saleId,
+        total: result.subtotal,
+        actorUserId: userId,
+        soldByUserId: result.soldByUserId,
+        stockWarnings: result.stockWarnings,
+        creditDueDate: result.creditDueDate,
+      });
+    }
 
+    const sale = await this.findOne(result.saleId);
     return {
       ...sale,
       stockWarnings: result.stockWarnings,
     };
+  }
+
+  async applyApprovalOutcome(
+    saleId: string,
+    decision: 'approve' | 'reject',
+    actorUserId: string,
+  ) {
+    const sale = await this.saleRepo.findOne({
+      where: { id: saleId },
+      relations: { lines: true },
+    });
+    if (!sale) throw new NotFoundException('Sale not found');
+
+    if (decision === 'reject') {
+      if (sale.status !== DocumentStatus.PENDING_APPROVAL) {
+        throw new BadRequestException('Sale is not awaiting approval');
+      }
+      sale.status = DocumentStatus.REJECTED;
+      await this.saleRepo.save(sale);
+      return this.findOne(saleId);
+    }
+
+    if (sale.status !== DocumentStatus.PENDING_APPROVAL) {
+      return this.findOne(saleId);
+    }
+
+    const stockChanges: StockQuantityChange[] = [];
+    await this.dataSource.transaction(async (manager) => {
+      const repo = manager.getRepository(Sale);
+      const locked = await repo.findOne({
+        where: { id: saleId },
+        relations: { lines: true },
+      });
+      if (!locked || locked.status !== DocumentStatus.PENDING_APPROVAL) {
+        return;
+      }
+
+      const lines: SaleLineDto[] = (locked.lines ?? []).map((l) => ({
+        itemId: l.itemId,
+        quantity: parseFloat(l.quantity),
+        unitPrice: parseFloat(l.unitPrice),
+        lotId: l.lotId ?? undefined,
+      }));
+
+      // Re-check availability at approval time
+      await this.checkExportStockAvailability(
+        manager,
+        locked.locationId,
+        lines,
+        locked.allowNegativeStock,
+        locked.channel === SaleChannel.EXPORT && !!locked.exportContractId,
+      );
+
+      await this.postSaleStockAndPayments(
+        manager,
+        locked,
+        lines,
+        null,
+        actorUserId,
+        stockChanges,
+      );
+      locked.status = DocumentStatus.ACTIVE;
+      await repo.save(locked);
+    });
+
+    await this.lowStockService.evaluateChanges(stockChanges);
+    await this.notifications.onSaleRecorded({
+      saleId,
+      total: sale.total,
+      actorUserId,
+      soldByUserId: sale.soldByUserId,
+      stockWarnings: sale.stockWarnings ?? undefined,
+      creditDueDate: null,
+    });
+
+    return this.findOne(saleId);
+  }
+
+  private async postSaleStockAndPayments(
+    manager: EntityManager,
+    sale: Sale,
+    lines: SaleLineDto[],
+    creditDueDate: string | null,
+    userId: string | undefined,
+    stockChanges: StockQuantityChange[],
+  ) {
+    const creditRepo = manager.getRepository(CustomerCredit);
+    const lotRepo = manager.getRepository(Lot);
+    const eventRepo = manager.getRepository(LotEvent);
+    const channel = sale.channel;
+    const paysViaBank = this.paysViaBank(sale.paymentMethod);
+
+    for (const line of lines) {
+      const lotId = line.lotId ?? null;
+      const previousQuantity = await this.stockService.getQuantity(
+        sale.locationId,
+        line.itemId,
+        manager,
+        lotId,
+      );
+      if (
+        channel === SaleChannel.EXPORT &&
+        sale.exportContractId &&
+        lotId
+      ) {
+        await this.stockService.releaseReserve(
+          sale.locationId,
+          line.itemId,
+          line.quantity,
+          manager,
+          lotId,
+        );
+      }
+      await this.stockService.adjust(
+        {
+          locationId: sale.locationId,
+          itemId: line.itemId,
+          quantityDelta: -line.quantity,
+          lotId,
+          meta: {
+            sourceType:
+              channel === SaleChannel.LOCAL
+                ? StockMovementSourceType.SALE_LOCAL
+                : StockMovementSourceType.SALE_EXPORT,
+            referenceType: 'sale',
+            referenceId: sale.id,
+            reference: sale.invoiceNumber ?? sale.id.slice(0, 8),
+            createdById: userId ?? null,
+            notes: `Sale ${sale.invoiceNumber ?? sale.id.slice(0, 8)}`,
+          },
+        },
+        manager,
+      );
+      if (lotId) {
+        const lot = await lotRepo.findOne({ where: { id: lotId } });
+        if (lot) {
+          const nextQty = Math.max(
+            0,
+            parseFloat(lot.quantity) - line.quantity,
+          );
+          lot.quantity = nextQty.toFixed(3);
+          await lotRepo.save(lot);
+          const eventType =
+            channel === SaleChannel.LOCAL
+              ? LotEventType.SOLD_LOCAL
+              : LotEventType.SHIPPED;
+          await eventRepo.save(
+            eventRepo.create({
+              lotId,
+              eventType,
+              quantity: line.quantity.toFixed(3),
+              fromLocationId: sale.locationId,
+              notes: `Sale ${sale.id.slice(0, 8)} · ${channel}`,
+              createdById: userId ?? null,
+              metadata: { saleId: sale.id, channel },
+            }),
+          );
+        }
+      }
+      stockChanges.push({
+        locationId: sale.locationId,
+        itemId: line.itemId,
+        previousQuantity,
+        lotId,
+      });
+    }
+
+    if (channel === SaleChannel.EXPORT) {
+      await this.finalizeExportContractSale(manager, sale, lines);
+    }
+
+    const amountPaid = parseFloat(sale.paidAmount);
+    const subtotal = parseFloat(sale.total);
+    if (paysViaBank && sale.bankAccountId && amountPaid > 0) {
+      await this.bankLedger.recordTransaction(
+        {
+          bankAccountId: sale.bankAccountId,
+          type: BankTransactionType.SALE,
+          amount: amountPaid,
+          direction: 'in',
+          description:
+            sale.paymentMethod === PaymentMethod.PARTIAL
+              ? `Sale ${sale.id} (partial payment)`
+              : `Sale ${sale.id}`,
+          refType: 'sale',
+          refId: sale.id,
+          createdById: userId,
+        },
+        manager,
+      );
+    }
+
+    if (this.createsCustomerCredit(sale.paymentMethod) && sale.customerId) {
+      const balance = Math.max(0, subtotal - amountPaid);
+      await creditRepo.save(
+        creditRepo.create({
+          customerId: sale.customerId,
+          saleId: sale.id,
+          amount: subtotal.toFixed(2),
+          paidAmount: amountPaid.toFixed(2),
+          balance: balance.toFixed(2),
+          status: amountPaid > 0 ? CreditStatus.PARTIAL : CreditStatus.OPEN,
+          dueDate: creditDueDate,
+        }),
+      );
+    }
   }
 
   async createReturn(saleId: string, dto: CreateSaleReturnDto, userId?: string) {

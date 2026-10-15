@@ -23,7 +23,9 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ExportLotsPanel } from "@/components/exports/export-lots-panel";
 import { buildExportsListPath } from "@/lib/list-query";
+import { useAuth } from "@/lib/auth";
 import { formatMoney, formatQty } from "@/lib/format";
+import { hasPermission } from "@/lib/permissions";
 import type { ExportContract, ExportContractStatus } from "@/lib/types";
 import { usePaginatedList } from "@/hooks/use-paginated-list";
 import { PlusIcon } from "lucide-react";
@@ -31,6 +33,8 @@ import { PlusIcon } from "lucide-react";
 const ALL = "__all__";
 
 export default function ExportsPage() {
+  const { user } = useAuth();
+  const canOpenDetail = hasPermission(user, "export.write");
   const [tab, setTab] = useState("lots");
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState<ExportContractStatus | "">("");
@@ -130,19 +134,29 @@ export default function ExportsPage() {
               {
                 key: "number",
                 header: "Contract",
-                cell: (r) => (
-                  <Link
-                    href={`/exports/${r.id}`}
-                    className="font-medium text-[var(--frappe-primary)] hover:underline"
-                  >
-                    {r.contractNumber}
-                    {r.orderNumber ? (
-                      <span className="ml-1 text-xs text-[var(--frappe-text-muted)]">
-                        · {r.orderNumber}
-                      </span>
-                    ) : null}
-                  </Link>
-                ),
+                cell: (r) =>
+                  canOpenDetail ? (
+                    <Link
+                      href={`/exports/${r.id}`}
+                      className="font-medium text-[var(--frappe-primary)] hover:underline"
+                    >
+                      {r.contractNumber}
+                      {r.orderNumber ? (
+                        <span className="ml-1 text-xs text-[var(--frappe-text-muted)]">
+                          · {r.orderNumber}
+                        </span>
+                      ) : null}
+                    </Link>
+                  ) : (
+                    <span className="font-medium">
+                      {r.contractNumber}
+                      {r.orderNumber ? (
+                        <span className="ml-1 text-xs text-[var(--frappe-text-muted)]">
+                          · {r.orderNumber}
+                        </span>
+                      ) : null}
+                    </span>
+                  ),
               },
               {
                 key: "buyer",

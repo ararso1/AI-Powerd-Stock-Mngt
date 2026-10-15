@@ -1,5 +1,6 @@
-import { Module } from '@nestjs/common';
+import { Module, forwardRef } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
+import { ApprovalsModule } from '../approvals/approvals.module';
 import { BanksModule } from '../banks/banks.module';
 import { Lot } from '../database/entities/lot.entity';
 import { LotEvent } from '../database/entities/lot-event.entity';
@@ -26,13 +27,14 @@ import { PurchasesService } from './purchases.service';
       LotEvent,
     ]),
     InventoryModule,
-    ProcessRunsModule,
+    forwardRef(() => ProcessRunsModule),
     BanksModule,
     NotificationsModule,
     CreditsModule,
+    forwardRef(() => ApprovalsModule),
   ],
   controllers: [PurchasesController],
   providers: [PurchasesService, PurchaseQualityService],
-  exports: [PurchaseQualityService],
+  exports: [PurchasesService, PurchaseQualityService],
 })
 export class PurchasesModule {}

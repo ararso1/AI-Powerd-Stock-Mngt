@@ -7,7 +7,7 @@ import type { Item, StockRecord } from "@/lib/types";
 export async function fetchInventoryForLocation(
   locationId: string,
   search?: string,
-  options?: { forSale?: boolean }
+  options?: { forSale?: boolean; forExportSale?: boolean }
 ): Promise<StockRecord[]> {
   if (!locationId) return [];
   const term = search?.trim();
@@ -16,7 +16,8 @@ export async function fetchInventoryForLocation(
       {
         locationId,
         search: term || undefined,
-        forSale: options?.forSale || undefined,
+        forSale: options?.forExportSale ? undefined : options?.forSale || undefined,
+        forExportSale: options?.forExportSale || undefined,
       },
       page,
       limit

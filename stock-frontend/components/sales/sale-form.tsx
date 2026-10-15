@@ -41,7 +41,17 @@ import {
   useAutoPaymentAccount,
 } from "@/hooks/use-payment-bank-account";
 import { fetchInventoryForLocation } from "@/lib/inventory-fetch";
-import { buildItemOptionMap, itemOptionsFromMap, isCoffeeSku, isSaleStock, parseDocumentLines, productItemId, resolveItem, stockTransferOptions, type DocumentLineBody } from "@/lib/inventory-items";
+import {
+  buildItemOptionMap,
+  itemOptionsFromMap,
+  isExportSaleStock,
+  isSaleStock,
+  parseDocumentLines,
+  productItemId,
+  resolveItem,
+  stockTransferOptions,
+  type DocumentLineBody,
+} from "@/lib/inventory-items";
 import { saleRepUser } from "@/lib/sale-utils";
 import { errorMessage, formatMoney, formatQty } from "@/lib/format";
 import type { CustomerCreditProfile } from "@/lib/types";
@@ -57,6 +67,7 @@ import type {
   BankAccount,
   CommissionBasis,
   Customer,
+  ExportStoreLot,
   Item,
   Location,
   PaymentMethod,
@@ -88,6 +99,8 @@ interface LineRow {
 function packSizeKgOf(item?: Item | null, lot?: { form?: string | null; processMethod?: string | null } | null) {
   const sku = item?.sku?.trim().toUpperCase() ?? "";
   const method = lot?.processMethod ?? "";
+  // Export store coffee is sold in kilograms, not retail packs.
+  if (method === "Export store") return null;
   const packaged =
     lot?.form === "PACKAGED" ||
     item?.unit?.toLowerCase() === "pcs" ||
@@ -154,6 +167,15 @@ export function SaleForm({ sale }: { sale?: Sale }) {
   const [locationId, setLocationId] = useState(sale?.locationId ?? "");
   const [channel, setChannel] = useState<SaleChannel>(
     sale?.channel ?? "LOCAL"
+  );
+  const [currencyCode, setCurrencyCode] = useState(
+    sale?.currencyCode ?? (sale?.channel === "EXPORT" ? "USD" : "ETB")
+  );
+  const [fxRate, setFxRate] = useState(
+    sale?.fxRate != null && sale.fxRate !== "" ? String(sale.fxRate) : ""
+  );
+  const [exportContractId, setExportContractId] = useState(
+    sale?.exportContractId ?? ""
   );
   const [itemQuery, setItemQuery] = useState("");
   const debouncedItemQuery = useDebouncedValue(itemQuery, 300);
@@ -242,7 +264,14 @@ export function SaleForm({ sale }: { sale?: Sale }) {
     loading: customersLoading,
     reload: reloadCustomers,
     setData: setCustomers,
-  } = useFetch(() => fetchCustomers(), []);
+  } = useFetch(
+    () =>
+      fetchCustomers(
+        undefined,
+        channel === "EXPORT" ? "INTERNATIONAL" : undefined
+      ),
+    [channel]
+  );
   const { data: salesReps } = useFetch(
     () =>
       canOnBehalf && !notesOnly
@@ -280,6 +309,8 @@ export function SaleForm({ sale }: { sale?: Sale }) {
     setBankAccountId
   );
 
+  const isExport = channel === "EXPORT";
+
   const {
     data: stock,
     loading: stockLoading,
@@ -287,23 +318,114 @@ export function SaleForm({ sale }: { sale?: Sale }) {
     setData: setStock,
   } = useFetch(
     () =>
-      locationId
+      locationId && !isExport
         ? fetchInventoryForLocation(
             locationId,
             debouncedItemQuery || undefined,
             { forSale: true }
           )
-        : Promise.resolve([]),
-    [locationId, debouncedItemQuery]
+        : locationId && isExport
+          ? fetchInventoryForLocation(
+              locationId,
+              debouncedItemQuery || undefined,
+              { forExportSale: true }
+            )
+          : Promise.resolve([]),
+    [locationId, debouncedItemQuery, isExport]
   );
 
-  const stockItems = (stock ?? []).filter((row) => isSaleStock(row));
+  const {
+    data: exportStore,
+    loading: exportStoreLoading,
+  } = useFetch(
+    () =>
+      isExport && !notesOnly
+        ? api<ExportStoreLot[]>("/exports/store")
+        : Promise.resolve([] as ExportStoreLot[]),
+    [isExport, notesOnly]
+  );
+
+  const exportReadyLots = useMemo(() => {
+    const rows = exportStore ?? [];
+    const term = debouncedItemQuery.trim().toLowerCase();
+    return rows
+      .filter((lot) => {
+        const qty = parseFloat(lot.quantityKg);
+        if (!(qty > 0.0005)) return false;
+        if (lot.status === "SHIPPED") return false;
+        if (!lot.itemId || !lot.locationId) return false;
+        const readiness = lot.readiness ?? "";
+        const shipReady =
+          readiness === "SHIP_READY" || readiness === "LOADED";
+        const spotAvailable =
+          lot.status === "IN_STORE" &&
+          parseFloat(lot.availableKg ?? lot.quantityKg) > 0.0005;
+        if (!shipReady && !spotAvailable) return false;
+        if (locationId && lot.locationId !== locationId) return false;
+        if (!term) return true;
+        const hay = [
+          lot.lotCode,
+          lot.grade,
+          lot.itemDescription,
+          lot.itemSku,
+          lot.locationName,
+          ...(lot.contracts ?? []).map((c) => c.contractNumber),
+        ]
+          .filter(Boolean)
+          .join(" ")
+          .toLowerCase();
+        return hay.includes(term);
+      })
+      .sort((a, b) => {
+        const rank = (r?: string | null) =>
+          r === "SHIP_READY" || r === "LOADED" ? 0 : 1;
+        return rank(a.readiness) - rank(b.readiness);
+      });
+  }, [exportStore, debouncedItemQuery, locationId]);
+
+  const stockItems = (stock ?? []).filter((row) =>
+    isExport ? isExportSaleStock(row) : isSaleStock(row)
+  );
   const itemMap = buildItemOptionMap(
     stockItems,
     [...lines, ...(sale?.lines ?? [])]
   );
   const itemOptions = itemOptionsFromMap(itemMap);
-  const stockOptions = stockTransferOptions(stockItems);
+  const localStockOptions = stockTransferOptions(stockItems);
+  const exportStockOptions = exportReadyLots.map((lot) => {
+    const contract = (lot.contracts ?? []).find((c) =>
+      ["DRAFT", "ALLOCATED", "STAGED"].includes(String(c.status ?? ""))
+    );
+    const readiness = lot.readiness ?? "READY";
+    const avail =
+      readiness === "SHIP_READY" || readiness === "LOADED"
+        ? lot.quantityKg
+        : (lot.availableKg ?? lot.quantityKg);
+    return {
+      id: lot.lotId,
+      itemId: lot.itemId!,
+      lotId: lot.lotId,
+      label: [
+        lot.lotCode,
+        lot.grade ? `G${lot.grade}` : null,
+        lot.itemDescription,
+        `${formatQty(avail)} kg`,
+        readiness.replace(/_/g, " "),
+        contract?.contractNumber
+          ? `contract ${contract.contractNumber}`
+          : lot.status === "IN_STORE"
+            ? "unreserved"
+            : null,
+        lot.locationName,
+      ]
+        .filter(Boolean)
+        .join(" · "),
+      lot,
+      contractId: contract?.id ?? lot.contracts?.[0]?.id ?? null,
+    };
+  });
+  const stockOptions = isExport ? exportStockOptions : localStockOptions;
+  const itemsLoading = isExport ? exportStoreLoading : stockLoading;
   const summary = useMemo(() => {
     const rows = lines
       .filter((line) => line.itemId)
@@ -386,6 +508,61 @@ export function SaleForm({ sale }: { sale?: Sale }) {
   function onLocationChange(id: string) {
     setLocationId(id);
     setItemQuery("");
+    if (isExport) {
+      setLines([{ itemId: "", quantity: "1", unitPrice: "" }]);
+    }
+  }
+
+  function onChannelChange(next: SaleChannel) {
+    setChannel(next);
+    setItemQuery("");
+    setLines([{ itemId: "", quantity: "1", unitPrice: "" }]);
+    setExportContractId("");
+    if (next === "EXPORT") {
+      setCurrencyCode((prev) => (prev === "ETB" ? "USD" : prev));
+      const staging = (locations ?? []).find(
+        (l) => l.type === "EXPORT_STAGING" && l.isActive !== false
+      );
+      if (staging) setLocationId(staging.id);
+    } else {
+      setCurrencyCode((prev) => (prev === "USD" ? "ETB" : prev));
+      setFxRate("");
+    }
+  }
+
+  function applyExportLot(i: number, lot: ExportStoreLot, contractId?: string | null) {
+    if (lot.locationId && lot.locationId !== locationId) {
+      setLocationId(lot.locationId);
+    }
+    const stockRow = (stock ?? []).find((s) => s.lotId === lot.lotId);
+    const openContractId =
+      contractId ??
+      (lot.contracts ?? []).find((c) =>
+        ["DRAFT", "ALLOCATED", "STAGED"].includes(String(c.status ?? ""))
+      )?.id ??
+      lot.contracts?.[0]?.id ??
+      "";
+    if (openContractId) setExportContractId(openContractId);
+    const shipQty =
+      lot.readiness === "SHIP_READY" || lot.readiness === "LOADED"
+        ? lot.quantityKg
+        : (lot.availableKg ?? lot.quantityKg);
+    updateLine(i, {
+      stockId: stockRow?.id ?? lot.lotId,
+      itemId: lot.itemId!,
+      lotId: lot.lotId,
+      quantity: shipQty,
+      unitPrice: lines[i]?.unitPrice || stockRow?.purchasePrice || "",
+      purchasePrice: stockRow?.purchasePrice,
+      item: resolveItem(lot.itemId!, {
+        id: lot.itemId!,
+        description: lot.itemDescription ?? lot.lotCode,
+        sku: lot.itemSku ?? undefined,
+        unit: lot.itemUnit ?? "kg",
+        itemType: "FINISHED",
+      }),
+      packSizeKg: null,
+    });
   }
 
   function onBankCreated(account: BankAccount) {
@@ -420,11 +597,22 @@ export function SaleForm({ sale }: { sale?: Sale }) {
     const body: Record<string, unknown> = {
       locationId,
       channel,
+      currencyCode: currencyCode || undefined,
       paymentMethod,
       notes: notes || undefined,
       lines: documentLines,
     };
     if (customerId) body.customerId = customerId;
+    if (isExport && exportContractId) {
+      body.exportContractId = exportContractId;
+    }
+    if (isExport && fxRate.trim()) {
+      const rate = parseFloat(fxRate);
+      if (!Number.isFinite(rate) || rate <= 0) {
+        return { error: "Enter a valid FX rate (ETB per 1 foreign unit)." };
+      }
+      body.fxRate = rate;
+    }
     if (needsBankAccount(paymentMethod)) {
       body.bankAccountId = resolveBankAccountId(
         paymentMethod,
@@ -671,15 +859,49 @@ export function SaleForm({ sale }: { sale?: Sale }) {
             <FrappeField label="Channel" required={!notesOnly}>
               <SearchSelect
                 value={channel}
-                onValueChange={(v) => setChannel(v as SaleChannel)}
+                onValueChange={(v) => onChannelChange(v as SaleChannel)}
                 options={[
                   { value: "LOCAL", label: "Local roast / retail" },
-                  { value: "EXPORT", label: "Export" },
+                  { value: "EXPORT", label: "Export (export store)" },
                 ]}
                 searchPlaceholder="Channel…"
                 disabled={notesOnly}
               />
             </FrappeField>
+            {isExport && !notesOnly ? (
+              <>
+                <FrappeField label="Currency" required>
+                  <SearchSelect
+                    value={currencyCode}
+                    onValueChange={setCurrencyCode}
+                    options={[
+                      { value: "USD", label: "USD" },
+                      { value: "EUR", label: "EUR" },
+                      { value: "ETB", label: "ETB" },
+                    ]}
+                    searchPlaceholder="Currency…"
+                  />
+                </FrappeField>
+                <FrappeField
+                  label="FX rate"
+                  hint={
+                    currencyCode !== "ETB"
+                      ? "ETB per 1 foreign unit (optional)"
+                      : undefined
+                  }
+                >
+                  <Input
+                    type="number"
+                    min="0"
+                    step="any"
+                    value={fxRate}
+                    onChange={(e) => setFxRate(e.target.value)}
+                    placeholder={currencyCode === "ETB" ? "—" : "e.g. 120"}
+                    disabled={currencyCode === "ETB"}
+                  />
+                </FrappeField>
+              </>
+            ) : null}
             <FrappeField label="Payment method" required={!notesOnly}>
               <SearchSelect
                 value={paymentMethod}
@@ -861,38 +1083,71 @@ export function SaleForm({ sale }: { sale?: Sale }) {
 
         {!notesOnly ? (
           <FrappeSection
-            title="Items"
+            title={isExport ? "Export store lots" : "Items"}
             description={
-              locationId
-                ? stockLoading
-                  ? "Loading stock at location…"
+              isExport
+                ? itemsLoading
+                  ? "Loading export store…"
                   : stockOptions.length > 0
-                    ? `${stockOptions.length} processed or reject stock line(s) available`
-                    : "No processed or reject stock at this location"
-                : "Select a location first"
+                    ? `${stockOptions.length} shipment-ready or available export lot(s)`
+                    : locationId
+                      ? "No export-store coffee ready at this location — pick another location or finish docs/ECTA/contract on Exports"
+                      : "Shipment-ready export lots (docs + ECTA + contract), or unreserved export-store stock"
+                : locationId
+                  ? stockLoading
+                    ? "Loading stock at location…"
+                    : stockOptions.length > 0
+                      ? `${stockOptions.length} processed or reject stock line(s) available`
+                      : "No processed or reject stock at this location"
+                  : "Select a location first"
             }
           >
             <div className="mb-3 flex flex-wrap items-center justify-end gap-3">
-              <QuickStockItemDialog
-                locationId={locationId}
-                onCreated={onStockCreated}
-                disabled={!locationId}
-              />
+              {!isExport ? (
+                <QuickStockItemDialog
+                  locationId={locationId}
+                  onCreated={onStockCreated}
+                  disabled={!locationId}
+                />
+              ) : null}
               <Link
-                href={locationId ? `/inventory` : "#"}
+                href={isExport ? "/exports" : locationId ? `/inventory` : "#"}
                 onClick={(e) => {
-                  if (!locationId) e.preventDefault();
+                  if (!isExport && !locationId) e.preventDefault();
                 }}
                 className="text-xs text-[var(--frappe-text-muted)] hover:text-[var(--frappe-primary)] hover:underline"
               >
-                Stock ledger
+                {isExport ? "Export store" : "Stock ledger"}
               </Link>
             </div>
+            {isExport && exportContractId ? (
+              <p className="mb-3 text-xs text-[var(--frappe-text-muted)]">
+                Linked export contract{" "}
+                <Link
+                  href={`/exports/${exportContractId}`}
+                  className="text-[var(--frappe-primary)] hover:underline"
+                >
+                  {exportContractId.slice(0, 8)}…
+                </Link>{" "}
+                — shipping will release reserved kg and mark the contract shipped.
+              </p>
+            ) : null}
             <FrappeGridTable
               columns={[
-                { key: "item", label: "Stock / lot" },
-                { key: "qty", label: "Qty", className: "w-28" },
-                { key: "rate", label: "Rate", className: "w-32" },
+                {
+                  key: "item",
+                  label: isExport ? "Export lot" : "Stock / lot",
+                },
+                {
+                  key: "qty",
+                  label: isExport ? "Kg" : "Qty",
+                  className: "w-28",
+                },
+                {
+                  key: "rate",
+                  label: isExport ? `Rate (${currencyCode})` : "Rate",
+                  className: "w-32",
+                },
               ]}
               onAddRow={() =>
                 setLines((prev) => [
@@ -912,8 +1167,17 @@ export function SaleForm({ sale }: { sale?: Sale }) {
                 >
                   <FrappeGridCell>
                     <ItemSearchSelect
-                      value={line.stockId || line.itemId}
+                      value={line.stockId || line.lotId || line.itemId}
                       onValueChange={(v) => {
+                        if (isExport) {
+                          const option = exportStockOptions.find(
+                            (o) => o.id === v
+                          );
+                          if (option) {
+                            applyExportLot(i, option.lot, option.contractId);
+                            return;
+                          }
+                        }
                         const stockRow = stockItems.find((s) => s.id === v);
                         if (stockRow) {
                           updateLine(i, {
@@ -927,7 +1191,10 @@ export function SaleForm({ sale }: { sale?: Sale }) {
                               stockRow.itemId,
                               stockRow.item
                             ),
-                            packSizeKg: packSizeKgOf(stockRow.item, stockRow.lot),
+                            packSizeKg: packSizeKgOf(
+                              stockRow.item,
+                              stockRow.lot
+                            ),
                           });
                           return;
                         }
@@ -948,11 +1215,13 @@ export function SaleForm({ sale }: { sale?: Sale }) {
                             }))
                           : itemOptions
                       }
-                      disabled={!locationId}
-                      loading={stockLoading}
+                      disabled={isExport ? false : !locationId}
+                      loading={itemsLoading}
                       filterLocally={false}
                       onQueryChange={setItemQuery}
-                      placeholder="Item / lot"
+                      placeholder={
+                        isExport ? "Export store lot…" : "Item / lot"
+                      }
                     />
                     {line.itemId ? (
                       <p className="mt-1 text-xs text-[var(--frappe-text-muted)]">

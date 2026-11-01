@@ -1,19 +1,19 @@
 Role	User	Email
 Admin/CEO
 Ahmad Jemal
-ahmad.jemal@csolve.local (also admin@csolve.local)
+ahmad.jemal@efnanbusinessplc.com (also admin@efnanbusinessplc.com)
 Operations Manager
 Yadeta
-yadeta@csolve.local — scoped to Dire Dawa Warehouse
+yadeta@efnanbusinessplc.com — scoped to Dire Dawa Warehouse
 Head Storekeeper
 Head Storekeeper
-storekeeper@csolve.local
+storekeeper@efnanbusinessplc.com
 Cleaning Team Head
 Cleaning Team Head
-cleaning@csolve.local
+cleaning@efnanbusinessplc.com
 Roasting and Grinding Team Head
 …
-roasting@csolve.local
+roasting@efnanbusinessplc.com
 Sales Team Head
 Sales Team Head
-sales.head@csolve.local
+sales.head@efnanbusinessplc.com

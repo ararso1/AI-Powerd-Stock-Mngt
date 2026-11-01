@@ -46,53 +46,53 @@ const DEMO_USERS: Array<{
   locationKey?: string;
 }> = [
   {
-    email: 'admin@csolve.local',
+    email: 'admin@efnanbusinessplc.com',
     fullName: 'Ahmad Jemal',
     roleName: 'Admin',
   },
   {
-    email: 'ahmad.jemal@csolve.local',
+    email: 'ahmad.jemal@efnanbusinessplc.com',
     fullName: 'Ahmad Jemal',
     roleName: 'Admin',
   },
   {
-    email: 'yadeta@csolve.local',
+    email: 'yadeta@efnanbusinessplc.com',
     fullName: 'Yadeta',
     roleName: 'Operations Manager',
     locationKey: 'direDawa',
   },
   {
-    email: 'storekeeper@csolve.local',
+    email: 'storekeeper@efnanbusinessplc.com',
     fullName: 'Head Storekeeper',
     roleName: 'Head Storekeeper',
   },
   {
-    email: 'cleaning@csolve.local',
+    email: 'cleaning@efnanbusinessplc.com',
     fullName: 'Cleaning Team Head',
     roleName: 'Cleaning Team Head',
   },
   {
-    email: 'roasting@csolve.local',
+    email: 'roasting@efnanbusinessplc.com',
     fullName: 'Roasting and Grinding Team Head',
     roleName: 'Roasting and Grinding Team Head',
   },
   {
-    email: 'sales.head@csolve.local',
+    email: 'sales.head@efnanbusinessplc.com',
     fullName: 'Sales Team Head',
     roleName: 'Sales Team Head',
   },
   {
-    email: 'sales@csolve.local',
+    email: 'sales@efnanbusinessplc.com',
     fullName: 'Demo Sales Rep',
     roleName: 'Sales Representative',
   },
   {
-    email: 'purchase@csolve.local',
+    email: 'purchase@efnanbusinessplc.com',
     fullName: 'Demo Purchaser',
     roleName: 'Purchaser',
   },
   {
-    email: 'stock@csolve.local',
+    email: 'stock@efnanbusinessplc.com',
     fullName: 'Demo Stock Keeper',
     roleName: 'Stock Keeper',
   },
@@ -180,7 +180,8 @@ export class SeedService implements OnModuleInit {
     }
 
     const adminRole = await this.roleRepo.findOne({ where: { name: 'Admin' } });
-    const adminEmail = process.env.SEED_ADMIN_EMAIL ?? 'admin@stock.local';
+    const adminEmail =
+      process.env.SEED_ADMIN_EMAIL ?? 'admin@efnanbusinessplc.com';
     const adminPassword = process.env.SEED_ADMIN_PASSWORD ?? 'Admin@123';
 
     let admin = await this.userRepo.findOne({ where: { email: adminEmail } });
@@ -1062,7 +1063,7 @@ export class SeedService implements OnModuleInit {
         this.supplierRepo.create({
           name,
           phone: '0911000000',
-          email: 'farmer@csolve.local',
+          email: 'farmer@efnanbusinessplc.com',
           address: 'Yirgacheffe',
         }),
       );

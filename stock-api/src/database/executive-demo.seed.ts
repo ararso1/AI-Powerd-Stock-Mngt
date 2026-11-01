@@ -110,6 +110,9 @@ export async function seedExecutiveDemo(
   const notifRepo = dataSource.getRepository(Notification);
 
   const admin =
+    (await userRepo.findOne({
+      where: { email: 'admin@efnanbusinessplc.com' },
+    })) ??
     (await userRepo.findOne({ where: { email: 'admin@csolve.local' } })) ??
     (await userRepo.findOne({ where: { email: 'admin@stock.local' } }));
   const userId = admin?.id ?? null;

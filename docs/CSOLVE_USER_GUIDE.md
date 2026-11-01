@@ -216,13 +216,17 @@ This is Csolve’s differentiation layer vs a traditional coffee ERP — **recom
 
 ### 4.3 Reports (`/reports`)
 
-**Who:** `reports.read`
+**Who:** `reports.read` (also granted to Operations Manager, Head Storekeeper, Purchaser, Stock Keeper, and sales roles)
 
-Tabs typically include: summary, sales, purchases, expenses, sales/purchases by item, **inventory aging**, customers, suppliers, commissions, credits, cash flow.
+**Hub:** Category cards (Finance, Sales, Purchases, Inventory, Operations, Exports, Partners, People, Audit). Open a report for filters, KPIs, table, and **Export CSV** / **Export PDF**.
+
+**Legacy:** `?tab=summary` (and other old tab names) redirects to `/reports/{reportId}`.
+
+**Coverage includes:** financial summary & P&L, cash flow, expenses, banks, market prices, sales/purchases (incl. by item), commissions, inventory aging / on-hand / adjustments, transfers, lots, collections, process yield, export pipeline, customer/supplier activity, credits & aging, approvals audit, HR headcount.
 
 **Inventory aging:** Days since lot creation (or stock update if unlinked) — useful for green sitting too long.
 
-**Stock tracking:** Read-only.
+**Stock tracking:** Read-only. Exports use the same filters as the on-screen report.
 
 ---
 

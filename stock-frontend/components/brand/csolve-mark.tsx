@@ -1,53 +1,70 @@
+import Image from "next/image";
+import { BRAND } from "@/lib/brand";
 import { cn } from "@/lib/utils";
 
-type CsolveMarkProps = {
+type BrandMarkProps = {
   className?: string;
-  /** Show wordmark + subtitle */
+  /** Show wordmark + subtitle next to the icon */
   withWordmark?: boolean;
+  /**
+   * `full` shows the complete logo artwork (login / marketing).
+   * Default sizes show the circular EB icon.
+   */
+  variant?: "icon" | "full";
   /** Compact for sidebar */
   size?: "sm" | "md" | "lg";
 };
 
-export function CsolveMark({
+/** @deprecated Prefer BrandMark — kept as alias for existing imports. */
+export function CsolveMark(props: BrandMarkProps) {
+  return <BrandMark {...props} />;
+}
+
+export function BrandMark({
   className,
   withWordmark = false,
+  variant = "icon",
   size = "md",
-}: CsolveMarkProps) {
-  const iconSize =
-    size === "lg" ? "size-11" : size === "sm" ? "size-7" : "size-9";
+}: BrandMarkProps) {
+  if (variant === "full") {
+    const width = size === "lg" ? 260 : size === "sm" ? 160 : 220;
+    return (
+      <div className={cn("flex flex-col items-center gap-2", className)}>
+        <Image
+          src={BRAND.logo}
+          alt={BRAND.name}
+          width={width}
+          height={width}
+          priority
+          className="h-auto w-full max-w-[min(100%,260px)] object-contain"
+        />
+        {withWordmark ? (
+          <p className="text-center text-xs font-medium tracking-wide text-[var(--csolve-moss)]">
+            {BRAND.tagline}
+          </p>
+        ) : null}
+      </div>
+    );
+  }
+
+  const iconPx = size === "lg" ? 56 : size === "sm" ? 32 : 40;
   const titleSize =
-    size === "lg" ? "text-3xl" : size === "sm" ? "text-base" : "text-xl";
+    size === "lg" ? "text-2xl" : size === "sm" ? "text-base" : "text-xl";
 
   return (
     <div className={cn("flex items-center gap-2.5", className)}>
       <span
-        className={cn(
-          "relative flex shrink-0 items-center justify-center rounded-xl bg-[var(--csolve-roast)] text-[var(--csolve-parchment)] shadow-md ring-2 ring-[var(--csolve-honey)]/35",
-          iconSize
-        )}
+        className="relative flex shrink-0 items-center justify-center overflow-hidden rounded-xl bg-white shadow-sm ring-1 ring-[var(--csolve-border)]"
+        style={{ width: iconPx, height: iconPx }}
         aria-hidden
       >
-        <svg
-          viewBox="0 0 32 32"
-          className="size-[58%]"
-          fill="none"
-          xmlns="http://www.w3.org/2000/svg"
-        >
-          <ellipse cx="14" cy="18" rx="9" ry="7" fill="currentColor" opacity="0.95" />
-          <path
-            d="M23 14c3.2 0 5 2.2 5 5s-1.8 5-5 5h-1.2"
-            stroke="currentColor"
-            strokeWidth="2"
-            strokeLinecap="round"
-          />
-          <path
-            d="M11 8c1.2 1.5 1.2 3 0 4.5M15 7.5c1.2 1.5 1.2 3.2 0 5"
-            stroke="currentColor"
-            strokeWidth="1.6"
-            strokeLinecap="round"
-            opacity="0.85"
-          />
-        </svg>
+        <Image
+          src={BRAND.logoIcon}
+          alt=""
+          width={iconPx}
+          height={iconPx}
+          className="size-full object-contain p-0.5"
+        />
       </span>
       {withWordmark ? (
         <div className="min-w-0 leading-tight">
@@ -57,10 +74,10 @@ export function CsolveMark({
               titleSize
             )}
           >
-            Csolve
+            {BRAND.shortName}
           </p>
           <p className="truncate text-[11px] font-medium tracking-wide text-[var(--csolve-moss)]">
-            Coffee stock · AI
+            {BRAND.tagline}
           </p>
         </div>
       ) : null}

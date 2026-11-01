@@ -168,22 +168,38 @@ Many list endpoints return:
 
 ### Reports
 
-All report endpoints require `reports.read`. Optional query filters on date-based reports: `from`, `to`, and where noted `locationId`, `supplierId`, `customerId`, `categoryId`, `soldByUserId`.
+All report endpoints require `reports.read`. Optional query filters: `from`, `to`, and where noted `locationId`, `supplierId`, `customerId`, `categoryId`, `soldByUserId`, `purchaseType`.
+
+UI hub: `/reports` with detail at `/reports/{reportId}`. Catalog: `GET /reports/catalog`. Unified payload: `GET /reports/{reportId}`. Exports: `GET /reports/{reportId}/export.csv` and `GET /reports/{reportId}/export.pdf` (UTF-8 BOM CSV; branded PDF). Filename: `efnan-{reportId}-{from}-{to}.csv|.pdf`.
 
 | Endpoint | Filters | Description |
 |----------|---------|-------------|
-| `/reports/summary` | `from`, `to`, filters | Revenue, purchases, expenses, gross/net profit |
+| `/reports/catalog` | — | Report definitions (id, title, category) |
+| `/reports/summary` | `from`, `to`, filters | Revenue, COGS (sale-line), expenses, gross/net profit |
 | `/reports/sales` | `from`, `to`, `locationId`, `customerId`, `soldByUserId` | Sales totals, by payment method, by location |
-| `/reports/purchases` | `from`, `to`, `locationId`, `supplierId` | Purchase totals, by payment method, by location |
+| `/reports/purchases` | `from`, `to`, `locationId`, `supplierId`, `purchaseType` | Purchase totals, by payment method, by location |
 | `/reports/expenses` | `from`, `to`, `categoryId` | Expense totals, by category |
 | `/reports/sales-by-item` | `from`, `to`, `locationId` | Item-level sales revenue, cost, profit, margin |
 | `/reports/purchases-by-item` | `from`, `to`, `locationId`, `supplierId` | Item-level purchase quantities and spend |
-| `/reports/inventory-aging` | none | Current stock value and age by item/location |
+| `/reports/inventory-aging` | `from`, `to`, `locationId` | Stock value and age by item/location |
+| `/reports/inventory-on-hand` | `locationId` | Available vs reserved stock |
+| `/reports/inventory-adjustments` | `from`, `to`, `locationId` | Adjustment register |
+| `/reports/transfers` | `from`, `to`, `locationId` | Stock transfer register |
+| `/reports/lots` | `from`, `to`, `locationId` | Lots by form/status |
+| `/reports/collections` | `from`, `to`, `locationId`, `supplierId` | Intake / cherry tickets |
+| `/reports/process-yield` | `from`, `to`, `locationId` | Process yield, loss, reject |
+| `/reports/exports-pipeline` | `from`, `to` | Export contracts by status |
+| `/reports/banks` | `from`, `to` | Account balances + transactions |
+| `/reports/approvals` | `from`, `to` | Approval request audit |
+| `/reports/hr-headcount` | `from`, `to` | People by department/status |
+| `/reports/market-snapshot` | `from`, `to` | Market / ICE price history |
 | `/reports/customer-activity` | `from`, `to`, `customerId` | Customer spend and sale count |
 | `/reports/supplier-activity` | `from`, `to`, `supplierId` | Supplier purchase count and spend |
 | `/reports/commissions` | `from`, `to`, `soldByUserId` | Sales rep commission totals |
-| `/reports/credits` | none | Outstanding customer receivables and supplier payables |
+| `/reports/credits` | `from`, `to` | AR/AP outstanding + aging |
 | `/reports/cash-flow` | `from`, `to` | Daily and total cash inflow/outflow |
+| `/reports/{id}/export.csv` | same as report | CSV export |
+| `/reports/{id}/export.pdf` | same as report | PDF export |
 
 ### Endpoint-specific filters
 
@@ -213,6 +229,7 @@ All report endpoints require `reports.read`. Optional query filters on date-base
 
 | Method | Path | Permission |
 |--------|------|------------|
+| GET | `/reports/catalog` | `reports.read` |
 | GET | `/reports/summary` | `reports.read` |
 | GET | `/reports/sales` | `reports.read` |
 | GET | `/reports/purchases` | `reports.read` |
@@ -220,11 +237,25 @@ All report endpoints require `reports.read`. Optional query filters on date-base
 | GET | `/reports/sales-by-item` | `reports.read` |
 | GET | `/reports/purchases-by-item` | `reports.read` |
 | GET | `/reports/inventory-aging` | `reports.read` |
+| GET | `/reports/inventory-on-hand` | `reports.read` |
+| GET | `/reports/inventory-adjustments` | `reports.read` |
+| GET | `/reports/transfers` | `reports.read` |
+| GET | `/reports/lots` | `reports.read` |
+| GET | `/reports/collections` | `reports.read` |
+| GET | `/reports/process-yield` | `reports.read` |
+| GET | `/reports/exports-pipeline` | `reports.read` |
+| GET | `/reports/banks` | `reports.read` |
+| GET | `/reports/approvals` | `reports.read` |
+| GET | `/reports/hr-headcount` | `reports.read` |
+| GET | `/reports/market-snapshot` | `reports.read` |
 | GET | `/reports/customer-activity` | `reports.read` |
 | GET | `/reports/supplier-activity` | `reports.read` |
 | GET | `/reports/commissions` | `reports.read` |
 | GET | `/reports/credits` | `reports.read` |
 | GET | `/reports/cash-flow` | `reports.read` |
+| GET | `/reports/:reportId` | `reports.read` |
+| GET | `/reports/:reportId/export.csv` | `reports.read` |
+| GET | `/reports/:reportId/export.pdf` | `reports.read` |
 
 ### Example: `/reports/sales?from=2026-06-01&to=2026-06-30`
 

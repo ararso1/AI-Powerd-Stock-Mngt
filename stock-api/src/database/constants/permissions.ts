@@ -198,6 +198,7 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<string, string[]> = {
     'process.approve',
     'export.read',
     'market_prices.read',
+    'reports.read',
   ],
   'Head Storekeeper': [
     'dashboard.read',
@@ -230,6 +231,7 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<string, string[]> = {
     'bom.write',
     'production.read',
     'production.write',
+    'reports.read',
   ],
   'Cleaning Team Head': [
     'dashboard.read',
@@ -312,6 +314,7 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<string, string[]> = {
     'collection.write',
     'market_prices.read',
     'approvals.read',
+    'reports.read',
   ],
   'Stock Keeper': [
     'inventory.read',
@@ -342,5 +345,6 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<string, string[]> = {
     'approvals.decide',
     'purchase.approve',
     'sales.approve',
+    'reports.read',
   ],
 };

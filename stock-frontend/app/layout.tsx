@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { IBM_Plex_Mono, Plus_Jakarta_Sans } from "next/font/google";
 import { Providers } from "@/components/providers";
+import { BRAND } from "@/lib/brand";
 import "./globals.css";
 
 const plusJakarta = Plus_Jakarta_Sans({
@@ -19,11 +20,15 @@ const ibmPlexMono = IBM_Plex_Mono({
 
 export const metadata: Metadata = {
   title: {
-    default: "Csolve",
-    template: "%s · Csolve",
+    default: BRAND.productName,
+    template: `%s · ${BRAND.shortName}`,
   },
-  description:
-    "Csolve — AI-powered stock management for coffee exporters and the local roast market",
+  description: BRAND.description,
+  applicationName: BRAND.productName,
+  icons: {
+    icon: [{ url: "/img/logo-icon.png", type: "image/png" }],
+    apple: [{ url: "/apple-icon.png", type: "image/png" }],
+  },
 };
 
 export default function RootLayout({

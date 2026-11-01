@@ -77,6 +77,9 @@ export class ReportsService {
         soldByUserId: query.soldByUserId,
       });
     }
+    if (query.channel) {
+      qb.andWhere('sale.channel = :channel', { channel: query.channel });
+    }
     applyDateRangeToQb(qb, 'sale.created_at', query.from, query.to);
     return qb;
   }
@@ -131,16 +134,48 @@ export class ReportsService {
       .addSelect('COUNT(expense.id)', 'count')
       .getRawOne<{ total: string; count: string }>();
 
+    // Align with P&L: COGS from sale-line purchaseCost for the period
+    const cogsQb = this.saleLineRepo
+      .createQueryBuilder('line')
+      .innerJoin('line.sale', 'sale')
+      .select(
+        'COALESCE(SUM(line.quantity::numeric * line.purchase_cost::numeric), 0)',
+        'cogs',
+      )
+      .where('sale.status = :status', { status: DocumentStatus.ACTIVE });
+    if (query.locationId) {
+      cogsQb.andWhere('sale.location_id = :locationId', {
+        locationId: query.locationId,
+      });
+    }
+    if (query.channel) {
+      cogsQb.andWhere('sale.channel = :channel', { channel: query.channel });
+    }
+    if (query.customerId) {
+      cogsQb.andWhere('sale.customer_id = :customerId', {
+        customerId: query.customerId,
+      });
+    }
+    if (query.soldByUserId) {
+      cogsQb.andWhere('sale.sold_by_user_id = :soldByUserId', {
+        soldByUserId: query.soldByUserId,
+      });
+    }
+    applyDateRangeToQb(cogsQb, 'sale.created_at', query.from, query.to);
+    const cogsRow = await cogsQb.getRawOne<{ cogs: string }>();
+
     const totalRevenue = parseFloat(saleTotals?.total ?? '0');
     const totalPurchases = parseFloat(purchaseTotals?.total ?? '0');
+    const costOfGoodsSold = parseFloat(cogsRow?.cogs ?? '0');
     const totalExpenses = parseFloat(expenseTotals?.total ?? '0');
-    const grossProfit = totalRevenue - totalPurchases;
+    const grossProfit = totalRevenue - costOfGoodsSold;
     const netProfit = grossProfit - totalExpenses;
 
     return {
       currency: this.currency(),
       totalRevenue: totalRevenue.toFixed(2),
       totalPurchases: totalPurchases.toFixed(2),
+      costOfGoodsSold: costOfGoodsSold.toFixed(2),
       totalExpenses: totalExpenses.toFixed(2),
       grossProfit: grossProfit.toFixed(2),
       netProfit: netProfit.toFixed(2),
@@ -351,6 +386,9 @@ export class ReportsService {
         locationId: query.locationId,
       });
     }
+    if (query.channel) {
+      qb.andWhere('sale.channel = :channel', { channel: query.channel });
+    }
     applyDateRangeToQb(qb, 'sale.created_at', query.from, query.to);
 
     const rows = await qb.getRawMany<{
@@ -432,10 +470,31 @@ export class ReportsService {
     };
   }
 
-  async inventoryAging() {
-    const stockLevels = await this.stockRepo.find({
-      relations: { item: true, location: true, lot: true },
-    });
+  async inventoryAging(query: ReportQueryDto = {}) {
+    const qb = this.stockRepo
+      .createQueryBuilder('stock')
+      .leftJoinAndSelect('stock.item', 'item')
+      .leftJoinAndSelect('stock.location', 'location')
+      .leftJoinAndSelect('stock.lot', 'lot');
+    if (query.locationId) {
+      qb.andWhere('stock.location_id = :locationId', {
+        locationId: query.locationId,
+      });
+    }
+    // Soft period filter on last stock update / lot create
+    if (query.from) {
+      qb.andWhere(
+        'COALESCE(lot.created_at, stock.updated_at) >= :from::timestamptz',
+        { from: query.from },
+      );
+    }
+    if (query.to) {
+      qb.andWhere(
+        'COALESCE(lot.created_at, stock.updated_at) < (:to::date + interval \'1 day\')',
+        { to: query.to },
+      );
+    }
+    const stockLevels = await qb.getMany();
 
     const today = new Date();
     let totalValue = 0;
@@ -470,6 +529,7 @@ export class ReportsService {
 
     return {
       currency: this.currency(),
+      period: this.period(query.from, query.to),
       totalInventoryValue: totalValue.toFixed(2),
       items,
     };
@@ -579,8 +639,8 @@ export class ReportsService {
     };
   }
 
-  async credits() {
-    const customerRows = await this.customerCreditRepo
+  async credits(query: ReportQueryDto = {}) {
+    const customerQb = this.customerCreditRepo
       .createQueryBuilder('credit')
       .leftJoin('credit.customer', 'customer')
       .select('customer.id', 'customerId')
@@ -590,15 +650,21 @@ export class ReportsService {
       .where('credit.status != :paid', { paid: CreditStatus.PAID })
       .groupBy('customer.id')
       .addGroupBy('customer.name')
-      .orderBy('outstanding', 'DESC')
-      .getRawMany<{
-        customerId: string;
-        customerName: string;
-        creditCount: string;
-        outstanding: string;
-      }>();
+      .orderBy('outstanding', 'DESC');
+    applyDateRangeToQb(customerQb, 'credit.created_at', query.from, query.to);
+    if (query.customerId) {
+      customerQb.andWhere('credit.customer_id = :customerId', {
+        customerId: query.customerId,
+      });
+    }
+    const customerRows = await customerQb.getRawMany<{
+      customerId: string;
+      customerName: string;
+      creditCount: string;
+      outstanding: string;
+    }>();
 
-    const supplierRows = await this.supplierCreditRepo
+    const supplierQb = this.supplierCreditRepo
       .createQueryBuilder('credit')
       .leftJoin('credit.supplier', 'supplier')
       .select('supplier.id', 'supplierId')
@@ -608,13 +674,19 @@ export class ReportsService {
       .where('credit.status != :paid', { paid: CreditStatus.PAID })
       .groupBy('supplier.id')
       .addGroupBy('supplier.name')
-      .orderBy('outstanding', 'DESC')
-      .getRawMany<{
-        supplierId: string;
-        supplierName: string;
-        creditCount: string;
-        outstanding: string;
-      }>();
+      .orderBy('outstanding', 'DESC');
+    applyDateRangeToQb(supplierQb, 'credit.created_at', query.from, query.to);
+    if (query.supplierId) {
+      supplierQb.andWhere('credit.supplier_id = :supplierId', {
+        supplierId: query.supplierId,
+      });
+    }
+    const supplierRows = await supplierQb.getRawMany<{
+      supplierId: string;
+      supplierName: string;
+      creditCount: string;
+      outstanding: string;
+    }>();
 
     const customerOutstanding = customerRows.reduce(
       (sum, r) => sum + parseFloat(r.outstanding),
@@ -625,20 +697,33 @@ export class ReportsService {
       0,
     );
 
+    const byCustomer = customerRows.map((row) => ({
+      customerId: row.customerId,
+      customerName: row.customerName,
+      creditCount: parseInt(row.creditCount, 10),
+      outstanding: parseFloat(row.outstanding).toFixed(2),
+    }));
+    const bySupplier = supplierRows.map((row) => ({
+      supplierId: row.supplierId,
+      supplierName: row.supplierName,
+      creditCount: parseInt(row.creditCount, 10),
+      outstanding: parseFloat(row.outstanding).toFixed(2),
+    }));
+
     return {
       currency: this.currency(),
+      period: this.period(query.from, query.to),
+      totals: {
+        customerOutstanding: customerOutstanding.toFixed(2),
+        supplierOutstanding: supplierOutstanding.toFixed(2),
+      },
       customers: {
         totalOutstanding: customerOutstanding.toFixed(2),
         creditCount: customerRows.reduce(
           (sum, r) => sum + parseInt(r.creditCount, 10),
           0,
         ),
-        byCustomer: customerRows.map((row) => ({
-          customerId: row.customerId,
-          customerName: row.customerName,
-          creditCount: parseInt(row.creditCount, 10),
-          outstanding: parseFloat(row.outstanding).toFixed(2),
-        })),
+        byCustomer,
       },
       suppliers: {
         totalOutstanding: supplierOutstanding.toFixed(2),
@@ -646,31 +731,51 @@ export class ReportsService {
           (sum, r) => sum + parseInt(r.creditCount, 10),
           0,
         ),
-        bySupplier: supplierRows.map((row) => ({
-          supplierId: row.supplierId,
-          supplierName: row.supplierName,
-          creditCount: parseInt(row.creditCount, 10),
-          outstanding: parseFloat(row.outstanding).toFixed(2),
-        })),
+        bySupplier,
       },
-      aging: await this.creditsServiceAging(),
+      items: [
+        ...byCustomer.map((r) => ({
+          side: 'customer',
+          partyId: r.customerId,
+          partyName: r.customerName,
+          creditCount: r.creditCount,
+          outstanding: r.outstanding,
+        })),
+        ...bySupplier.map((r) => ({
+          side: 'supplier',
+          partyId: r.supplierId,
+          partyName: r.supplierName,
+          creditCount: r.creditCount,
+          outstanding: r.outstanding,
+        })),
+      ],
+      aging: await this.creditsServiceAging(query),
     };
   }
 
   /** Local aging helper so ReportsModule does not need CreditsModule cycle. */
-  private async creditsServiceAging() {
-    const ageSide = async (
-      repo: typeof this.customerCreditRepo | typeof this.supplierCreditRepo,
-      kind: 'customer' | 'supplier',
-    ) => {
+  private async creditsServiceAging(query: ReportQueryDto = {}) {
+    const ageSide = async (kind: 'customer' | 'supplier') => {
       const bucketDefs =
         kind === 'customer'
           ? CUSTOMER_CREDIT_AGING_BUCKETS
           : SUPPLIER_CREDIT_AGING_BUCKETS;
-      const rows = await repo
-        .createQueryBuilder('credit')
-        .where('credit.status != :paid', { paid: CreditStatus.PAID })
-        .getMany();
+      const rows =
+        kind === 'customer'
+          ? await (() => {
+              const qb = this.customerCreditRepo
+                .createQueryBuilder('credit')
+                .where('credit.status != :paid', { paid: CreditStatus.PAID });
+              applyDateRangeToQb(qb, 'credit.created_at', query.from, query.to);
+              return qb.getMany();
+            })()
+          : await (() => {
+              const qb = this.supplierCreditRepo
+                .createQueryBuilder('credit')
+                .where('credit.status != :paid', { paid: CreditStatus.PAID });
+              applyDateRangeToQb(qb, 'credit.created_at', query.from, query.to);
+              return qb.getMany();
+            })();
       const buckets = Object.fromEntries(
         bucketDefs.map((b) => [
           b.key,
@@ -686,7 +791,9 @@ export class ReportsService {
           kind === 'customer'
             ? creditAgingDays(row.createdAt, today)
             : creditAgingDays(
-                row.dueDate ? new Date(row.dueDate) : row.createdAt,
+                'dueDate' in row && row.dueDate
+                  ? new Date(row.dueDate)
+                  : row.createdAt,
                 today,
               );
         const bucket = resolveAgingBucket(days, bucketDefs);
@@ -706,8 +813,8 @@ export class ReportsService {
     };
 
     return {
-      customers: await ageSide(this.customerCreditRepo, 'customer'),
-      suppliers: await ageSide(this.supplierCreditRepo, 'supplier'),
+      customers: await ageSide('customer'),
+      suppliers: await ageSide('supplier'),
     };
   }
 

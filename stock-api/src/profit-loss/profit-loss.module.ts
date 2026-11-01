@@ -9,5 +9,6 @@ import { ProfitLossService } from './profit-loss.service';
   imports: [TypeOrmModule.forFeature([SaleLine, Expense])],
   controllers: [ProfitLossController],
   providers: [ProfitLossService],
+  exports: [ProfitLossService],
 })
 export class ProfitLossModule {}

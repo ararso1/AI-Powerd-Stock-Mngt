@@ -1,21 +1,34 @@
 import type { Metadata } from "next";
-import { IBM_Plex_Mono, Plus_Jakarta_Sans } from "next/font/google";
+import localFont from "next/font/local";
 import { Providers } from "@/components/providers";
 import { BRAND } from "@/lib/brand";
 import "./globals.css";
 
-const plusJakarta = Plus_Jakarta_Sans({
+/** Self-hosted — avoids Google Fonts network fetch during Docker/CI builds. */
+const plusJakarta = localFont({
+  src: "./fonts/PlusJakartaSans-latin-wght-normal.woff2",
   variable: "--font-plus-jakarta",
-  subsets: ["latin"],
-  weight: ["400", "500", "600", "700"],
+  weight: "400 700",
   display: "swap",
+  fallback: ["ui-sans-serif", "system-ui", "sans-serif"],
 });
 
-const ibmPlexMono = IBM_Plex_Mono({
+const ibmPlexMono = localFont({
+  src: [
+    {
+      path: "./fonts/IBMPlexMono-latin-400-normal.woff2",
+      weight: "400",
+      style: "normal",
+    },
+    {
+      path: "./fonts/IBMPlexMono-latin-500-normal.woff2",
+      weight: "500",
+      style: "normal",
+    },
+  ],
   variable: "--font-ibm-plex-mono",
-  subsets: ["latin"],
-  weight: ["400", "500"],
   display: "swap",
+  fallback: ["ui-monospace", "monospace"],
 });
 
 export const metadata: Metadata = {

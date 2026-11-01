@@ -116,6 +116,7 @@ const REPORT_TABS = [
 ] as const;
 
 interface PnlSummary {
+  currency?: import("@/lib/currency").Currency;
   revenue: string;
   costOfGoodsSold: string;
   grossProfit: string;

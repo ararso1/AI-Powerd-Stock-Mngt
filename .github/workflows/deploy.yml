@@ -1,0 +1,86 @@
+name: CI and VPS deployment
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Build and integration checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build API (includes TypeScript compilation)
+        run: docker build -t coffee-api:${{ github.sha }} stock-api
+      - name: Build frontend (includes Next.js TypeScript checks)
+        run: docker build --build-arg NEXT_PUBLIC_API_URL=https://api.efnanbusinessplc.com/api -t coffee-frontend:${{ github.sha }} stock-frontend
+      - name: Test the exact runtime images against an isolated database
+        run: bash deploy/smoke-test.sh "$GITHUB_SHA"
+      - name: Package tested images
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        run: |
+          mkdir release
+          docker save "coffee-api:$GITHUB_SHA" "coffee-frontend:$GITHUB_SHA" | gzip > release/images.tar.gz
+          cp compose.production.yml deploy/deploy.sh release/
+          cd release
+          sha256sum images.tar.gz compose.production.yml > SHA256SUMS
+      - uses: actions/upload-artifact@v4
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        with:
+          name: release-${{ github.sha }}
+          path: release/
+          compression-level: 0
+          retention-days: 3
+
+  deploy:
+    name: Deploy tested images to VPS
+    needs: verify
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    concurrency:
+      group: coffee-production
+      cancel-in-progress: false
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-${{ github.sha }}
+          path: release
+      - name: Configure SSH with the verified VPS host key
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+          HOST: ${{ secrets.HOST }}
+        run: |
+          install -d -m 700 ~/.ssh
+          printf '%s\n' "$SSH_PRIVATE_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          printf '%s ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAILDnMzsOOH1FGoyr68h9xy2VeWm3GCHR9czy3hXQ7Enz\n' "$HOST" > ~/.ssh/known_hosts
+      - name: Transfer and deploy
+        env:
+          HOST: ${{ secrets.HOST }}
+          USERNAME: ${{ secrets.USERNAME }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          latest=$(gh api "repos/$GITHUB_REPOSITORY/commits/main" --jq .sha)
+          if [[ "$latest" != "$GITHUB_SHA" ]]; then
+            echo 'A newer commit is on main; skipping this older release.'
+            exit 0
+          fi
+          target="$USERNAME@$HOST"
+          ssh_args=(-i ~/.ssh/deploy_key -o BatchMode=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=20)
+          # The SHA intentionally expands on the runner into the remote command.
+          # shellcheck disable=SC2029
+          ssh "${ssh_args[@]}" "$target" "mkdir -p /opt/coffee/releases/$GITHUB_SHA"
+          scp "${ssh_args[@]}" release/* "$target:/opt/coffee/releases/$GITHUB_SHA/"
+          # shellcheck disable=SC2029
+          ssh "${ssh_args[@]}" "$target" "bash /opt/coffee/releases/$GITHUB_SHA/deploy.sh $GITHUB_SHA"
+      - name: Remove runner SSH key
+        if: always()
+        run: rm -f ~/.ssh/deploy_key

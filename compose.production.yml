@@ -1,0 +1,45 @@
+name: coffee
+services:
+  api:
+    image: coffee-api:${IMAGE_TAG:?Set IMAGE_TAG to a tested release}
+    network_mode: host
+    init: true
+    restart: unless-stopped
+    env_file: /etc/coffee/api.env
+    environment:
+      HOST: 127.0.0.1
+      PORT: "3001"
+      NODE_ENV: production
+      DB_SYNCHRONIZE: "false"
+      DB_SEED: "false"
+    volumes:
+      - /var/lib/coffee/uploads:/app/uploads
+    healthcheck:
+      test: [CMD, node, -e, "fetch('http://127.0.0.1:3001/api/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+    logging:
+      driver: json-file
+      options: {max-size: "10m", max-file: "3"}
+  frontend:
+    image: coffee-frontend:${IMAGE_TAG:?Set IMAGE_TAG to a tested release}
+    network_mode: host
+    init: true
+    restart: unless-stopped
+    environment:
+      HOSTNAME: 127.0.0.1
+      PORT: "3000"
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: [CMD, node, -e, "fetch('http://127.0.0.1:3000/login').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+    logging:
+      driver: json-file
+      options: {max-size: "10m", max-file: "3"}

@@ -198,7 +198,7 @@ export function ExportLotsPanel() {
         </div>
       ) : (
         <DataCardTable
-          rows={rows}
+          rows={rows.map((row) => ({ ...row, id: row.lotId }))}
           emptyTitle="No export-ready coffee"
           emptyDescription="Finished export runs appear here."
           columns={[

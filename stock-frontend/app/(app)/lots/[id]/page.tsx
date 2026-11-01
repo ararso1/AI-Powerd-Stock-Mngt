@@ -318,7 +318,7 @@ export default function LotDetailPage() {
                           className="text-[var(--frappe-primary)] hover:underline"
                           onClick={() => {
                             void apiBlob(`/lots/${lot.id}/ecta-document`)
-                              .then((blob) => {
+                              .then(({ blob }) => {
                                 const url = URL.createObjectURL(blob);
                                 window.open(url, "_blank");
                                 setTimeout(() => URL.revokeObjectURL(url), 60_000);
@@ -408,7 +408,7 @@ export default function LotDetailPage() {
                                   className="text-sm text-[var(--frappe-primary)] hover:underline"
                                   onClick={() => {
                                     void apiBlob(q.downloadPath!)
-                                      .then((blob) => {
+                                      .then(({ blob }) => {
                                         const url = URL.createObjectURL(blob);
                                         window.open(url, "_blank");
                                         setTimeout(

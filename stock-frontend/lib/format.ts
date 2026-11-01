@@ -27,7 +27,7 @@ export function formatCurrencyCode(
 
 export { DEFAULT_CURRENCY, type Currency };
 
-export function formatQty(value: string | number | undefined): string {
+export function formatQty(value: string | number | null | undefined): string {
   if (value === undefined || value === null) return "—";
   const n = typeof value === "string" ? parseFloat(value) : value;
   if (Number.isNaN(n)) return String(value);
@@ -41,7 +41,7 @@ export function formatDate(value: string | undefined): string {
   return d.toLocaleDateString();
 }
 
-export function formatDateTime(value: string | undefined): string {
+export function formatDateTime(value: string | null | undefined): string {
   if (!value) return "—";
   const d = new Date(value);
   if (Number.isNaN(d.getTime())) return value;

@@ -31,7 +31,7 @@ async function bootstrap() {
   app.useGlobalFilters(new GlobalExceptionFilter());
 
   const port = process.env.PORT ?? 3001;
-  await app.listen(port);
+  await app.listen(port, process.env.HOST ?? '0.0.0.0');
   console.log(`Inventory API running on http://localhost:${port}/api`);
 }
 bootstrap();

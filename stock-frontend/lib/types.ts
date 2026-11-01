@@ -1812,7 +1812,7 @@ export interface LocalStageResult {
   rejectLotCode?: string | null;
   notes?: string | null;
   packs?: LocalStagePack[];
-  remainderKg?: string;
+  remainderKg?: string | null;
   roastQty?: string;
   groundQty?: string;
   roastLotId?: string | null;

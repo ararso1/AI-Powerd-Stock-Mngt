@@ -16,7 +16,7 @@ import {
   processStatusLabel,
   processWorkflowLabel,
 } from "@/lib/process-runs";
-import type { ExportDoniyaLabel, ProcessRun } from "@/lib/types";
+import type { ExportDoniyaLabel, ExportStageResult, ProcessRun } from "@/lib/types";
 
 function Field({
   label,
@@ -60,9 +60,11 @@ export default function ProcessRunDoniyaLabelPage() {
     [id]
   );
   const label = run ? exportRunDoniyaLabel(run) : null;
-  const packaging = run?.stageResults?.find((row) => row.stage === "Packaging");
+  const packaging = run?.stageResults?.find(
+    (row): row is ExportStageResult => row.stage === "Packaging"
+  );
   const stored = run?.stageResults?.find(
-    (row) =>
+    (row): row is ExportStageResult =>
       row.stage === "Export Store" || row.stage === "Packaging & Export Store"
   );
 

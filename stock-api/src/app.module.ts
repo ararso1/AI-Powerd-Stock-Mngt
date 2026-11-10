@@ -7,6 +7,7 @@ import { CommonModule } from './common/common.module';
 import appConfig from './config/app.config';
 import databaseConfig from './config/database.config';
 import jwtConfig from './config/jwt.config';
+import mailConfig from './config/mail.config';
 import marketConfig from './config/market.config';
 import { CreditsModule } from './credits/credits.module';
 import { MarketPricesModule } from './market-prices/market-prices.module';
@@ -40,7 +41,7 @@ import { HealthController } from './health.controller';
   imports: [
     ConfigModule.forRoot({
       isGlobal: true,
-      load: [appConfig, databaseConfig, jwtConfig, marketConfig],
+      load: [appConfig, databaseConfig, jwtConfig, mailConfig, marketConfig],
     }),
     CommonModule,
     DatabaseModule,

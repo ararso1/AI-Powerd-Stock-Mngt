@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Image from "next/image";
+import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useAuth } from "@/lib/auth";
 import { AuthLoading } from "@/components/auth-loading";
@@ -162,6 +163,12 @@ export default function LoginPage() {
                 required
                 className="h-11 border-[var(--csolve-border)] bg-[var(--csolve-parchment)]"
               />
+              <Link
+                href="/forgot-password"
+                className="justify-self-end text-xs font-medium text-[var(--csolve-roast)] underline-offset-4 hover:underline"
+              >
+                Forgot password?
+              </Link>
             </div>
             {error ? (
               <p className="rounded-md bg-[var(--csolve-cherry)]/10 px-3 py-2 text-sm text-[var(--csolve-cherry)]">

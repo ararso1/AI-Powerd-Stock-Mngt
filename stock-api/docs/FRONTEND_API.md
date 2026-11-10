@@ -75,6 +75,33 @@ Returns the same shape as login (new token pair).
 { "refreshToken": "jwt" }
 ```
 
+### POST `/auth/forgot-password`
+
+Public. Always returns a generic success message (no email enumeration).
+
+```json
+{ "email": "user@efnanbusinessplc.com" }
+```
+
+Response: `{ "success": true, "message": "If an account exists..." }`
+
+When an active user matches, the API emails a one-time link:
+`{FRONTEND_URL}/reset-password?token=...` (expiry: `PASSWORD_RESET_EXPIRES_MINUTES`).
+
+### POST `/auth/reset-password`
+
+Public. Consumes the emailed token and sets a new password (min 8 chars). Revokes refresh tokens.
+
+```json
+{
+  "token": "hex-from-email",
+  "newPassword": "NewSecurePass1"
+}
+```
+
+- `400` if token is invalid/expired/used.
+- Response: `{ "success": true, "message": "Password updated..." }`
+
 ### GET `/auth/me`
 
 Returns the current user profile and permission codes.

@@ -46,7 +46,7 @@ Farmer / supplier / cooperative / collector
 ### 2.1 Login
 
 1. Open the Csolve web app.  
-2. Sign in with email and password.  
+2. Sign in with email and password. Use **Forgot password?** on the login screen if you need a reset link emailed to you.  
 3. The sidebar shows only modules allowed by your **role**.
 
 ### 2.2 Demo accounts (local seed)

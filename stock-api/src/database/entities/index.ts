@@ -2,6 +2,7 @@ export { Permission } from './permission.entity';
 export { Role } from './role.entity';
 export { User } from './user.entity';
 export { RefreshToken } from './refresh-token.entity';
+export { PasswordResetToken } from './password-reset-token.entity';
 export { Location } from './location.entity';
 export { Item } from './item.entity';
 export { StockLevel } from './stock-level.entity';
@@ -55,6 +56,7 @@ import { Permission } from './permission.entity';
 import { Role } from './role.entity';
 import { User } from './user.entity';
 import { RefreshToken } from './refresh-token.entity';
+import { PasswordResetToken } from './password-reset-token.entity';
 import { Location } from './location.entity';
 import { UserLocation } from './user-location.entity';
 import { ApprovalRequest } from './approval-request.entity';
@@ -109,6 +111,7 @@ export const entities = [
   Role,
   User,
   RefreshToken,
+  PasswordResetToken,
   Location,
   Item,
   StockLevel,

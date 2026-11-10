@@ -145,6 +145,39 @@ export class SeedService implements OnModuleInit {
   async seed() {
     this.logger.log('Seeding database...');
 
+    await this.ensurePermissionsAndRoles();
+
+    const adminEmail =
+      process.env.SEED_ADMIN_EMAIL ?? 'admin@efnanbusinessplc.com';
+
+    await this.seedBanks();
+    const locations = await this.seedCoffeeLocations();
+    await this.seedDemoUsers(locations, { updatePassword: false });
+    const admin = await this.userRepo.findOne({ where: { email: adminEmail } });
+    const greenItem = await this.seedCoffeeItems();
+    await this.seedCherryPrices();
+    await this.seedDemoFarmer();
+    await this.seedProcessTemplates();
+    await this.seedRoastProfiles();
+    await this.seedSampleLots(locations, greenItem, admin?.id ?? null);
+    await this.seedLotStockLinks();
+    await this.seedDemoExportContract(locations, greenItem, admin?.id ?? null);
+    await seedExecutiveDemo(this.dataSource, this.logger);
+    await seedProcurementGradingDemo(this.dataSource, this.logger);
+
+    this.logger.log('Seeding complete');
+  }
+
+  /** Create or update the standard Efnan role users only (no demo stock). */
+  async seedUsers() {
+    this.logger.log('Seeding users (create or update)...');
+    await this.ensurePermissionsAndRoles();
+    const locations = await this.seedCoffeeLocations();
+    await this.seedDemoUsers(locations, { updatePassword: true });
+    this.logger.log('User seeding complete');
+  }
+
+  private async ensurePermissionsAndRoles() {
     const permissions: Permission[] = [];
     for (const def of PERMISSION_DEFINITIONS) {
       let perm = await this.permissionRepo.findOne({
@@ -178,53 +211,30 @@ export class SeedService implements OnModuleInit {
       }
       await this.roleRepo.save(role);
     }
-
-    const adminRole = await this.roleRepo.findOne({ where: { name: 'Admin' } });
-    const adminEmail =
-      process.env.SEED_ADMIN_EMAIL ?? 'admin@efnanbusinessplc.com';
-    const adminPassword = process.env.SEED_ADMIN_PASSWORD ?? 'Admin@123';
-
-    let admin = await this.userRepo.findOne({ where: { email: adminEmail } });
-    if (!admin && adminRole) {
-      admin = this.userRepo.create({
-        email: adminEmail,
-        fullName: 'Ahmad Jemal',
-        passwordHash: await bcrypt.hash(adminPassword, 10),
-        roleId: adminRole.id,
-        isActive: true,
-      });
-      await this.userRepo.save(admin);
-      this.logger.log(`Admin user created: ${adminEmail}`);
-    } else if (admin && admin.fullName === 'System Administrator') {
-      admin.fullName = 'Ahmad Jemal';
-      await this.userRepo.save(admin);
-    }
-
-    await this.seedBanks();
-    const locations = await this.seedCoffeeLocations();
-    await this.seedDemoUsers(locations);
-    const greenItem = await this.seedCoffeeItems();
-    await this.seedCherryPrices();
-    await this.seedDemoFarmer();
-    await this.seedProcessTemplates();
-    await this.seedRoastProfiles();
-    await this.seedSampleLots(locations, greenItem, admin?.id ?? null);
-    await this.seedLotStockLinks();
-    await this.seedDemoExportContract(locations, greenItem, admin?.id ?? null);
-    await seedExecutiveDemo(this.dataSource, this.logger);
-    await seedProcurementGradingDemo(this.dataSource, this.logger);
-
-    this.logger.log('Seeding complete');
   }
 
-  private async seedDemoUsers(locations: Record<string, Location>) {
-    const passwordHash = await bcrypt.hash(DEMO_PASSWORD, 10);
+  private async seedDemoUsers(
+    locations: Record<string, Location>,
+    options: { updatePassword: boolean },
+  ) {
+    const adminEmail = (
+      process.env.SEED_ADMIN_EMAIL ?? 'admin@efnanbusinessplc.com'
+    ).toLowerCase();
+    const adminPassword = process.env.SEED_ADMIN_PASSWORD ?? 'Admin@123';
+    const demoPasswordHash = await bcrypt.hash(DEMO_PASSWORD, 10);
+    const adminPasswordHash = await bcrypt.hash(adminPassword, 10);
 
     for (const demo of DEMO_USERS) {
       const role = await this.roleRepo.findOne({
         where: { name: demo.roleName },
       });
       if (!role) continue;
+
+      const isPrimaryAdmin = demo.email.toLowerCase() === adminEmail;
+      const plainPassword = isPrimaryAdmin ? adminPassword : DEMO_PASSWORD;
+      const passwordHash = isPrimaryAdmin
+        ? adminPasswordHash
+        : demoPasswordHash;
 
       let user = await this.userRepo.findOne({ where: { email: demo.email } });
       if (!user) {
@@ -236,9 +246,8 @@ export class SeedService implements OnModuleInit {
           isActive: true,
         });
         await this.userRepo.save(user);
-        this.logger.log(`Demo user created: ${demo.email} / ${DEMO_PASSWORD}`);
+        this.logger.log(`User created: ${demo.email} / ${plainPassword}`);
       } else {
-        // Keep sample role users aligned with workflow names
         let changed = false;
         if (user.fullName !== demo.fullName) {
           user.fullName = demo.fullName;
@@ -248,7 +257,22 @@ export class SeedService implements OnModuleInit {
           user.roleId = role.id;
           changed = true;
         }
-        if (changed) await this.userRepo.save(user);
+        if (!user.isActive) {
+          user.isActive = true;
+          changed = true;
+        }
+        if (options.updatePassword) {
+          user.passwordHash = passwordHash;
+          changed = true;
+        }
+        if (changed) {
+          await this.userRepo.save(user);
+          this.logger.log(
+            options.updatePassword
+              ? `User updated: ${demo.email} / ${plainPassword}`
+              : `User updated: ${demo.email}`,
+          );
+        }
       }
 
       if (demo.locationKey && locations[demo.locationKey]) {

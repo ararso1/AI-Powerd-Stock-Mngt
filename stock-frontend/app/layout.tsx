@@ -39,8 +39,8 @@ export const metadata: Metadata = {
   description: BRAND.description,
   applicationName: BRAND.productName,
   icons: {
-    icon: [{ url: "/img/logo-icon.png", type: "image/png" }],
-    apple: [{ url: "/apple-icon.png", type: "image/png" }],
+    icon: [{ url: BRAND.logoIcon, type: "image/png" }],
+    apple: [{ url: BRAND.logoIcon, type: "image/png" }],
   },
 };
 

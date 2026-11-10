@@ -4,7 +4,6 @@ import { useEffect, useRef, type RefObject } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { BrandMark } from "@/components/brand/csolve-mark";
-import { BRAND } from "@/lib/brand";
 import { NavUser } from "@/components/nav-user";
 import {
   Sidebar,
@@ -144,16 +143,8 @@ export function AppSidebar({
               size="lg"
               className="h-auto gap-0 py-2 data-[slot=sidebar-menu-button]:p-2!"
             >
-              <Link href="/dashboard" className="flex items-center gap-2.5">
-                <BrandMark size="sm" />
-                <div className="min-w-0 leading-tight">
-                  <span className="block text-base font-bold tracking-tight text-sidebar-foreground">
-                    {BRAND.shortName}
-                  </span>
-                  <span className="block truncate text-[10px] font-medium tracking-wide text-sidebar-primary">
-                    {BRAND.tagline}
-                  </span>
-                </div>
+              <Link href="/dashboard" className="flex min-w-0 items-center">
+                <BrandMark variant="rectangular" size="sm" />
               </Link>
             </SidebarMenuButton>
           </SidebarMenuItem>

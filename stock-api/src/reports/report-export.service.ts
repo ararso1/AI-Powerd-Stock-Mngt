@@ -35,7 +35,7 @@ export class ReportExportService {
         size: 'A4',
         info: {
           Title: table.title,
-          Author: 'Efnan Business PLC',
+          Author: 'Efnan Business',
         },
       });
       const chunks: Buffer[] = [];
@@ -46,7 +46,7 @@ export class ReportExportService {
       doc
         .fillColor('#6F4E37')
         .fontSize(16)
-        .text('Efnan Business PLC', { continued: false });
+        .text('Efnan Business', { continued: false });
       doc
         .fillColor('#2F1B10')
         .fontSize(13)

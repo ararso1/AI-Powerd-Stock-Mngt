@@ -1,11 +1,15 @@
-/** Efnan Business PLC product branding for the stock system. */
+/** Efnan Business product branding for the stock system. */
 export const BRAND = {
-  name: "Efnan Business PLC",
+  name: "Efnan Business",
   shortName: "Efnan",
-  productName: "Efnan Stock",
-  tagline: "Stock & warehouse management",
+  productName: "Efnan Business",
+  tagline: "AI-powered business management",
   description:
-    "Stock and warehouse management for Efnan Business PLC — inventory, transfers, sales, and operations.",
-  logo: "/img/logo.png",
-  logoIcon: "/img/logo-icon.png",
+    "AI-powered business management for Efnan Business — stock, warehouse, sales, and operations.",
+  /** Full lockup for login / marketing */
+  logo: "/img/efnan-logo.png",
+  /** Square icon for favicon / compact marks */
+  logoIcon: "/img/efnan-icon.png",
+  /** Horizontal mark for the app sidebar */
+  logoRectangular: "/img/logo-rectangular.png",
 } as const;

@@ -7,10 +7,11 @@ type BrandMarkProps = {
   /** Show wordmark + subtitle next to the icon */
   withWordmark?: boolean;
   /**
-   * `full` shows the complete logo artwork (login / marketing).
-   * Default sizes show the circular EB icon.
+   * `full` — complete logo (login / marketing)
+   * `rectangular` — horizontal sidebar mark
+   * `icon` — square EB icon (default)
    */
-  variant?: "icon" | "full";
+  variant?: "icon" | "full" | "rectangular";
   /** Compact for sidebar */
   size?: "sm" | "md" | "lg";
 };
@@ -43,6 +44,24 @@ export function BrandMark({
             {BRAND.tagline}
           </p>
         ) : null}
+      </div>
+    );
+  }
+
+  if (variant === "rectangular") {
+    const height = size === "lg" ? 44 : size === "sm" ? 32 : 36;
+    const width = Math.round(height * 3.2);
+    return (
+      <div className={cn("flex items-center", className)}>
+        <Image
+          src={BRAND.logoRectangular}
+          alt={BRAND.name}
+          width={width}
+          height={height}
+          priority
+          className="h-8 w-auto max-w-[160px] object-contain object-left"
+          style={{ height }}
+        />
       </div>
     );
   }

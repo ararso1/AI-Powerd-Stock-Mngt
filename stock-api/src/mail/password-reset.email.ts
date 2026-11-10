@@ -21,19 +21,19 @@ export function buildPasswordResetEmail(opts: {
   const safeUrl = escapeHtml(opts.resetUrl);
   const minutes = opts.minutes;
 
-  const subject = 'Reset your Efnan Business PLC password';
+  const subject = 'Reset your Efnan Business password';
 
   const text = [
     `Hello ${name},`,
     '',
-    'We received a request to reset your Efnan Stock password.',
+    'We received a request to reset your Efnan Business password.',
     '',
     `Click the link below (or copy it into your browser) within ${minutes} minutes:`,
     opts.resetUrl,
     '',
     'If you did not request this, you can ignore this email. Your password will stay the same.',
     '',
-    '— Efnan Business PLC',
+    '— Efnan Business',
   ].join('\n');
 
   const html = `<!DOCTYPE html>
@@ -51,7 +51,7 @@ export function buildPasswordResetEmail(opts: {
         <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width:560px;background-color:${COLORS.parchment};border-radius:16px;overflow:hidden;border:1px solid ${COLORS.border};box-shadow:0 8px 24px rgba(47,27,16,0.08);">
           <tr>
             <td style="background:linear-gradient(160deg, ${COLORS.espresso} 0%, #3d2416 45%, ${COLORS.roast} 100%);padding:28px 32px;text-align:center;">
-              <p style="margin:0 0 6px;font-size:11px;font-weight:700;letter-spacing:0.18em;text-transform:uppercase;color:${COLORS.honey};">Efnan Stock</p>
+              <p style="margin:0 0 6px;font-size:11px;font-weight:700;letter-spacing:0.18em;text-transform:uppercase;color:${COLORS.honey};">Efnan Business</p>
               <h1 style="margin:0;font-size:22px;line-height:1.3;font-weight:700;color:${COLORS.white};">Password reset</h1>
             </td>
           </tr>
@@ -59,7 +59,7 @@ export function buildPasswordResetEmail(opts: {
             <td style="padding:32px 32px 8px;color:${COLORS.espresso};">
               <p style="margin:0 0 16px;font-size:16px;line-height:1.5;">Hello <strong>${safeName}</strong>,</p>
               <p style="margin:0 0 24px;font-size:15px;line-height:1.6;color:${COLORS.muted};">
-                We received a request to reset your password for your Efnan Stock account.
+                We received a request to reset your password for your Efnan Business account.
                 Use the button below to choose a new password.
               </p>
             </td>
@@ -115,7 +115,7 @@ export function buildPasswordResetEmail(opts: {
           <tr>
             <td style="background-color:${COLORS.espresso};padding:18px 32px;text-align:center;">
               <p style="margin:0;font-size:12px;line-height:1.5;color:${COLORS.honey};">
-                © ${new Date().getFullYear()} Efnan Business PLC
+                © ${new Date().getFullYear()} Efnan Business
               </p>
               <p style="margin:4px 0 0;font-size:11px;color:rgba(196,164,132,0.75);">
                 Stock &amp; warehouse management

@@ -105,7 +105,7 @@ export default function LoginPage() {
               {BRAND.name}
             </h1>
             <p className="max-w-sm text-sm text-[var(--csolve-caramel)]">
-              Stock and warehouse management for coffee and other goods.
+              AI-powered business management for coffee and beyond.
             </p>
           </div>
         </div>
